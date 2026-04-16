@@ -25,44 +25,40 @@ def evaluate(symbol: str,
     Fires when price sweeps a liquidity pool then reverses
     with BOS confirmation on M15.
     """
-    if df_m15 is None or df_h1 is None or smc_report is None:
-        return None
+    from data_layer.feature_store import store
+    features = store.get_features(symbol)
+    if not features: return None
 
-    m15 = df_m15.iloc[-1]
-    h1  = df_h1.iloc[-1]
-
-    close_price = float(m15['close'])
-    pip_size    = 0.01 if close_price > 50 else 0.0001
-    atr_pips    = float(m15['atr']) / pip_size
+    current_price = features.get("current_price")
+    pip_size = 0.01 if current_price > 50 else 0.0001
+    atr_pips = features.get("atr_m15", 10) # Default to 10 if not found
 
     if atr_pips < 3.0:
         return None
 
-    # Get sweep data
-    last_sweep    = smc_report.get('last_sweep')
-    recent_sweeps = smc_report.get('recent_sweeps', [])
-    structure     = smc_report.get('structure', {})
-    bos           = structure.get('bos')
-    smc_bias      = smc_report.get('smc_bias', 'NEUTRAL')
-    htf_ok        = smc_report.get('htf_alignment', {}).get('approved', True)
-    pd_zone       = smc_report.get('premium_discount', {}).get('zone', '')
+    # Get sweep data from feature store
+    last_sweep_bias = features.get("last_sweep_bias", "NONE")
+    last_sweep_reversal = features.get("last_sweep_reversal", 0)
+    swept_level = smc_report.get("last_sweep", {}).get("swept_level", 0) # Still need this from smc_report
+    
+    smc_bias = features.get("smc_bias", "NEUTRAL")
+    htf_ok = features.get("htf_approved", False)
+    pd_zone = features.get("pd_zone", "UNKNOWN")
+    
+    # Delta from feature store
+    delta_bias = features.get("delta_bias", "NEUTRAL")
+    delta_strength = features.get("delta_strength", "WEAK")
 
     # Must have a recent sweep
-    if not last_sweep:
+    if last_sweep_bias == "NONE":
         return None
-
-    sweep_bias  = last_sweep.get('bias', 'NEUTRAL')
-    reversal_p  = float(last_sweep.get('reversal_pips', 0))
-    swept_level = float(last_sweep.get('swept_level', 0))
 
     # Reversal must be meaningful
-    if reversal_p < 3.0:
+    if last_sweep_reversal < 3.0:
         return None
 
-    # Get delta from market report
-    rolling_delta = market_report.get('rolling_delta', {}) if market_report else {}
-    delta_bias    = rolling_delta.get('bias', 'NEUTRAL')
-    delta_strength= rolling_delta.get('strength', 'WEAK')
+    sweep_bias = last_sweep_bias
+    reversal_p = last_sweep_reversal
 
     score      = 0
     confluence = []
