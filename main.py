@@ -113,6 +113,7 @@ def run():
             with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
                 futures = [executor.submit(_scan_and_trade,
                                            symbol,
+                                           session,
                                            master_scan, run_strategies,
                                            can_trade, calculate_lot_size,
                                            place_order, log_signal)
@@ -151,24 +152,25 @@ def run():
         log.info("[APEX] Shutdown complete.")
 
 def _scan_and_trade(symbol: str,
+                    session: str,
                     master_scan, run_strategies,
                     can_trade, calculate_lot_size,
                     place_order, log_signal) -> bool:
     """
     Full pipeline for one symbol in one scan cycle.
     Returns True if a trade was placed.
-    FIXED: cooldown, R:R check, bias conflict block
+    FIXED: cooldown, R:R check, bias conflict block, session passing,
+           relaxed fractal gate for high-confidence setups.
     """
     from risk_management.risk_engine import register_trade, check_risk_reward
     # ── Pre-trade risk checks ─────────────────────────────
-    # News blackout check removed
     tradeable, reason = can_trade(symbol, [])
     if not tradeable:
         log.info(f"  {symbol}: Risk blocked — {reason}")
         return False
 
-    # ── Run master scanner ────────────────────────────────
-    master = master_scan(symbol)
+    # ── Run master scanner (pass session) ─────────────────
+    master = master_scan(symbol, session=session)
     if master is None:
         log.info(f"  {symbol}: Master scan failed")
         return False
@@ -177,22 +179,52 @@ def _scan_and_trade(symbol: str,
     bias        = master.get("combined_bias", "NEUTRAL")
     state       = master.get("market_state", "UNKNOWN")
     action      = master.get("recommendation", {}).get("action", "SKIP")
-    fractal_rec = master.get("fractal_alignment", {}).get("recommendation", "N/A")
+    fractal     = master.get("fractal_alignment", {})
+    fractal_rec = fractal.get("recommendation", "N/A")
+    fractal_aligned = fractal.get("aligned", False)
+    m5_confirmed = fractal.get("m5_structure", {}).get("confirmed", False)
+    m1_aligned   = fractal.get("trigger", {}).get("trigger_aligned", False)
 
     log.info(f"  {symbol}: Score={final_score} | {bias}"
-             f" | {state} | → {action} | Fractal: {fractal_rec}")
+             f" | {state} | -> {action} | Fractal: {fractal_rec}")
 
-    # New check: Only proceed if fractal alignment is READY
-    if not master.get("fractal_alignment", {}).get("aligned", False):
-        log.info(f"  {symbol}: Skipping due to no fractal alignment.")
-        return False
+    # ── Fractal Alignment Gate (RELAXED for high-confidence) ──
+    # Full alignment (M15+M5+M1) = always allow
+    # Partial alignment (M15+M5 only) = allow if score > 75 AND state is TRENDING_STRONG
+    # Otherwise = skip (need more confirmation)
+    if not fractal_aligned:
+        if final_score >= 75 and state == "TRENDING_STRONG" and m5_confirmed:
+            log.info(f"  {symbol}: M1 bypassed — high-confidence setup "
+                     f"(score={final_score}, TRENDING_STRONG, M5 confirmed)")
+            # Allow through — high confidence enough to skip M1
+        elif final_score >= 70 and m5_confirmed and bias not in ("CONFLICTED", "NEUTRAL"):
+            log.info(f"  {symbol}: M1 bypassed — strong setup "
+                     f"(score={final_score}, bias={bias}, M5 confirmed)")
+        else:
+            log.info(f"  {symbol}: Skipping due to no fractal alignment.")
+            return False
 
-    # NEW: Check scalping signal — skip if market is too choppy
+    # ── Check scalping signal — skip if market is too choppy ──
     scalping = master.get("scalping_signal", {})
     if scalping.get("status") == "CHOPPY_SKIP":
         log.info(f"  {symbol}: Skipping — choppy market "
                  f"(velocity: {scalping.get('velocity_pips_min', 0)} pips/min)")
         return False
+
+    # ── Order Flow Direction Gate ─────────────────────────────
+    # If order flow imbalance strongly opposes the bias, skip
+    of_imb = master.get("order_flow_imbalance", {})
+    imb_value = of_imb.get("imbalance", 0)
+    imb_strength = of_imb.get("strength", "NONE")
+    if imb_strength in ("EXTREME", "STRONG"):
+        if bias == "BULLISH" and imb_value < -0.3:
+            log.info(f"  {symbol}: Skipping — order flow opposes BUY "
+                     f"(imbalance={imb_value:+.2f})")
+            return False
+        elif bias == "BEARISH" and imb_value > 0.3:
+            log.info(f"  {symbol}: Skipping — order flow opposes SELL "
+                     f"(imbalance={imb_value:+.2f})")
+            return False
 
     # ── Run strategy engine ───────────────────────────────
     signal = run_strategies(symbol, master)
@@ -206,7 +238,7 @@ def _scan_and_trade(symbol: str,
             'ai_score':     final_score,
             'was_traded':   False,
             'skip_reason':  f"No strategy fired | {action}",
-            'session':      master.get('session', 'UNKNOWN'),
+            'session':      session,
             'market_regime':state,
         })
         return False
@@ -237,7 +269,7 @@ def _scan_and_trade(symbol: str,
             'symbol': symbol, 'direction': direction,
             'strategy': strategy_name, 'ai_score': ai_score,
             'was_traded': False, 'skip_reason': f"AI:{ai_rec}",
-            'session': master.get('session', 'UNKNOWN'),
+            'session': session,
             'market_regime': state,
         })
         return False
@@ -246,7 +278,7 @@ def _scan_and_trade(symbol: str,
     sl_pips  = signal.get('sl_pips', 10)
     tp1_pips = signal.get('tp1_pips', 15)
 
-    # FIX #2: Enforce minimum R:R before placing
+    # FIX: Enforce minimum R:R before placing
     if not check_risk_reward(sl_pips, tp1_pips):
         log.warning(f"  {symbol}: Rejected — R:R too low "
                     f"(TP:{tp1_pips}p / SL:{sl_pips}p)")
@@ -267,7 +299,7 @@ def _scan_and_trade(symbol: str,
         tp_pips       = signal.get('tp1_pips', 15),
         strategy      = strategy_name,
         ai_score      = float(score + ai_score) / 2,
-        session       = master.get('session', 'UNKNOWN'),
+        session       = session,
         market_regime = state,
         rsi           = None,
         atr           = None,
@@ -275,7 +307,7 @@ def _scan_and_trade(symbol: str,
     )
 
     if placed:
-        log.info(f"  ✅ {symbol}: {direction} placed | "
+        log.info(f"  {symbol}: {direction} placed | "
                  f"SL:{sl_pips}p | TP:{signal.get('tp1_pips')}p"
                  f" | Lot:{lot_size}")
         log_signal({
@@ -283,7 +315,7 @@ def _scan_and_trade(symbol: str,
             'strategy': strategy_name,
             'ai_score': float(score + ai_score) / 2,
             'was_traded': True, 'skip_reason': None,
-            'session': master.get('session', 'UNKNOWN'),
+            'session': session,
             'market_regime': state,
         })
 

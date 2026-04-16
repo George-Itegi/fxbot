@@ -116,10 +116,10 @@ def _run_one_strategy(name, symbol,
 
     # Prioritize NY sessions: if current session is a preferred NY session, don't soft-filter based on strategy's best_sessions
     from config.settings import PREFERRED_SESSIONS
-    is_preferred_ny_session = session in [s for s in PREFERRED_SESSIONS if 'NY' in s]
+    is_preferred_session = session in PREFERRED_SESSIONS
 
-    if best_sessions and session not in best_sessions and not is_preferred_ny_session:
-        log.info(f"[ENGINE] {name} — session {session}"
+    if best_sessions and session not in best_sessions and not is_preferred_session:
+        log.info(f"[ENGINE] {name} - session {session}"
                  f" not ideal (best: {best_sessions})")
 
     if name == "EMA_TREND_MTF":

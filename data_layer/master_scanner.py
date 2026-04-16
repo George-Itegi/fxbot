@@ -39,8 +39,20 @@ def connect():
     print("Connected to MT5\n")
     return True
 
-def master_scan(symbol: str) -> dict | None:
-    """Run complete institutional scan. Returns full master report."""
+def master_scan(symbol: str, session: str = None) -> dict | None:
+    """Run complete institutional scan. Returns full master report.
+    
+    Args:
+        symbol: Trading symbol (e.g. 'EURUSD')
+        session: Current session name (fetched internally if not provided)
+    """
+    # Get session if not provided
+    if session is None:
+        from data_layer.market_regime import get_session, get_session_quality
+        session = get_session()
+    from data_layer.market_regime import get_session_quality
+    session_quality = get_session_quality()
+    
     market = scan_symbol(symbol)
     smc    = scan_smc(symbol, timeframe=mt5.TIMEFRAME_H1)
     if market is None or smc is None:
@@ -99,15 +111,26 @@ def master_scan(symbol: str) -> dict | None:
     last_sweep    = smc.get("last_sweep")
     sweep_aligned = last_sweep.get("bias") == combined_bias if last_sweep else False
 
+    # --- Session-aware gating ---
+    day_trade_ok = True
+    block_reason = None
+    if session == "DEAD_ZONE":
+        day_trade_ok = False
+        block_reason = "dead_zone - no trading during low liquidity"
+
     recommendation = _get_recommendation(
         final_score, bias_confidence,
         market.get("market_state"),
         htf_approved, pd_bias, combined_bias,
-        sweep_aligned)
+        sweep_aligned, session, session_quality)
 
     return {
         "symbol":           symbol,
         "timestamp":        datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+        "session":          session,
+        "session_quality":  session_quality,
+        "day_trade_ok":     day_trade_ok,
+        "block_reason":     block_reason,
         "market_report":    market,
         "smc_report":       smc,
         "fractal_alignment": fractal,
@@ -123,7 +146,7 @@ def master_scan(symbol: str) -> dict | None:
         "pd_penalty":       pd_penalty,
         "sweep_aligned":    sweep_aligned,
         "recommendation":   recommendation,
-        # --- NEW: Scalping data ---
+        # --- Scalping data ---
         "order_flow_imbalance": order_flow_imb,
         "volume_surge":    volume_surge,
         "momentum":        momentum,
@@ -207,7 +230,8 @@ def _evaluate_scalping_signal(combined_bias: str,
 
 def _get_recommendation(score, confidence, state,
                         htf_approved, pd_bias,
-                        combined_bias, sweep_aligned) -> dict:
+                        combined_bias, sweep_aligned,
+                        session=None, session_quality=1.0) -> dict:
     """Translate all factors into one clear bot action."""
 
     # HTF rejection
@@ -295,7 +319,7 @@ def print_master_report(r: dict):
           f"  |  CONFIDENCE: {conf} {conf_icon}")
     print(f"  STATE       : {state} {state_icons.get(state,'')}")
     print(f"  SESSION     : {r.get('session','?')}"
-          f"  (x{r.get('session_multiplier',1.0)})")
+          f"  (quality: {r.get('session_quality', 1.0):.1f})")
     print(f"  SCORES      : Market={r['market_score']}/100"
           f"  SMC={r['smc_score']}/100"
           f"  FINAL={r['final_score']}/100")

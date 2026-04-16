@@ -99,13 +99,21 @@ SYMBOL_COOLDOWN_MINUTES = 60
 MIN_RISK_REWARD_RATIO = 1.5
 
 # --- SESSION WINDOWS (UTC hours) ---
+# FIXED: Covers all 24 hours with no gaps.
+# Broadened to include full London & NY sessions (not just killzones).
 SESSIONS = {
-    "ASIAN":          {"start": 0,  "end": 7},
-    "LONDON_OPEN":    {"start": 7,  "end": 10},
-    "LONDON_KILLZONE":{"start": 8,  "end": 11},
-    "NY_KILLZONE":    {"start": 13, "end": 17},
-    "NY_LONDON_OVERLAP": {"start": 12, "end": 17},
-    "NY_CLOSE":       {"start": 17, "end": 20},
-    "DEAD_ZONE":      {"start": 20, "end": 23},
+    "ASIAN":               {"start": 0,  "end": 7},
+    "LONDON_OPEN":         {"start": 7,  "end": 8},
+    "LONDON_SESSION":      {"start": 8,  "end": 12},
+    "NY_LONDON_OVERLAP":   {"start": 12, "end": 16},
+    "NY_SESSION":          {"start": 16, "end": 20},
+    "DEAD_ZONE":           {"start": 20, "end": 24},
 }
-PREFERRED_SESSIONS = ["NY_KILLZONE", "NY_LONDON_OVERLAP", "LONDON_KILLZONE"]
+
+# Preferred sessions — full London + NY + overlap
+PREFERRED_SESSIONS = [
+    "LONDON_OPEN",
+    "LONDON_SESSION",
+    "NY_LONDON_OVERLAP",
+    "NY_SESSION",
+]

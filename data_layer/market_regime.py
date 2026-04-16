@@ -3,6 +3,9 @@
 # Detects what kind of market we're in RIGHT NOW.
 # Each strategy only activates in its optimal regime.
 # Regimes: TRENDING_UP | TRENDING_DOWN | RANGING | VOLATILE
+#
+# FIXED: Session detection now covers all 24 hours with no gaps.
+# Aligns with config/settings.py SESSIONS definitions.
 # =============================================================
 
 import pandas as pd
@@ -40,7 +43,7 @@ def detect_regime(df_h1: pd.DataFrame, symbol: str = None) -> str:
 
     # Volatile: ATR is much higher than its average
     if atr > atr_avg * 1.8:
-        log.info("[REGIME] 🌪️ VOLATILE — ATR spike detected")
+        log.info("[REGIME] VOLATILE - ATR spike detected")
         return "VOLATILE"
 
     # Trending: ADX > 25 confirms a real trend
@@ -53,45 +56,85 @@ def detect_regime(df_h1: pd.DataFrame, symbol: str = None) -> str:
         htf_bear = close_htf < ema200_htf if ema200_htf > 0 else True
 
         if bull_structure and htf_bull:
-            log.info("[REGIME] 📈 TRENDING_UP — Strong bull structure")
+            log.info("[REGIME] TRENDING_UP - Strong bull structure")
             return "TRENDING_UP"
         if bear_structure and htf_bear:
-            log.info("[REGIME] 📉 TRENDING_DOWN — Strong bear structure")
+            log.info("[REGIME] TRENDING_DOWN - Strong bear structure")
             return "TRENDING_DOWN"
 
     # Ranging: ADX < 20 = no directional conviction
-
-    # Ranging: ADX < 20 = no directional conviction
     if adx < 20:
-        log.info("[REGIME] ↔️ RANGING — Low ADX, choppy market")
+        log.info("[REGIME] RANGING - Low ADX, choppy market")
         return "RANGING"
 
-    # Weak trend — treat as ranging
-    log.info("[REGIME] ↔️ RANGING — Weak trend, staying cautious")
+    # Weak trend - treat as ranging
+    log.info("[REGIME] RANGING - Weak trend, staying cautious")
     return "RANGING"
 
 
 def get_session() -> str:
-    """Return the current trading session based on UTC hour."""
+    """
+    Return the current trading session based on UTC hour.
+    FIXED: Covers all 24 hours with no gaps or overlaps.
+
+    Session breakdown (UTC):
+      ASIAN               00:00 - 07:00  (Tokyo/Sydney session)
+      LONDON_OPEN         07:00 - 08:00  (London opens, transition)
+      LONDON_SESSION      08:00 - 12:00  (Full London session)
+      NY_LONDON_OVERLAP   12:00 - 16:00  (Highest liquidity window)
+      NY_SESSION          16:00 - 20:00  (New York afternoon)
+      DEAD_ZONE           20:00 - 00:00  (Low liquidity, avoid trading)
+    """
     from datetime import datetime, timezone
     hour = datetime.now(timezone.utc).hour
 
-    if 8 <= hour < 11:
-        return "LONDON_KILLZONE"
+    if 0 <= hour < 7:
+        return "ASIAN"
+    elif 7 <= hour < 8:
+        return "LONDON_OPEN"
+    elif 8 <= hour < 12:
+        return "LONDON_SESSION"
     elif 12 <= hour < 16:
         return "NY_LONDON_OVERLAP"
-    elif 13 <= hour < 17:
-        return "NY_KILLZONE"
-    elif 0 <= hour < 7:
-        return "ASIAN"
-    elif 20 <= hour < 24:
+    elif 16 <= hour < 20:
+        return "NY_SESSION"
+    else:  # 20-23
         return "DEAD_ZONE"
-    else:
-        return "TRANSITION"
 
 
 def is_preferred_session() -> bool:
-    """Returns True only during high-probability trading windows."""
+    """
+    Returns True during high-probability trading windows.
+    FIXED: Now includes full London and NY sessions, not just killzones.
+    """
     return get_session() in [
-        "LONDON_KILLZONE", "NY_LONDON_OVERLAP", "NY_KILLZONE"
+        "LONDON_OPEN",
+        "LONDON_SESSION",
+        "NY_LONDON_OVERLAP",
+        "NY_SESSION",
     ]
+
+
+def is_tradeable_session() -> bool:
+    """
+    Returns False only during DEAD_ZONE and late ASIAN.
+    All other sessions (London, NY, overlap) are tradeable.
+    """
+    session = get_session()
+    return session not in ["DEAD_ZONE", "ASIAN"]
+
+
+def get_session_quality() -> float:
+    """
+    Returns a session quality multiplier (0.0 - 1.0).
+    Used to boost or reduce confidence during different sessions.
+    """
+    quality_map = {
+        "NY_LONDON_OVERLAP": 1.0,   # Best liquidity
+        "LONDON_SESSION":    0.9,   # Strong London
+        "NY_SESSION":        0.8,   # NY afternoon (weaker)
+        "LONDON_OPEN":       0.7,   # Transition, can be volatile
+        "ASIAN":             0.4,   # Low liquidity
+        "DEAD_ZONE":         0.0,   # No trading
+    }
+    return quality_map.get(get_session(), 0.5)
