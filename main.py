@@ -43,7 +43,7 @@ def run():
 
     init_db()
     log.info("[STARTUP] Database initialized")
-    log.info(f"[STARTUP] Watchlist: {', '.join(WATCHLIST)}")
+    log.info(f"[STARTUP] Watchlist: {", ".join(WATCHLIST)}")
 
     # ── Initialize Tick Aggregator ───────────────────────────
     from data_layer.tick_aggregator import init_aggregator
@@ -58,27 +58,22 @@ def run():
         can_trade, calculate_lot_size, count_open_positions,
         is_daily_loss_limit_hit, register_trade, check_risk_reward
     )
-    from execution.order_manager import place_order, manage_positions, sync_closed_trades
+    from execution.order_manager import place_order, manage_positions
     from ai_engine.phase_manager import check_all_promotions
 
     # ── High-frequency position management thread ─────────────
     import threading
     def position_manager_worker():
         log.info("[STARTUP] Position Manager thread started (1s interval)")
-        last_heartbeat  = 0
-        last_sync       = 0
+        last_heartbeat = 0
         while True:
             try:
+                # Always ensure we are connected before managing
                 manage_positions()
-
-                # Sync closed trades every 10 seconds
-                if time.time() - last_sync > 10:
-                    sync_closed_trades()
-                    last_sync = time.time()
-
+                
                 # Heartbeat every 5 minutes
                 if time.time() - last_heartbeat > 300:
-                    log.info("[THREAD] Position Manager: Active")
+                    log.info("[THREAD] Position Manager Heartbeat: Active")
                     last_heartbeat = time.time()
             except Exception as e:
                 log.error(f"[THREAD] Position manager error: {e}")
@@ -96,7 +91,7 @@ def run():
     try:
         while True:
             now     = time.time()
-            cycle_t = datetime.now(timezone.utc).strftime('%H:%M:%S')
+            cycle_t = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
             # ── Check daily loss limit ────────────────────────
             if is_daily_loss_limit_hit():
