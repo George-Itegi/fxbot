@@ -36,8 +36,13 @@ def connect():
     print("Connected to MT5\n")
     return True
 
-def master_scan(symbol: str) -> dict | None:
-    """Run complete institutional scan. Returns full master report."""
+def master_scan(symbol: str,
+                external_data: dict = None) -> dict | None:
+    """
+    Run complete institutional scan. Returns full master report.
+    External data used ONLY for session gate + news blackout.
+    COT / Fear&Greed / Intermarket do NOT affect signal scoring.
+    """
     market = scan_symbol(symbol)
     smc    = scan_smc(symbol, timeframe=mt5.TIMEFRAME_H1)
     if market is None or smc is None:
@@ -61,13 +66,27 @@ def master_scan(symbol: str) -> dict | None:
         (market_bias == 'BEARISH' and pd_bias == 'BUY')
     ) else 0
 
-    # Final score with all factors (no external data)
+    # ── FINAL SCORE — pure technical only ────────────────────
+    # COT / Intermarket / Fear&Greed intentionally excluded
     base_score  = (market_score * 0.50) + (smc_score * 0.50)
-    final_score = max(0, round(
-        base_score - htf_penalty - pd_penalty
-    ))
+    final_score = max(0, round(base_score - htf_penalty - pd_penalty))
 
-    # Combined bias
+    # Session multiplier from external data
+    session      = 'UNKNOWN'
+    sess_mult    = 1.0
+    day_trade_ok = True
+    block_reason = None
+
+    if external_data:
+        session      = external_data.get('session', 'UNKNOWN')
+        sess_mult    = external_data.get('session_multiplier', 1.0)
+        day_trade_ok = external_data.get('day_trade_ok', True)
+        block_reason = external_data.get('blocking_reason')
+
+        # Apply session multiplier to final score
+        final_score = max(0, round(final_score * sess_mult))
+
+    # Combined bias — pure technical
     if market_bias == smc_bias and market_bias != 'NEUTRAL':
         combined_bias   = market_bias
         bias_confidence = 'HIGH'
@@ -85,13 +104,14 @@ def master_scan(symbol: str) -> dict | None:
         final_score, bias_confidence,
         market.get('market_state'),
         htf_approved, pd_bias, combined_bias,
-        sweep_aligned)
+        sweep_aligned, day_trade_ok, block_reason)
 
     return {
         'symbol':           symbol,
         'timestamp':        datetime.now(timezone.utc).strftime('%H:%M:%S UTC'),
         'market_report':    market,
         'smc_report':       smc,
+        'external_data':    external_data,
         'market_score':     market_score,
         'smc_score':        smc_score,
         'final_score':      final_score,
@@ -100,6 +120,10 @@ def master_scan(symbol: str) -> dict | None:
         'combined_bias':    combined_bias,
         'bias_confidence':  bias_confidence,
         'market_state':     market.get('market_state'),
+        'session':          session,
+        'session_multiplier': sess_mult,
+        'day_trade_ok':     day_trade_ok,
+        'block_reason':     block_reason,
         'htf_approved':     htf_approved,
         'pd_penalty':       pd_penalty,
         'sweep_aligned':    sweep_aligned,
@@ -108,33 +132,39 @@ def master_scan(symbol: str) -> dict | None:
 
 def _get_recommendation(score, confidence, state,
                         htf_approved, pd_bias,
-                        combined_bias, sweep_aligned) -> dict:
-    """Translate all factors into one clear bot action."""
+                        combined_bias, sweep_aligned,
+                        day_trade_ok=True,
+                        block_reason=None) -> dict:
+    """Translate technical factors into one clear bot action."""
+
+    # Session/news gate
+    if not day_trade_ok:
+        return {'action': 'SKIP', 'reason': block_reason or 'Gate blocked'}
 
     # HTF rejection
     if not htf_approved:
         return {'action': 'SKIP',
-                'reason': 'HTF alignment rejected — trading against higher TF'}
+                'reason': 'HTF alignment rejected'}
 
     if confidence == 'LOW':
         return {'action': 'SKIP',
-                'reason': 'Conflicted bias between market and SMC scanners'}
+                'reason': 'Conflicted bias — market vs SMC'}
 
     if state == 'REVERSAL_RISK':
         return {'action': 'SKIP',
-                'reason': 'Reversal risk detected — signals diverging'}
+                'reason': 'Reversal risk — signals diverging'}
 
     if (combined_bias == 'BULLISH' and pd_bias == 'SELL') and score < 70:
         return {'action': 'WAIT',
-                'reason': 'Bullish but price in premium zone — wait for pullback'}
+                'reason': 'Bullish but in premium — wait for pullback'}
 
     if (combined_bias == 'BEARISH' and pd_bias == 'BUY') and score < 70:
         return {'action': 'WAIT',
-                'reason': 'Bearish but price in discount zone — wait for bounce'}
+                'reason': 'Bearish but in discount — wait for bounce'}
 
     if state == 'TRENDING_EXTENDED':
         return {'action': 'WAIT',
-                'reason': 'Trend valid but price extended — wait for pullback to OB'}
+                'reason': 'Trend extended — wait for pullback to OB'}
 
     if score >= 75 and confidence == 'HIGH' and sweep_aligned:
         return {'action': 'TRADE',
@@ -142,7 +172,7 @@ def _get_recommendation(score, confidence, state,
 
     if score >= 75 and confidence == 'HIGH':
         return {'action': 'TRADE',
-                'reason': f'Score {score}/100 — high confluence setup'}
+                'reason': f'Score {score}/100 — high confluence'}
 
     if score >= 55 and confidence in ('HIGH', 'MODERATE'):
         return {'action': 'WATCH',

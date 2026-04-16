@@ -115,44 +115,35 @@ def _build_report(symbols: list) -> dict:
     session    = im.get('session', 'UNKNOWN')
     sess_mult  = SESSION_MULTIPLIERS.get(session, 1.0)
 
-    # Master gate
+    # ── Master gate ───────────────────────────────────────────
+    # ONLY these block trading — COT/IM/FG do NOT block signals
     day_trade_ok    = True
     blocking_reason = None
     if session == 'DEAD_ZONE':
-        day_trade_ok = False
+        day_trade_ok    = False
         blocking_reason = "DEAD ZONE — low liquidity"
     elif blackout.get('blackout'):
-        day_trade_ok = False
+        day_trade_ok    = False
         blocking_reason = f"NEWS BLACKOUT: {blackout.get('reason')}"
     elif volatility.get('volatility_score', 0) >= 70:
-        day_trade_ok = False
+        day_trade_ok    = False
         blocking_reason = f"VOLATILITY EXTREME: {volatility.get('advice')}"
     elif im.get('vix', 20) > 40:
-        day_trade_ok = False
+        day_trade_ok    = False
         blocking_reason = f"VIX EXTREME: {im.get('vix'):.1f}"
 
-    fg_gate       = fg.get('day_gate', {})
-    size_reduction= fg_gate.get('reduce_size', False)
+    # COT/IM/FG kept for reference/dashboard only — NOT used to gate signals
+    fg_gate        = fg.get('day_gate', {})
+    size_reduction = False   # disabled — was causing false blocks
 
+    # Minimal symbol context — no COT/IM bias injection into signal path
     symbol_context = {}
     for sym in symbols:
-        cot_f  = cot.get(sym, {}).get('day_filter', {})
-        im_sig = im.get('pair_signals', {}).get(sym, {})
-        votes  = []
-        if im_sig.get('bias') == 'BULLISH': votes.append(1)
-        elif im_sig.get('bias') == 'BEARISH': votes.append(-1)
-        if cot_f.get('day_trade_bias') == 'BULLISH': votes.append(1)
-        elif cot_f.get('day_trade_bias') == 'BEARISH': votes.append(-1)
-        macro = 'BULLISH' if sum(votes)>0 else 'BEARISH' if sum(votes)<0 else 'NEUTRAL'
-
         symbol_context[sym] = {
-            'macro_bias':         macro,
-            'im_signal':          im_sig.get('bias','NEUTRAL'),
-            'im_driver':          im_sig.get('driver',''),
-            'cot_bias':           cot_f.get('day_trade_bias','NEUTRAL'),
-            'cot_blocks':         cot_f.get('blocks_longs',False) or cot_f.get('blocks_shorts',False),
-            'bull_cross_filter':  _calc_cross_filter(sym,'BULLISH',cot,im,fg,news),
-            'bear_cross_filter':  _calc_cross_filter(sym,'BEARISH',cot,im,fg,news),
+            'macro_bias':         'NEUTRAL',   # Not used in signal scoring
+            'im_signal':          'NEUTRAL',   # Reference only
+            'cot_bias':           'NEUTRAL',   # Reference only
+            'cot_blocks':         False,        # Not blocking signals
             'session_multiplier': sess_mult,
         }
 

@@ -106,6 +106,7 @@ def init_db():
     print("[DATABASE] ✅ All tables initialized.")
 
 def log_trade(data: dict):
+    """Record a new trade when it opens."""
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
@@ -124,6 +125,65 @@ def log_trade(data: dict):
         data.get('rsi'), data.get('atr'), data.get('spread'),
         data.get('market_regime'), data.get('notes')
     ))
+    conn.commit()
+    conn.close()
+
+
+def close_trade(ticket: int, exit_price: float,
+                profit_loss: float, outcome: str):
+    """
+    Update trade record when it closes.
+    Called after SL hit, TP hit, or manual close.
+    outcome: 'WIN_TP' | 'WIN_TP2' | 'LOSS' | 'BREAKEVEN' | 'MANUAL'
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        UPDATE trades
+        SET timestamp_close = ?,
+            exit_price      = ?,
+            profit_loss     = ?,
+            outcome         = ?
+        WHERE ticket = ?
+    """, (
+        datetime.now().isoformat(),
+        exit_price,
+        round(profit_loss, 2),
+        outcome,
+        ticket
+    ))
+
+    # Also update strategy_performance table
+    if c.rowcount > 0:
+        c.execute("SELECT strategy FROM trades WHERE ticket = ?", (ticket,))
+        row = c.fetchone()
+        if row:
+            strategy = row['strategy']
+            won = 1 if 'WIN' in outcome else 0
+            lost = 1 if outcome == 'LOSS' else 0
+            be = 1 if outcome == 'BREAKEVEN' else 0
+            c.execute("""
+                INSERT INTO strategy_performance
+                    (strategy, total_trades, wins, losses, breakevens,
+                     total_pnl, win_rate, last_updated)
+                VALUES (?, 1, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(strategy) DO UPDATE SET
+                    total_trades = total_trades + 1,
+                    wins         = wins + ?,
+                    losses       = losses + ?,
+                    breakevens   = breakevens + ?,
+                    total_pnl    = round(total_pnl + ?, 2),
+                    win_rate     = round(100.0*(wins+?) /
+                                   (total_trades+1), 1),
+                    last_updated = ?
+            """, (
+                strategy, won, lost, be,
+                round(profit_loss, 2), datetime.now().isoformat(),
+                won, lost, be,
+                round(profit_loss, 2), won,
+                datetime.now().isoformat()
+            ))
+
     conn.commit()
     conn.close()
 

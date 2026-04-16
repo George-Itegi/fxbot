@@ -26,12 +26,12 @@ STRATEGY_FUNCTIONS = {
 }
 
 def run_strategies(symbol: str,
-                   master_report: dict) -> dict | None:
+                   master_report: dict,
+                   external_data: dict = None) -> dict | None:
     """
     Run all active strategies on one symbol.
     Returns the highest-scoring signal or None.
-
-    master_report: output from master_scanner.master_scan()
+    external_data used only for context — NOT for signal scoring.
     """
     if master_report is None:
         return None
@@ -41,18 +41,19 @@ def run_strategies(symbol: str,
     market_state  = master_report.get('market_state', 'BALANCED')
     session       = master_report.get('session', 'UNKNOWN')
     final_score   = master_report.get('final_score', 0)
+    day_trade_ok  = master_report.get('day_trade_ok', True)
 
-    # Hard gates — don't even run strategies if blocked
-    if not master_report.get('day_trade_ok', True):
-        log.info(f"[ENGINE] {symbol} — Day trade blocked: "
-                 f"{master_report.get('ext_block_reason')}")
+    # Hard gate — session/news blocked
+    if not day_trade_ok:
+        log.info(f"[ENGINE] {symbol} — blocked: "
+                 f"{master_report.get('block_reason')}")
         return None
 
     if final_score < 30:
-        log.info(f"[ENGINE] {symbol} — Master score too low ({final_score})")
+        log.info(f"[ENGINE] {symbol} — score too low ({final_score})")
         return None
 
-    # Fetch candle data needed by strategies
+    # Fetch candle data
     df_m15 = get_candles(symbol, 'M15', 200)
     df_h1  = get_candles(symbol, 'H1',  200)
     df_h4  = get_candles(symbol, 'H4',  100)
@@ -61,8 +62,8 @@ def run_strategies(symbol: str,
         log.warning(f"[ENGINE] {symbol} — Missing candle data")
         return None
 
-    active    = get_active_strategies()
-    signals   = []
+    active  = get_active_strategies()
+    signals = []
 
     for strategy_name in active:
         try:
@@ -87,7 +88,6 @@ def run_strategies(symbol: str,
     if not signals:
         return None
 
-    # Return highest-scoring signal
     best = max(signals, key=lambda s: s['score'])
     log.info(f"[ENGINE] {symbol} BEST: {best['strategy']}"
              f" {best['direction']} score={best['score']}")
