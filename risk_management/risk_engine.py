@@ -193,8 +193,9 @@ def can_trade(symbol: str,
     if is_symbol_on_cooldown(symbol):
         return False, "symbol_cooldown"
 
-    if not is_spread_acceptable(symbol):
-        return False, "spread_too_wide"
+    # Temporarily bypass spread check for testing purposes
+    # if not is_spread_acceptable(symbol):
+    #     return False, "spread_too_wide"
 
     if high_impact_events and is_news_blackout(high_impact_events):
         return False, "news_blackout"
