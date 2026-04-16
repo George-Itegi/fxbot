@@ -15,6 +15,9 @@ from strategies.smc_ob_reversal import evaluate as ob_evaluate
 from strategies.liquidity_sweep_entry import evaluate as sweep_evaluate
 from strategies.vwap_mean_reversion import evaluate as vwap_evaluate
 from strategies.order_flow_exhaustion import evaluate as exhaustion_evaluate
+from strategies.m1_momentum_scalp import evaluate as m1_scalp_evaluate
+from strategies.opening_range_breakout import evaluate as orb_evaluate
+from strategies.delta_divergence import evaluate as delta_div_evaluate
 
 log = get_logger(__name__)
 
@@ -25,6 +28,9 @@ STRATEGY_FUNCTIONS = {
     "LIQUIDITY_SWEEP_ENTRY":sweep_evaluate,
     "VWAP_MEAN_REVERSION":  vwap_evaluate,
     "ORDER_FLOW_EXHAUSTION":exhaustion_evaluate,
+    "M1_MOMENTUM_SCALP":    m1_scalp_evaluate,
+    "OPENING_RANGE_BREAKOUT": orb_evaluate,
+    "DELTA_DIVERGENCE":     delta_div_evaluate,
 }
 
 def run_strategies(symbol: str,
@@ -152,5 +158,26 @@ def _run_one_strategy(name, symbol,
             symbol, df_m1, df_m5, df_m15, df_h1,
             smc_report=smc_report,
             market_report=market_report)
+
+    elif name == "M1_MOMENTUM_SCALP":
+        return m1_scalp_evaluate(
+            symbol, df_m1, df_m5, df_m15, df_h1,
+            smc_report=smc_report,
+            market_report=market_report,
+            master_report=master_report)
+
+    elif name == "OPENING_RANGE_BREAKOUT":
+        return orb_evaluate(
+            symbol, df_m1, df_m5, df_m15, df_h1,
+            smc_report=smc_report,
+            market_report=market_report,
+            master_report=master_report)
+
+    elif name == "DELTA_DIVERGENCE":
+        return delta_div_evaluate(
+            symbol, df_m1, df_m5, df_m15, df_h1,
+            smc_report=smc_report,
+            market_report=market_report,
+            master_report=master_report)
 
     return None
