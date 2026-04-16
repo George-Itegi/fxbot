@@ -16,19 +16,23 @@ log = get_logger(__name__)
 
 STRATEGY_NAME = "M1_MOMENTUM_SCALP"
 MIN_SCORE     = 60
-VERSION       = "1.0"
+VERSION       = "2.0"  # v2.0: ATR-based SL instead of fixed 5p
 
 # --- Scalping parameters ---
-SL_PIPS   = 5.0       # Fixed tight SL for scalp
-TP_MIN    = 8.0       # Minimum TP (1.6:1 R:R)
-TP_MAX    = 15.0      # Maximum TP
+SL_ATR_MULTIPLIER   = 1.0    # SL = M5 ATR * this multiplier (was fixed 5.0 pips)
+SL_MIN_PIPS        = 3.0    # Minimum SL pips (safety floor)
+SL_MAX_PIPS        = 12.0   # Maximum SL pips (safety cap)
+TP_MIN_RR          = 1.5    # Minimum TP/SL ratio
+TP_RR_MULTIPLIER   = 2.5    # TP = SL * this (let winners run)
 
 
 def _get_pip_size(price: float) -> float:
-    """Return pip size for a symbol based on its price."""
-    if price > 500:     # Gold, indices
+    """Return pip size for a symbol based on its price.
+    NOTE: This is approximate — for exact pip size, use order_manager._get_pip_point.
+    """
+    if price > 500:     # Indices
         return 1.0
-    elif price > 50:    # JPY pairs
+    elif price > 50:    # JPY pairs, Gold
         return 0.01
     else:               # Standard forex
         return 0.0001
@@ -281,27 +285,37 @@ def evaluate(symbol: str,
     if score < MIN_SCORE:
         return None
     
-    # ── Calculate SL/TP ─────────────────────────────────────
+    # ── Calculate SL/TP (ATR-based, not fixed) ──────────────
+    # SL based on current M5 ATR — adapts to volatility
+    if df_m5 is not None and len(df_m5) >= 20:
+        m5_atr_raw = float(df_m5.iloc[-1].get('atr', 0))
+        if m5_atr_raw > 0:
+            sl_pips_raw = round(m5_atr_raw / pip_size * SL_ATR_MULTIPLIER, 1)
+            sl_pips = max(SL_MIN_PIPS, min(SL_MAX_PIPS, sl_pips_raw))
+        else:
+            sl_pips = SL_MIN_PIPS
+    else:
+        sl_pips = SL_MIN_PIPS
+
+    # TP based on SL with minimum R:R
+    tp_pips = round(sl_pips * TP_RR_MULTIPLIER, 1)
+    tp_pips = max(sl_pips * TP_MIN_RR, tp_pips)  # At least 1.5:1 R:R
+    
     if direction == "BUY":
-        sl_price  = round(close_price - SL_PIPS * pip_size, 5)
-        # TP based on ATR — between 8-15 pips
-        tp_pips   = min(TP_MAX, max(TP_MIN, round(atr_pips * 1.2, 1)))
+        sl_price  = round(close_price - sl_pips * pip_size, 5)
         tp1_price = round(close_price + tp_pips * pip_size, 5)
         tp2_price = round(close_price + tp_pips * 2.0 * pip_size, 5)
-        sl_pips   = SL_PIPS
-        tp1_pips  = tp_pips
-        tp2_pips  = round(tp_pips * 2.0, 1)
     else:  # SELL
-        sl_price  = round(close_price + SL_PIPS * pip_size, 5)
-        tp_pips   = min(TP_MAX, max(TP_MIN, round(atr_pips * 1.2, 1)))
+        sl_price  = round(close_price + sl_pips * pip_size, 5)
         tp1_price = round(close_price - tp_pips * pip_size, 5)
         tp2_price = round(close_price - tp_pips * 2.0 * pip_size, 5)
-        sl_pips   = SL_PIPS
-        tp1_pips  = tp_pips
-        tp2_pips  = round(tp_pips * 2.0, 1)
     
+    tp1_pips = tp_pips
+    tp2_pips = round(tp_pips * 2.0, 1)
+
     log.info(f"[{STRATEGY_NAME}] {direction} {symbol}"
-             f" Score:{score} | {', '.join(confluence)}")
+             f" Score:{score} | SL:{sl_pips}p TP:{tp_pips}p"
+             f" | {', '.join(confluence)}")
     
     return {
         "direction":   direction,

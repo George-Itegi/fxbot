@@ -18,6 +18,7 @@ from strategies.order_flow_exhaustion import evaluate as exhaustion_evaluate
 from strategies.m1_momentum_scalp import evaluate as m1_scalp_evaluate
 from strategies.opening_range_breakout import evaluate as orb_evaluate
 from strategies.delta_divergence import evaluate as delta_div_evaluate
+from strategies.trend_continuation import evaluate as trend_cont_evaluate
 
 log = get_logger(__name__)
 
@@ -31,6 +32,7 @@ STRATEGY_FUNCTIONS = {
     "M1_MOMENTUM_SCALP":    m1_scalp_evaluate,
     "OPENING_RANGE_BREAKOUT": orb_evaluate,
     "DELTA_DIVERGENCE":     delta_div_evaluate,
+    "TREND_CONTINUATION":  trend_cont_evaluate,
 }
 
 def run_strategies(symbol: str,
@@ -178,6 +180,14 @@ def _run_one_strategy(name, symbol,
             symbol, df_m1, df_m5, df_m15, df_h1,
             smc_report=smc_report,
             market_report=market_report,
+            master_report=master_report)
+
+    elif name == "TREND_CONTINUATION":
+        return trend_cont_evaluate(
+            symbol, df_m1, df_m5, df_m15, df_h1,
+            smc_report=smc_report,
+            market_report=market_report,
+            df_h4=df_h4,
             master_report=master_report)
 
     return None

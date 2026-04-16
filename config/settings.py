@@ -98,6 +98,27 @@ SYMBOL_COOLDOWN_MINUTES = 60
 # --- MINIMUM RISK/REWARD ---
 MIN_RISK_REWARD_RATIO = 1.5
 
+# --- CORRELATION RISK MANAGEMENT ---
+MAX_CORRELATED_EXPOSURE = 2      # Max correlated pairs in same direction
+MAX_SAME_CURRENCY_EXPOSURE = 3  # Max net exposure per single currency
+# Example: If already long EURUSD + EURGBP (EUR exposure = +2),
+# and you try to BUY EURJPY (EUR = +3), it would be blocked if
+# MAX_SAME_CURRENCY_EXPOSURE = 2.
+
+# --- RE-ENTRY LOGIC ---
+ALLOW_REENTRY = True                  # Allow re-entering after TP
+REENTRY_COOLDOWN_MINUTES = 15        # Min wait between exits and re-entry
+REENTRY_MIN_SCORE_INCREASE = 5       # Score must be this much higher on re-entry
+
+# --- LIMIT ORDER ENTRY ---
+LIMIT_ORDER_ENABLED = True           # Use limit orders for pullback entries
+LIMIT_ORDER_PRICE_OFFSET_PIPS = 3.0  # Offset from ideal price (pips)
+LIMIT_ORDER_EXPIRE_MINUTES = 30      # Cancel if not filled within this time
+
+# --- CONSECUTIVE LOSS PROTECTION ---
+MAX_CONSECUTIVE_LOSSES = 4           # Pause after this many consecutive losses
+CONSECUTIVE_LOSS_PAUSE_MINUTES = 30 # How long to pause trading after limit hit
+
 # --- SESSION WINDOWS (UTC hours) ---
 # Aligned with real institutional forex session behaviors (EAT/UTC+3 reference)
 # Covers all 24 hours with no gaps.
@@ -126,4 +147,5 @@ PREFERRED_SESSIONS = [
     "LONDON_SESSION",
     "NY_LONDON_OVERLAP",
     "NY_AFTERNOON",
+    "TOKYO",
 ]

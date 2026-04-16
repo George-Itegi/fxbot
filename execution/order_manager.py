@@ -6,17 +6,88 @@ from database.db_manager import log_trade, close_trade
 log = get_logger(__name__)
 
 def _get_pip_point(symbol: str, sym_info) -> float:
-    """Correct pip size for every symbol."""
+    """Correct pip size for every symbol.
+    
+    IMPORTANT: For indices (JP225, DE30, UK100, US30, US500, USTEC),
+    we use point size directly since these trade in integer points.
+    For JPY pairs, 1 pip = 0.01. For standard forex, 1 pip = 0.0001.
+    Gold = 0.1 (ounces), Silver = 0.01.
+    """
     sym = symbol.upper()
+    # Indices — trade in full points (1 point = 1 pip)
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
+        return 1.0
+    # Gold
+    if "XAU" in sym:
+        return 0.1
+    # Silver
+    if "XAG" in sym:
+        return 0.01
+    # Oil (WTI, Brent)
+    if any(x in sym for x in ["WTI", "BRN"]):
+        return 0.01
+    # JPY pairs
+    if sym_info.digits <= 3:
+        return 0.01
+    # Standard forex
+    return 0.0001
+
+
+def _get_pip_point_for_pricing(symbol: str) -> float:
+    """Get pip size for pricing calculations (used by strategies).
+    Must match _get_pip_point exactly.
+    """
+    sym = symbol.upper()
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
+        return 1.0
     if "XAU" in sym:
         return 0.1
     if "XAG" in sym:
         return 0.01
-    if any(x in sym for x in ["US30", "US500", "USTEC"]):
-        return 1.0
-    if sym_info.digits <= 3:
-        return 0.01    # JPY pairs
-    return 0.0001      # Standard forex
+    if any(x in sym for x in ["WTI", "BRN"]):
+        return 0.01
+    return 0.01 if any(x in sym for x in ["JPY", "USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY"]) else 0.0001
+
+
+def get_atr_for_symbol(symbol: str, timeframe='M5', count=50) -> float:
+    """Fetch ATR value for a symbol. Used for dynamic SL/TP/trailing."""
+    import pandas as pd
+    try:
+        import talib
+        use_talib = True
+    except ImportError:
+        use_talib = False
+    
+    tf_map = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5,
+              'M15': mt5.TIMEFRAME_M15, 'H1': mt5.TIMEFRAME_H1}
+    mt5_tf = tf_map.get(timeframe, mt5.TIMEFRAME_M5)
+    
+    rates = mt5.copy_rates_from_pos(symbol, mt5_tf, 0, count + 1)
+    if rates is None or len(rates) < count:
+        return 0.0
+    
+    df = pd.DataFrame(rates)
+    df.columns = [c if isinstance(c, str) else c.decode() for c in df.columns]
+    high = df['high'].values
+    low = df['low'].values
+    close = df['close'].values
+    
+    pip_point = _get_pip_point(symbol, mt5.symbol_info(symbol))
+    
+    if use_talib:
+        atr_raw = talib.ATR(high, low, close, timeperiod=min(14, count - 1))
+        atr_raw = atr_raw[~pd.isna(atr_raw)]
+        if len(atr_raw) > 0:
+            return float(atr_raw[-1]) / pip_point
+    
+    # Fallback: manual ATR calculation
+    tr = []
+    for i in range(1, len(df)):
+        h, l, c_prev = high[i], low[i], close[i-1]
+        tr.append(max(h - l, abs(h - c_prev), abs(l - c_prev)))
+    if not tr:
+        return 0.0
+    return sum(tr[-14:]) / min(14, len(tr)) / pip_point
 
 def place_order(symbol: str, direction: str, lot_size: float,
                 sl_pips: float, tp_pips: float,
@@ -73,8 +144,10 @@ def place_order(symbol: str, direction: str, lot_size: float,
         "type_filling": fill,
     }
 
+    # Log with human-readable SL/TP in points for indices
     log.info(f"[EXEC] {direction} {symbol} Price:{price} "
-             f"SL:{sl_price}({sl_pips}p) TP:{tp_price}({tp_pips}p)")
+             f"SL:{sl_price}({sl_pips}p) TP:{tp_price}({tp_pips}p) "
+             f"Point:{point} Lot:{lot_size}")
 
     result = mt5.order_send(request)
     if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
@@ -96,9 +169,11 @@ def place_order(symbol: str, direction: str, lot_size: float,
 
 def manage_positions():
     """
-    Every 30s: manage all bot positions.
+    Every 1s (background thread): manage all bot positions.
     1. Force close if TP or SL hit (fallback safety)
-    2. Implement dynamic profit protection (trailing stop & dynamic TP)
+    2. ATR-adaptive trailing stop — adjusts SL based on current volatility
+    3. Dynamic TP extension based on ATR when 75% to target
+    4. Break-even move: move SL to entry after 1x ATR profit
     """
     positions = mt5.positions_get()
     if not positions:
@@ -141,41 +216,59 @@ def manage_positions():
             _close_position(pos, "SL_HIT", sym_info)
             continue
 
-        # ── Dynamic Profit Protection (Trailing Stop & Dynamic TP) ──
+        # ── Calculate profit in pips ──────────────────────
         profit_pips = 0
         if pos.type == mt5.ORDER_TYPE_BUY:
             profit_pips = (price - pos.price_open) / point
         else:
             profit_pips = (pos.price_open - price) / point
 
-        if profit_pips >= PROFIT_GUARD_TRIGGER_PIPS:
-            # Calculate new trailing stop loss
-            new_sl = 0.0
-            if pos.type == mt5.ORDER_TYPE_BUY:
-                new_sl = round(price - TRAILING_STOP_PIPS * point, sym_info.digits)
-                # Ensure new SL is above original SL and entry price
-                if new_sl > pos.sl and new_sl > pos.price_open:
-                    _modify_sl(pos, new_sl, sym_info, "TRAILING_SL")
-            else: # SELL
-                new_sl = round(price + TRAILING_STOP_PIPS * point, sym_info.digits)
-                # Ensure new SL is below original SL and entry price
-                if new_sl < pos.sl and new_sl < pos.price_open:
-                    _modify_sl(pos, new_sl, sym_info, "TRAILING_SL")
+        # ── ATR-Adaptive Trailing Stop ────────────────────
+        # Fetch current ATR for dynamic trailing distance
+        atr_pips = get_atr_for_symbol(pos.symbol, 'M5', 50)
+        if atr_pips <= 0:
+            atr_pips = TRAILING_STOP_PIPS  # Fallback to config
 
-            # Dynamically adjust TP (optional, but good for extending winners)
-            # This logic can be more sophisticated, e.g., based on ATR, market structure
-            # For now, we'll extend it by a multiplier if it's getting close
+        # Trailing distance = max of ATR * 1.5, TRAILING_STOP_PIPS (config minimum)
+        trail_distance = max(atr_pips * 1.5, TRAILING_STOP_PIPS)
+
+        # Break-even trigger: after 1x ATR profit, move SL to entry
+        be_trigger = atr_pips * 1.0 if atr_pips > 0 else PROFIT_GUARD_TRIGGER_PIPS
+
+        if profit_pips >= be_trigger:
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                # Break-even: move SL to entry price first
+                be_sl = round(pos.price_open + point * 0.1, sym_info.digits)
+                if pos.sl < pos.price_open and profit_pips >= be_trigger:
+                    _modify_sl(pos, be_sl, sym_info, "BREAKEVEN")
+
+                # ATR trailing: trail SL behind price
+                new_sl = round(price - trail_distance * point, sym_info.digits)
+                if new_sl > pos.sl and new_sl > pos.price_open:
+                    _modify_sl(pos, new_sl, sym_info, f"ATR_TRAIL({atr_pips:.1f}p)")
+
+            else:  # SELL
+                be_sl = round(pos.price_open - point * 0.1, sym_info.digits)
+                if pos.sl > pos.price_open and profit_pips >= be_trigger:
+                    _modify_sl(pos, be_sl, sym_info, "BREAKEVEN")
+
+                new_sl = round(price + trail_distance * point, sym_info.digits)
+                if new_sl < pos.sl and new_sl < pos.price_open:
+                    _modify_sl(pos, new_sl, sym_info, f"ATR_TRAIL({atr_pips:.1f}p)")
+
+            # ── Dynamic TP extension based on ATR ──
             current_tp_pips = abs(pos.tp - pos.price_open) / point
-            if profit_pips > current_tp_pips * 0.75: # If 75% to original TP
-                new_tp = 0.0
+            if profit_pips > current_tp_pips * 0.75 and current_tp_pips > 0:
+                # Extend TP to current profit + 2x ATR (let winners run)
+                extension = max(atr_pips * 2.0, trail_distance * 1.5)
                 if pos.type == mt5.ORDER_TYPE_BUY:
-                    new_tp = round(pos.price_open + current_tp_pips * DYNAMIC_TP_MULTIPLIER * point, sym_info.digits)
-                    if new_tp > pos.tp: # Only extend if new TP is further
-                        _modify_tp(pos, new_tp, sym_info, "DYNAMIC_TP")
-                else: # SELL
-                    new_tp = round(pos.price_open - current_tp_pips * DYNAMIC_TP_MULTIPLIER * point, sym_info.digits)
-                    if new_tp < pos.tp: # Only extend if new TP is further
-                        _modify_tp(pos, new_tp, sym_info, "DYNAMIC_TP")
+                    new_tp = round(price + extension * point, sym_info.digits)
+                    if new_tp > pos.tp:
+                        _modify_tp(pos, new_tp, sym_info, f"ATR_EXTEND({extension:.1f}p)")
+                else:  # SELL
+                    new_tp = round(price - extension * point, sym_info.digits)
+                    if new_tp < pos.tp:
+                        _modify_tp(pos, new_tp, sym_info, f"ATR_EXTEND({extension:.1f}p)")
 
 def _close_position(pos, reason: str, sym_info=None):
     """Close a position with market order."""

@@ -10,13 +10,18 @@ from core.logger import get_logger
 from config.settings import (
     RISK_PERCENT_PER_TRADE, MAX_OPEN_TRADES,
     MAX_DAILY_LOSS_PERCENT, MAGIC_NUMBER, MAX_SPREAD,
-    SYMBOL_COOLDOWN_MINUTES, MIN_RISK_REWARD_RATIO
+    SYMBOL_COOLDOWN_MINUTES, MIN_RISK_REWARD_RATIO,
+    MAX_CONSECUTIVE_LOSSES, CONSECUTIVE_LOSS_PAUSE_MINUTES
 )
 
 log = get_logger(__name__)
 
 # In-memory cooldown tracker: {symbol: last_trade_datetime}
 _last_trade_time: dict = {}
+
+# Consecutive loss tracker
+_consecutive_losses: int = 0
+_consecutive_loss_pause_until: datetime = None
 
 
 def calculate_lot_size(symbol: str, sl_pips: float) -> float:
@@ -32,15 +37,24 @@ def calculate_lot_size(symbol: str, sl_pips: float) -> float:
     risk_amount = account.balance * (RISK_PERCENT_PER_TRADE / 100)
 
     # Correct pip size per symbol type
-    # JPY pairs: 1 pip = 0.01 (not 0.0001)
+    # Indices: 1 pip = 1 point
+    # JPY pairs: 1 pip = 0.01
     # Gold XAUUSD: 1 pip = 0.1
-    # Indices: 1 pip = 1.0
+    # Oil: 1 pip = 0.01
+    # Standard forex: 1 pip = 0.0001
+    sym = symbol.upper()
     close_price = sym_info.bid
-    if close_price > 500:          # Gold, indices
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         pip_size = 1.0
-    elif close_price > 50:         # JPY pairs (GBPJPY ~215)
+    elif "XAU" in sym:
+        pip_size = 0.1
+    elif "XAG" in sym:
         pip_size = 0.01
-    else:                          # Standard forex
+    elif any(x in sym for x in ["WTI", "BRN"]):
+        pip_size = 0.01
+    elif close_price > 50 or sym_info.digits <= 3:  # JPY pairs
+        pip_size = 0.01
+    else:  # Standard forex
         pip_size = 0.0001
 
     # Pip value in account currency
@@ -74,11 +88,40 @@ def is_symbol_on_cooldown(symbol: str) -> bool:
     return False
 
 
-def register_trade(symbol: str):
-    """Call this after a trade is placed to start the cooldown."""
+def register_trade(symbol: str, won: bool = None):
+    """Call this after a trade is placed to start the cooldown.
+    If won is provided, updates consecutive loss counter."""
     _last_trade_time[symbol] = datetime.now(timezone.utc)
     log.info(f"[RISK] {symbol} cooldown started — next trade in "
              f"{SYMBOL_COOLDOWN_MINUTES} mins")
+
+
+def update_consecutive_losses(won: bool):
+    """Update consecutive loss counter. Call after each trade closes."""
+    global _consecutive_losses, _consecutive_loss_pause_until
+    if won:
+        _consecutive_losses = 0
+    else:
+        _consecutive_losses += 1
+        if _consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+            _consecutive_loss_pause_until = datetime.now(timezone.utc) + \
+                timedelta(minutes=CONSECUTIVE_LOSS_PAUSE_MINUTES)
+            log.warning(f"[RISK] 🛑 Consecutive loss limit: "
+                        f"{_consecutive_losses} losses — pausing "
+                        f"{CONSECUTIVE_LOSS_PAUSE_MINUTES} mins")
+
+
+def is_consecutive_loss_paused() -> bool:
+    """Check if trading is paused due to consecutive losses."""
+    global _consecutive_loss_pause_until
+    if _consecutive_loss_pause_until is None:
+        return False
+    if datetime.now(timezone.utc) < _consecutive_loss_pause_until:
+        remaining = int((_consecutive_loss_pause_until - datetime.now(timezone.utc)).total_seconds() / 60)
+        log.info(f"[RISK] Paused — consecutive losses. {remaining} mins remaining")
+        return True
+    _consecutive_loss_pause_until = None
+    return False
 
 
 def check_risk_reward(sl_pips: float, tp_pips: float) -> bool:
@@ -139,13 +182,22 @@ def is_spread_acceptable(symbol: str) -> bool:
     sym_info = mt5.symbol_info(symbol)
     if tick is None or sym_info is None:
         return False
-    close_price = sym_info.bid
-    if close_price > 500:
+
+    # Use same pip calculation as calculate_lot_size
+    sym = symbol.upper()
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         pip_size = 1.0
-    elif close_price > 50:
+    elif "XAU" in sym:
+        pip_size = 0.1
+    elif "XAG" in sym:
+        pip_size = 0.01
+    elif any(x in sym for x in ["WTI", "BRN"]):
+        pip_size = 0.01
+    elif sym_info.digits <= 3:
         pip_size = 0.01
     else:
         pip_size = 0.0001
+
     spread = (tick.ask - tick.bid) / pip_size
     max_sp = MAX_SPREAD.get(symbol, MAX_SPREAD["DEFAULT"])
     if spread > max_sp:
@@ -174,12 +226,17 @@ def is_news_blackout(high_impact_events: list,
 
 
 def can_trade(symbol: str,
-              high_impact_events: list = None) -> tuple[bool, str]:
+              high_impact_events: list = None,
+              direction: str = None) -> tuple[bool, str]:
     """
     Master pre-trade gate. Returns (True,'ok') or (False,'reason').
-    Checks in order: daily limit → max positions → symbol positions
-    → cooldown → spread → news.
+    Checks in order: consecutive loss pause → daily limit → max positions
+    → symbol positions → cooldown → spread → news → correlation.
     """
+    # Consecutive loss protection
+    if is_consecutive_loss_paused():
+        return False, "consecutive_loss_pause"
+
     if is_daily_loss_limit_hit():
         return False, "daily_loss_limit"
 
@@ -198,5 +255,18 @@ def can_trade(symbol: str,
 
     if high_impact_events and is_news_blackout(high_impact_events):
         return False, "news_blackout"
+
+    # ── Correlation Risk Check ──
+    if direction:
+        try:
+            import MetaTrader5 as mt5
+            from risk_management.correlation_manager import check_correlation_risk
+            positions = mt5.positions_get()
+            if positions:
+                allowed, reason = check_correlation_risk(symbol, direction, positions)
+                if not allowed:
+                    return False, reason
+        except Exception as e:
+            log.warning(f"[RISK] Correlation check failed: {e}")
 
     return True, "ok"

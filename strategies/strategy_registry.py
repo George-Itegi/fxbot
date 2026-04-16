@@ -174,6 +174,24 @@ REGISTRY = {
         "promoted_to_live":  None,
         "notes":       "Manipulation/Distribution — catches fake breakouts and trapped retail",
     },
+    "TREND_CONTINUATION": {
+        "name":        "Trend Continuation",
+        "file":        "strategies/trend_continuation.py",
+        "version":     "1.0",
+        "phase":       PHASE_PAPER,
+        "status":      "ACTIVE",
+        "best_state":  ["TRENDING_STRONG", "BREAKOUT_ACCEPTED"],
+        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "LONDON_OPEN", "NY_AFTERNOON"],
+        "total_trades": 0,
+        "wins":        0,
+        "losses":      0,
+        "total_pnl":   0.0,
+        "win_rate":    0.0,
+        "created_at":  "2026-04-17",
+        "promoted_to_paper": "2026-04-17",
+        "promoted_to_live":  None,
+        "notes":       "Expansion — rides London/NY trend after pullback to EMA (H4+H1+M15+M5)",
+    },
 }
 
 

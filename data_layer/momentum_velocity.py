@@ -194,15 +194,16 @@ def calculate_candle_velocity(df_candles: pd.DataFrame,
 
 
 def get_pip_size(symbol: str) -> float:
-    """Get pip size for a symbol. 0.01 for JPY/Gold, 0.0001 for others."""
-    jpy_pairs = {'USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'NZDJPY',
-                 'CADJPY', 'CHFJPY'}
-    commodities = {'XAUUSD', 'XAGUSD'}
-    indices = {'US30', 'US500', 'USTEC', 'DE30', 'UK100', 'JP225'}
-
-    if symbol in jpy_pairs or symbol in commodities:
-        return 0.01
-    elif symbol in indices:
+    """Get pip size for a symbol. Matches order_manager._get_pip_point exactly."""
+    sym = symbol.upper()
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         return 1.0  # Index points
-    else:
-        return 0.0001
+    if "XAU" in sym:
+        return 0.1   # Gold
+    if "XAG" in sym:
+        return 0.01  # Silver
+    if any(x in sym for x in ["WTI", "BRN"]):
+        return 0.01  # Oil
+    if any(x in sym for x in ["JPY", "USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY"]):
+        return 0.01  # JPY pairs
+    return 0.0001  # Standard forex

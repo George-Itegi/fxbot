@@ -51,9 +51,21 @@ def evaluate(symbol: str,
     h1  = df_h1.iloc[-1]
     m15 = df_m15.iloc[-1]
 
-    # Pip size detection (JPY and Gold differ)
+    # Pip size detection — matches order_manager._get_pip_point exactly
+    sym = symbol.upper()
     close_price = float(m15['close'])
-    pip_size    = 0.01 if close_price > 50 else 0.0001
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
+        pip_size = 1.0
+    elif "XAU" in sym:
+        pip_size = 0.1
+    elif "XAG" in sym:
+        pip_size = 0.01
+    elif any(x in sym for x in ["WTI", "BRN"]):
+        pip_size = 0.01
+    elif close_price > 50:
+        pip_size = 0.01  # JPY pairs
+    else:
+        pip_size = 0.0001  # Standard forex
     atr_pips    = float(m15['atr']) / pip_size
 
     if atr_pips < 3.0:
@@ -157,13 +169,21 @@ def evaluate(symbol: str,
         if m1_volume_confirms:
             score += 10; confluence.append("M1_VOLUME_SPIKE")
 
-        # --- Layer 5: Scalping Gates (up to 15 pts) NEW ---
+        # --- Layer 5: Scalping Gates (max 8 pts — deduplicated) NEW ---
+        # NOTE: OF, volume, momentum are already scored in market_scanner.
+        # Only add a small bonus here for alignment, don't double-count.
+        scalp_bonus = 0
         if order_flow_imb.get('can_buy', False):
-            score += 5; confluence.append("OF_IMBALANCE_BUY")
+            scalp_bonus += 3; confluence.append("OF_IMBALANCE_BUY")
         if volume_surge.get('surge_detected', False):
-            score += 5; confluence.append("VOLUME_SURGE")
+            scalp_bonus += 3; confluence.append("VOLUME_SURGE")
         if momentum.get('is_scalpable', False):
-            score += 5; confluence.append("MOMENTUM_STRONG")
+            scalp_bonus += 3; confluence.append("MOMENTUM_STRONG")
+        # Cap scalping bonus to prevent score inflation
+        if scalp_bonus > 8:
+            scalp_bonus = 8
+            confluence.append("SCALP_CAP")
+        score += scalp_bonus
 
         # --- Penalties ---
         if smc_bias == 'BULLISH':
@@ -254,13 +274,18 @@ def evaluate(symbol: str,
         if m1_volume_confirms:
             score += 10; confluence.append("M1_VOLUME_SPIKE")
 
-        # --- Layer 5: Scalping Gates (up to 15 pts) NEW ---
+        # --- Layer 5: Scalping Gates (max 8 pts — deduplicated) NEW ---
+        scalp_bonus = 0
         if order_flow_imb.get('can_sell', False):
-            score += 5; confluence.append("OF_IMBALANCE_SELL")
+            scalp_bonus += 3; confluence.append("OF_IMBALANCE_SELL")
         if volume_surge.get('surge_detected', False):
-            score += 5; confluence.append("VOLUME_SURGE")
+            scalp_bonus += 3; confluence.append("VOLUME_SURGE")
         if momentum.get('is_scalpable', False):
-            score += 5; confluence.append("MOMENTUM_STRONG")
+            scalp_bonus += 3; confluence.append("MOMENTUM_STRONG")
+        if scalp_bonus > 8:
+            scalp_bonus = 8
+            confluence.append("SCALP_CAP")
+        score += scalp_bonus
 
         # --- Penalties ---
         if smc_bias == 'BEARISH':

@@ -248,47 +248,66 @@ def calculate_tradeability_score(report: dict) -> dict:
         score += 5
         reasons.append("Moderate rolling delta")
 
-    # --- Order Flow Imbalance (20 pts) ---
+    # --- Order Flow Imbalance (15 pts, was 20 — deduplicated) ---
     imbalance = imb.get('imbalance', 0)
     imb_strength = imb.get('strength', 'NONE')
     if imb_strength == 'EXTREME':
-        score += 20
-        reasons.append(f"Extreme OF imbalance ({imbalance:+.2f})")
-    elif imb_strength == 'STRONG':
         score += 15
         reasons.append(f"Strong OF imbalance ({imbalance:+.2f})")
+    elif imb_strength == 'STRONG':
+        score += 12
+        reasons.append(f"Strong OF imbalance ({imbalance:+.2f})")
     elif imb_strength == 'MODERATE':
-        score += 10
+        score += 7
         reasons.append(f"Moderate OF imbalance ({imbalance:+.2f})")
     elif imb_strength == 'WEAK':
-        score += 3
+        score += 2
 
-    # --- Volume Surge Detection (15 pts) ---
+    # --- Volume Surge Detection (10 pts, was 15 — deduplicated) ---
     if surge.get('surge_detected', False):
         surge_str = surge.get('surge_strength', 'NONE')
-        if surge_str == 'EXTREME':
-            score += 15
-            reasons.append(f"Extreme volume surge ({surge.get('surge_ratio')}x)")
-        elif surge_str == 'STRONG':
-            score += 12
-            reasons.append(f"Strong volume surge ({surge.get('surge_ratio')}x)")
+        if surge_str in ('EXTREME', 'STRONG'):
+            score += 10
+            reasons.append(f"Volume surge ({surge.get('surge_ratio')}x)")
         else:
-            score += 8
-            reasons.append(f"Volume surge detected ({surge.get('surge_ratio')}x)")
+            score += 6
+            reasons.append(f"Volume surge ({surge.get('surge_ratio')}x)")
     else:
-        # Penalty for no institutional activity
-        score -= 3
+        # Small penalty for no institutional activity
+        score -= 2
 
-    # --- Momentum Velocity (10 pts) ---
+    # --- Momentum Velocity (8 pts, was 10 — deduplicated) ---
+    # NOTE: Momentum and volume surge often co-occur.
+    # We track them separately but cap the combined contribution
+    # to avoid double-counting the same market energy.
     if mom.get('is_scalpable', False):
-        score += 10
-        reasons.append(f"Momentum strong ({mom.get('velocity_pips_min')} pips/min)")
+        score += 8
+        reasons.append(f"Momentum active ({mom.get('velocity_pips_min')} pips/min)")
     elif mom.get('is_choppy', True):
         score -= 5
         reasons.append(f"Choppy market ({mom.get('velocity_pips_min')} pips/min)")
     else:
-        score += 4
+        score += 3
         reasons.append(f"Moderate momentum ({mom.get('velocity_pips_min')} pips/min)")
+
+    # --- Deduplication cap: OF + Volume + Momentum max combined 25 pts ---
+    of_contribution = 0
+    if imb_strength in ('EXTREME', 'STRONG'):
+        of_contribution = 15
+    elif imb_strength == 'MODERATE':
+        of_contribution = 7
+    else:
+        of_contribution = 2
+    
+    vol_contribution = 10 if surge.get('surge_detected', False) else -2
+    mom_contribution = 8 if mom.get('is_scalpable', False) else -5
+    
+    combined_flow = of_contribution + vol_contribution + mom_contribution
+    if combined_flow > 25:
+        # Cap to prevent score inflation from correlated metrics
+        overflow = combined_flow - 25
+        score -= overflow
+        reasons.append(f"Flow dedup cap (-{overflow}pts)")
 
     # --- Price vs VWAP distance (15 pts) ---
     pip_vwap = abs(v.get('pip_from_vwap', 999))
