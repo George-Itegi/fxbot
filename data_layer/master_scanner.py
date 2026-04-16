@@ -200,92 +200,93 @@ def print_master_report(r: dict):
 
     print(f"\n{BLOCK_CHAR*57}")
     print(f"  APEX TRADER — MASTER REPORT")
-    print(f"  {r["symbol"]}  |  {r["timestamp"]}")
-    print(f"  {BLOCK_CHAR*57}")   print(f"  BIAS        : {bias} {bias_icon}"
+    print(f"  {r['symbol']}  |  {r['timestamp']}")
+    print(f"  {BLOCK_CHAR*57}")
+    print(f"  BIAS        : {bias} {bias_icon}"
           f"  |  CONFIDENCE: {conf} {conf_icon}")
-    print(f"  STATE       : {state} {state_icons.get(state,"")}")
-    print(f"  SESSION     : {r.get("session","?")}"
-          f"  (x{r.get("session_multiplier",1.0)})")
-    print(f"  SCORES      : Market={r["market_score"]}/100"
-          f"  SMC={r["smc_score"]}/100"
-          f"  FINAL={r["final_score"]}/100")
+    print(f"  STATE       : {state} {state_icons.get(state,'')}")
+    print(f"  SESSION     : {r.get('session','?')}"
+          f"  (x{r.get('session_multiplier',1.0)})")
+    print(f"  SCORES      : Market={r['market_score']}/100"
+          f"  SMC={r['smc_score']}/100"
+          f"  FINAL={r['final_score']}/100")
     if r.get("pd_penalty",0) > 0:
-        print(f"  ⚠️ PD PENALTY : -{r["pd_penalty"]} pts")
-    print(f"  HTF         : {"✅ APPROVED" if r["htf_approved"] else "❌ REJECTED"}"
-          f"  |  H4={htf.get("h4_bias")}")
-    print(f"  ACTION      : {rec["action"]} {act_icon.get(rec["action"],"")}")
-    print(f"  REASON      : {rec["reason"]}")
+        print(f"  ⚠️ PD PENALTY : -{r['pd_penalty']} pts")
+    print(f"  HTF         : {'✅ APPROVED' if r['htf_approved'] else '❌ REJECTED'}"
+          f"  |  H4={htf.get('h4_bias')}")
+    print(f"  ACTION      : {rec['action']} {act_icon.get(rec['action'],'')}")
+    print(f"  REASON      : {rec['reason']}")
     print(f"{LINE_CHAR*57}")
 
     print(f"\n  ── ORDER FLOW ──────────────────────────────")
-    print(f"  Delta (full)   : {d.get("delta",0):+d}"
-          f"  ({d.get("bias","?")} / {d.get("strength","?")})")
-    print(f"  Delta (rolling): {rd.get("delta",0):+d}"
-          f"  ({rd.get("bias","?")} / {rd.get("strength","?")})")
+    print(f"  Delta (full)   : {d.get('delta',0):+d}"
+          f"  ({d.get('bias','?')} / {d.get('strength','?')})")
+    print(f"  Delta (rolling): {rd.get('delta',0):+d}"
+          f"  ({rd.get('bias','?')} / {rd.get('strength','?')})")
 
     print(f"\n  ── MARKET CONTEXT ──────────────────────────")
-    print(f"  VWAP     : {vwap.get("vwap")}"
-          f"  ({vwap.get("pip_from_vwap",0):+.1f} pips)"
-          f"  → {vwap.get("position")}")
-    print(f"  POC      : {prof.get("poc")}"
-          f"  ({prof.get("pip_to_poc")} pips away)")
-    print(f"  VA Zone  : {prof.get("price_position")}")
+    print(f"  VWAP     : {vwap.get('vwap')}"
+          f"  ({vwap.get('pip_from_vwap',0):+.1f} pips)"
+          f"  → {vwap.get('position')}")
+    print(f"  POC      : {prof.get('poc')}"
+          f"  ({prof.get('pip_to_poc')} pips away)")
+    print(f"  VA Zone  : {prof.get('price_position')}")
 
     print(f"\n  ── PREMIUM / DISCOUNT ──────────────────────")
-    print(f"  Zone     : {pd.get("zone")}"
-          f"  ({pd.get("position_pct")}% of range)")
-    print(f"  Bias     : {pd.get("bias")}"
-          f"  | Pips to EQ: {pd.get("pips_to_eq",0):+.1f}")
+    print(f"  Zone     : {pd.get('zone')}"
+          f"  ({pd.get('position_pct')}% of range)")
+    print(f"  Bias     : {pd.get('bias')}"
+          f"  | Pips to EQ: {pd.get('pips_to_eq',0):+.1f}")
 
     print(f"\n  ── SMC STRUCTURE ───────────────────────────")
-    print(f"  Trend    : {ms.get("trend")}"
-          f"  HH:{ms.get("hh_count")} HL:{ms.get("hl_count")}"
-          f" | LH:{ms.get("lh_count")} LL:{ms.get("ll_count")}")
+    print(f"  Trend    : {ms.get('trend')}"
+          f"  HH:{ms.get('hh_count')} HL:{ms.get('hl_count')}"
+          f" | LH:{ms.get('lh_count')} LL:{ms.get('ll_count')}")
     bos = ms.get("bos")
     if bos:
-        print(f"  BOS      : {bos["type"]} @ {bos["level"]}"
-              f"  ({bos.get("break_pips","?")} pips)")
+        print(f"  BOS      : {bos['type']} @ {bos['level']}"
+              f"  ({bos.get('break_pips','?')} pips)")
     choch = ms.get("choch")
     if choch:
-        print(f"  ⚠️ CHOCH  : {choch["type"]} @ {choch["level"]}")
+        print(f"  ⚠️ CHOCH  : {choch['type']} @ {choch['level']}")
 
     print(f"\n  ── LAST SWEEP ──────────────────────────────")
     if sw:
         aligned = "✅ ALIGNED" if r.get("sweep_aligned") else "⚠️ AGAINST"
         icon2   = "📈" if sw["bias"]=="BULLISH" else "📉"
-        print(f"  {icon2} {sw["type"]} @ {sw["swept_level"]}"
+        print(f"  {icon2} {sw['type']} @ {sw['swept_level']}"
               f"  {aligned}")
-        print(f"  Reversal : {sw["reversal_pips"]} pips"
-              f"  | {sw["time"][:16]}")
+        print(f"  Reversal : {sw['reversal_pips']} pips"
+              f"  | {sw['time'][:16]}")
     else:
         print("  No recent sweep.")
 
     print(f"\n  ── KEY LEVELS ──────────────────────────────")
     if nob:
-        print(f"  Nearest OB    : {nob["type"]}"
-              f" | {nob["bottom"]} — {nob["top"]}")
+        print(f"  Nearest OB    : {nob['type']}"
+              f" | {nob['bottom']} — {nob['top']}")
     if brk:
         print(f"  Breakers      : {len(brk)} active"
-              f" | Nearest: {brk[0]["type"]}"
-              f" {brk[0]["bottom"]}—{brk[0]["top"]}")
+              f" | Nearest: {brk[0]['type']}"
+              f" {brk[0]['bottom']}—{brk[0]['top']}")
     if npool:
         status = "UNSWEPT" if not npool["swept"] else "SWEPT"
-        print(f"  Nearest Pool  : {npool["type"]} @ {npool["level"]}"
-              f" ({status}, {npool["touches"]} touches)")
+        print(f"  Nearest Pool  : {npool['type']} @ {npool['level']}"
+              f" ({status}, {npool['touches']} touches)")
     # FVG section — show best quality, or nearest, or status
     nfvg = s.get("nearest_fvg")
     if qfvg:
         f0     = qfvg[0]
         status = "✅ UNFILLED" if not f0["filled"] else "❌ FILLED"
-        print(f"  Best FVG      : {status} {f0["type"]}"
-              f" | {f0["bottom"]}—{f0["top"]}"
-              f" | Q:{f0["quality_score"]}/100"
-              f" | {f0["gap_pips"]}p")
+        print(f"  Best FVG      : {status} {f0['type']}"
+              f" | {f0['bottom']}—{f0['top']}"
+              f" | Q:{f0['quality_score']}/100"
+              f" | {f0['gap_pips']}p")
     elif nfvg:
         status = "✅ UNFILLED" if not nfvg["filled"] else "❌ FILLED"
-        print(f"  Nearest FVG   : {status} {nfvg["type"]}"
-              f" | {nfvg["bottom"]}—{nfvg["top"]}"
-              f" | {nfvg["gap_pips"]}p")
+        print(f"  Nearest FVG   : {status} {nfvg['type']}"
+              f" | {nfvg['bottom']}—{nfvg['top']}"
+              f" | {nfvg['gap_pips']}p")
     else:
         print(f"  FVG           : No significant FVGs detected")
 
@@ -316,15 +317,15 @@ if __name__ == "__main__":
     print(f"\n{DOUBLE_LINE_CHAR*57}")
     print(f"  SUMMARY — Best Opportunities")
     print(f"{DOUBLE_LINE_CHAR*57}")
-    print(f"  {"Symbol":<8} {"Bias":<12} {"Score":<7}"
-          f" {"State":<22} {"Action"}")
+    print(f"  {'Symbol':<8} {'Bias':<12} {'Score':<7}"
+          f" {'State':<22} {'Action'}")
     print(f"  {LINE_CHAR*55}")
     for r in sorted(results, key=lambda x: x["final_score"], reverse=True):
-        htf_flag  = "" if r["htf_approved"] else " ❌HTF"
-        print(f"  {r["symbol"]:<8} {r["combined_bias"]:<12}"
-              f" {r["final_score"]:<7}"
-              f" {r["market_state"]:<22}"
-              f" {r["recommendation"]["action"]}{htf_flag}")
+        htf_flag  = "" if r['htf_approved'] else " ❌HTF"
+        print(f"  {r['symbol']:<8} {r['combined_bias']:<12}"
+              f" {r['final_score']:<7}"
+              f" {r['market_state']:<22}"
+              f" {r['recommendation']['action']}{htf_flag}")
     print(f"{DOUBLE_LINE_CHAR*57}")
 
     mt5.shutdown()
