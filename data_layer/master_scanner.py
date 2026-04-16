@@ -15,6 +15,9 @@ import os
 
 from data_layer.market_scanner import scan_symbol
 from data_layer.smc.smc_scanner import scan_smc
+from data_layer.feature_store import store
+from data_layer.tick_aggregator import aggregator, init_aggregator
+from data_layer.fractal_alignment import check_fractal_alignment
 
 load_dotenv()
 
@@ -43,6 +46,12 @@ def master_scan(symbol: str) -> dict | None:
     if market is None or smc is None:
         return None
 
+    # Update the Feature Store
+    store.update_symbol_features(symbol, market, smc)
+    
+    # Check Fractal Alignment (Macro -> Setup -> Trigger)
+    fractal = check_fractal_alignment(symbol, smc, market)
+    
     market_score = market.get('trade_score', 0)
     smc_score    = smc.get('smc_score', 0)
 
@@ -92,6 +101,7 @@ def master_scan(symbol: str) -> dict | None:
         'timestamp':        datetime.now(timezone.utc).strftime('%H:%M:%S UTC'),
         'market_report':    market,
         'smc_report':       smc,
+        'fractal_alignment': fractal,
         'market_score':     market_score,
         'smc_score':        smc_score,
         'final_score':      final_score,

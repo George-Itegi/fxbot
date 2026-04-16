@@ -94,6 +94,24 @@ REGISTRY = {
         "promoted_to_live":  None,
         "notes":       "Fair value reversion strategy",
     },
+    "ORDER_FLOW_EXHAUSTION": {
+        "name":        "Order Flow Exhaustion",
+        "file":        "strategies/order_flow_exhaustion.py",
+        "version":     "1.0",
+        "phase":       PHASE_VIRTUAL,
+        "status":      "ACTIVE",
+        "best_state":  ["BREAKOUT_REJECTED", "REVERSAL_RISK"],
+        "best_session":["LONDON_OPEN", "NY_LONDON_OVERLAP"],
+        "total_trades": 0,
+        "wins":        0,
+        "losses":      0,
+        "total_pnl":   0.0,
+        "win_rate":    0.0,
+        "created_at":  "2026-04-16",
+        "promoted_to_paper": None,
+        "promoted_to_live":  None,
+        "notes":       "Order flow delta divergence scalp",
+    },
 }
 
 

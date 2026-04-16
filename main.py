@@ -45,6 +45,11 @@ def run():
     log.info("[STARTUP] Database initialized")
     log.info(f"[STARTUP] Watchlist: {', '.join(WATCHLIST)}")
 
+    # ── Initialize Tick Aggregator ───────────────────────────
+    from data_layer.tick_aggregator import init_aggregator
+    init_aggregator(WATCHLIST)
+    log.info("[STARTUP] Tick Aggregator initialized (continuous streaming)")
+
     # ── Import all modules ────────────────────────────────────
     from data_layer.master_scanner import master_scan
     from strategies.strategy_engine import run_strategies

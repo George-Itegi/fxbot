@@ -14,6 +14,7 @@ from strategies.ema_trend import evaluate as ema_evaluate
 from strategies.smc_ob_reversal import evaluate as ob_evaluate
 from strategies.liquidity_sweep_entry import evaluate as sweep_evaluate
 from strategies.vwap_mean_reversion import evaluate as vwap_evaluate
+from strategies.order_flow_exhaustion import evaluate as exhaustion_evaluate
 
 log = get_logger(__name__)
 
@@ -23,6 +24,7 @@ STRATEGY_FUNCTIONS = {
     "SMC_OB_REVERSAL":      ob_evaluate,
     "LIQUIDITY_SWEEP_ENTRY":sweep_evaluate,
     "VWAP_MEAN_REVERSION":  vwap_evaluate,
+    "ORDER_FLOW_EXHAUSTION":exhaustion_evaluate,
 }
 
 def run_strategies(symbol: str,
@@ -133,5 +135,11 @@ def _run_one_strategy(name, symbol,
             market_report=market_report,
             smc_report=smc_report,
             master_report=master_report)
+
+    elif name == "ORDER_FLOW_EXHAUSTION":
+        return exhaustion_evaluate(
+            symbol, df_m15, df_h1,
+            smc_report=smc_report,
+            market_report=market_report)
 
     return None
