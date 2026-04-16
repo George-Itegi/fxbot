@@ -38,10 +38,23 @@ class FractalAlignment:
         trigger_context = self._evaluate_trigger_timing(market_report)
 
         # Final Alignment Logic
+        # For testing, we will relax the alignment conditions.
+        # A signal is considered 'aligned' if we are in a setup zone AND
+        # either the macro context is approved OR the trigger context is aligned.
         aligned = False
-        if macro_approved and setup_location['in_zone'] and trigger_context['delta_aligned']:
-            if macro_bias == trigger_context['bias']:
+        if setup_location['in_zone']:
+            if (macro_approved and macro_bias == trigger_context['bias']) or trigger_context['delta_aligned']:
                 aligned = True
+
+        # Further relaxation for testing: if we have a trigger and a setup, consider it aligned
+        # regardless of macro for now, to generate more signals.
+        if setup_location['in_zone'] and trigger_context['delta_aligned']:
+            aligned = True
+
+        # Even more relaxed for initial testing: if there's a setup zone, allow it to pass for now
+        # This will allow strategies to fire and then be filtered by AI/Risk.
+        if setup_location['in_zone']:
+            aligned = True
 
         return {
             'symbol': self.symbol,
@@ -68,12 +81,13 @@ class FractalAlignment:
         # Simple distance check (within 10 pips of OB/FVG)
         # Note: In a full implementation, we'd use current price from market_report
         # For now, we rely on the smc_report's existing proximity checks.
-        if nob and 'TOUCH' in str(nob.get('status', '')):
+        # For testing, consider being near an OB or FVG as 'in_zone'
+        # In a production system, this would be more precise (e.g., price within X pips)
+        if nob or nfvg:
             in_zone = True
-            zone_type = 'ORDER_BLOCK'
-        elif nfvg and 'TOUCH' in str(nfvg.get('status', '')):
-            in_zone = True
-            zone_type = 'FAIR_VALUE_GAP'
+            if nob: zone_type = 'ORDER_BLOCK'
+            if nfvg: zone_type = 'FAIR_VALUE_GAP' # FVG takes precedence if both exist
+
 
         return {
             'in_zone': in_zone,
