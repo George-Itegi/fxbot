@@ -16,7 +16,7 @@ st.set_page_config(
 
 # ── Sidebar ───────────────────────────────────────────────────
 st.sidebar.title("📈 APEX TRADER")
-st.sidebar.markdown("v3.0 | ICMarkets Demo")
+st.sidebar.markdown("v4.1 | ICMarkets Demo")
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio("Navigation", [

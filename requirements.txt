@@ -20,8 +20,8 @@ anthropic>=0.25.0
 # HTTP requests (external APIs)
 requests>=2.31.0
 
-# Database
-# sqlite3 is built-in — no install needed
+# Database (v4.1: switched from SQLite to MySQL)
+mysql-connector-python>=8.1.0
 
 # Dashboard (Phase 2)
 streamlit>=1.32.0

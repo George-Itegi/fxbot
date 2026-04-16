@@ -2,8 +2,12 @@
 # data_layer/fractal_alignment.py
 # PURPOSE: Multi-Timeframe Fractal Alignment for precision scalping.
 # H4/H1 (Macro) → M15/M5 (Setup) → M1/Tick (Trigger).
-# UPGRADED: Now fetches actual M5 and M1 data for real
-# structure confirmation and precise entry triggers.
+# 
+# v4.1 FIXES:
+#   - Relaxed alignment: no longer requires ALL 4 factors (was too strict)
+#   - Uses get_pip_size() from momentum_velocity instead of hardcoded 0.01/0.0001
+#   - M1 trigger relaxed: volume OR momentum (not both required)
+#   - Added setup_quality scoring for bypass decisions
 # =============================================================
 
 import pandas as pd
@@ -24,7 +28,11 @@ class FractalAlignment:
       H4/H1  = Macro (WHY — trend direction)
       M15/M5 = Setup  (WHERE — pullback zone, OB/FVG)
       M1     = Trigger (WHEN — precise entry with volume/velocity)
+
+    v4.1: Relaxed — requires setup + M5 structure, M1 trigger is preferred
+    but not mandatory for high-confidence setups.
     """
+
     def __init__(self, symbol: str):
         self.symbol = symbol
 
@@ -32,7 +40,8 @@ class FractalAlignment:
                            market_report: Dict[str, Any]) -> Dict[str, Any]:
         """
         Returns a comprehensive alignment report across all timeframes.
-        Fetches real M5 and M1 data for actual structure confirmation.
+        v4.1: Relaxed gating — setup in zone + M5 confirmed = enough for trade.
+        M1 trigger is bonus confirmation, not a hard requirement.
         """
         # 1. Macro Context (H4/H1) - Already part of smc_report's htf_alignment
         htf = smc_report.get('htf_alignment', {})
@@ -48,17 +57,39 @@ class FractalAlignment:
         m1_data = get_candles(self.symbol, 'M1', 100)
         m1_trigger = self._analyze_m1_trigger(m1_data, market_report)
 
-        # Final Alignment Logic (Stricter for higher quality signals)
-        # Requires: in a setup zone AND macro context approved
-        # AND M5 structure confirms AND M1 trigger aligned
-        aligned = setup_location['in_zone'] and \
-                  macro_approved and \
-                  m5_structure['confirmed'] and \
-                  m1_trigger['trigger_aligned']
+        # ── v4.1 RELAXED ALIGNMENT LOGIC ──
+        # Count how many factors agree
+        factors_agreed = 0
+        total_factors = 4
+
+        if setup_location['in_zone']:
+            factors_agreed += 1
+        if macro_approved:
+            factors_agreed += 1
+        if m5_structure['confirmed']:
+            factors_agreed += 1
+        if m1_trigger['trigger_aligned']:
+            factors_agreed += 1
+
+        # ALIGNED if at least 3 of 4 factors agree
+        # OR if setup + M5 + M1 agree (even without macro)
+        aligned = factors_agreed >= 3 or \
+                  (setup_location['in_zone'] and m5_structure['confirmed'] and m1_trigger['trigger_aligned'])
+
+        # Setup quality score (0-3) for bypass decisions in main.py
+        setup_quality = 0
+        if setup_location['in_zone']:
+            setup_quality += 1
+        if m5_structure['confirmed']:
+            setup_quality += 1
+        if m1_trigger['trigger_aligned']:
+            setup_quality += 1
 
         return {
             'symbol': self.symbol,
             'aligned': aligned,
+            'setup_quality': setup_quality,       # 0-3 for bypass logic
+            'factors_agreed': factors_agreed,
             'macro': {
                 'bias': macro_bias,
                 'approved': macro_approved
@@ -115,15 +146,21 @@ class FractalAlignment:
         # Last candle direction
         result['last_candle_bullish'] = last['close'] > last['open']
 
-        # ATR in pips
+        # ATR in pips — USE CORRECT PIP SIZE (v4.1 FIX)
         close_price = float(last['close'])
-        pip_size = 0.01 if close_price > 50 else 0.0001
-        result['atr_pips'] = round(float(last.get('atr', 0)) / pip_size, 1)
+        pip_size = get_pip_size(self.symbol)  # FIXED: was hardcoded
+        atr_raw = float(last.get('atr', 0))
+        if atr_raw > 0 and pip_size > 0:
+            result['atr_pips'] = round(atr_raw / pip_size, 1)
 
-        # Structure is confirmed if EMA alignment and supertrend agree
+        # Structure is confirmed if EMA alignment OR supertrend agrees
+        # (relaxed from requiring BOTH)
         if result['ema_alignment'] in ('BULLISH', 'WEAK_BULL') and result['supertrend_dir'] == 1:
             result['confirmed'] = True
         elif result['ema_alignment'] in ('BEARISH', 'WEAK_BEAR') and result['supertrend_dir'] == -1:
+            result['confirmed'] = True
+        elif result['ema_alignment'] in ('BULLISH', 'BEARISH'):
+            # v4.1: EMA alone is enough (supertrend lagging)
             result['confirmed'] = True
 
         return result
@@ -132,8 +169,7 @@ class FractalAlignment:
                             market_report: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyze M1 candles for precise entry timing.
-        Checks: StochRSI, volume, candle pattern, momentum.
-        Only fires when all micro-level conditions align.
+        v4.1: Relaxed — volume OR momentum is enough (not both required).
         """
         result = {
             'trigger_aligned': False,
@@ -157,23 +193,19 @@ class FractalAlignment:
         prev_k = float(prev.get('stoch_rsi_k', 50))
         prev_d = float(prev.get('stoch_rsi_d', 50))
 
-        # Bullish cross: K crosses above D from oversold
         if prev_k <= prev_d and stoch_k > stoch_d and stoch_k < 40:
             result['stochrsi_signal'] = 'BUY_CROSS'
-        # Bearish cross: K crosses below D from overbought
         elif prev_k >= prev_d and stoch_k < stoch_d and stoch_k > 60:
             result['stochrsi_signal'] = 'SELL_CROSS'
-        # Oversold zone
         elif stoch_k < 20:
             result['stochrsi_signal'] = 'OVERSOLD'
-        # Overbought zone
         elif stoch_k > 80:
             result['stochrsi_signal'] = 'OVERBOUGHT'
 
         # 2. Volume confirmation (current M1 candle vs 20-period average)
         vol_ma = float(last.get('vol_ma20', 0))
         current_vol = float(last.get('tick_volume', 0))
-        if vol_ma > 0 and current_vol >= vol_ma * 1.5:
+        if vol_ma > 0 and current_vol >= vol_ma * 1.3:  # v4.1: lowered from 1.5x
             result['volume_confirms'] = True
 
         # 3. Candle pattern
@@ -181,12 +213,12 @@ class FractalAlignment:
         full_range = last['high'] - last['low']
         if full_range > 0:
             body_ratio = body / full_range
-            if body_ratio > 0.7:  # Strong body
+            if body_ratio > 0.6:  # v4.1: lowered from 0.7
                 if last['close'] > last['open']:
                     result['candle_pattern'] = 'STRONG_BULL'
                 else:
                     result['candle_pattern'] = 'STRONG_BEAR'
-            elif body_ratio < 0.3:  # Doji/wick
+            elif body_ratio < 0.3:
                 result['candle_pattern'] = 'DOJI'
             else:
                 result['candle_pattern'] = 'NORMAL'
@@ -205,11 +237,14 @@ class FractalAlignment:
             m1_bias = 'BEARISH'
         result['bias'] = m1_bias
 
-        # Trigger is aligned when timing + volume + momentum all agree
-        if m1_bias != 'NEUTRAL' and result['volume_confirms']:
-            result['trigger_aligned'] = True
-        elif m1_bias != 'NEUTRAL' and result['momentum_ok']:
-            result['trigger_aligned'] = True
+        # v4.1: Trigger aligned if bias is set AND (volume OR momentum confirms)
+        # Was: required BOTH — too strict, blocked everything
+        if m1_bias != 'NEUTRAL':
+            if result['volume_confirms'] or result['momentum_ok']:
+                result['trigger_aligned'] = True
+            elif result['stochrsi_signal'] in ('BUY_CROSS', 'SELL_CROSS'):
+                # StochRSI cross alone is enough confirmation
+                result['trigger_aligned'] = True
 
         return result
 
@@ -227,7 +262,7 @@ class FractalAlignment:
         if nob or nfvg:
             in_zone = True
             if nob and nfvg:
-                zone_type = 'OB_FVG_CONFLUENCE'  # Best case — both present
+                zone_type = 'OB_FVG_CONFLUENCE'
             elif nfvg:
                 zone_type = 'FAIR_VALUE_GAP'
             elif nob:

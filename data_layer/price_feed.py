@@ -197,12 +197,17 @@ def _calc_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
 
 def get_spread_pips(symbol: str) -> float:
-    """Return the current spread in pips."""
+    """Return the current spread in pips.
+    v4.1 FIX: Uses get_pip_size() instead of naive point*10.
+    """
     tick = mt5.symbol_info_tick(symbol)
-    info = mt5.symbol_info(symbol)
-    if tick is None or info is None:
+    if tick is None:
         return 999.0
-    return round((tick.ask - tick.bid) / (info.point * 10), 2)
+    from data_layer.momentum_velocity import get_pip_size
+    pip_size = get_pip_size(symbol)
+    if pip_size <= 0:
+        return 999.0
+    return round((tick.ask - tick.bid) / pip_size, 2)
 
 
 def get_current_price(symbol: str) -> dict:

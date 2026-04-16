@@ -1,22 +1,45 @@
 # dashboard/components/db_helper.py
 # Shared database query helpers for all dashboard pages
+# v4.1: Converted from SQLite to MySQL
 
-import sqlite3
-import pandas as pd
 import os
+import mysql.connector
+from mysql.connector import pooling, Error
+import pandas as pd
 
-DB_PATH = os.path.join(os.path.dirname(__file__),
-                       '..', '..', 'database', 'apex_trader.db')
+DB_HOST     = os.getenv('DB_HOST', 'localhost')
+DB_PORT     = int(os.getenv('DB_PORT', '3306'))
+DB_USER     = os.getenv('DB_USER', 'root')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_NAME     = os.getenv('DB_NAME', 'apex_trader')
 
+_pool = None
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        try:
+            _pool = pooling.MySQLConnectionPool(
+                pool_name="dashboard_pool",
+                pool_size=3,
+                pool_reset_session=True,
+                host=DB_HOST, port=DB_PORT,
+                user=DB_USER, password=DB_PASSWORD,
+                database=DB_NAME, autocommit=True,
+            )
+        except Error as e:
+            print(f"[DB_HELPER] MySQL pool error: {e}")
+            raise
+    return _pool
 
 def get_trades(limit: int = 500) -> pd.DataFrame:
     """Fetch all completed trades."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        df   = pd.read_sql_query("""
+        conn = _get_pool().get_connection()
+        df = pd.read_sql_query("""
             SELECT * FROM trades
             ORDER BY timestamp_open DESC
-            LIMIT ?
+            LIMIT %s
         """, conn, params=(limit,))
         conn.close()
         return df
@@ -27,8 +50,8 @@ def get_trades(limit: int = 500) -> pd.DataFrame:
 def get_open_positions() -> pd.DataFrame:
     """Fetch trades with no close timestamp."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        df   = pd.read_sql_query("""
+        conn = _get_pool().get_connection()
+        df = pd.read_sql_query("""
             SELECT * FROM trades
             WHERE timestamp_close IS NULL
             ORDER BY timestamp_open DESC
@@ -42,11 +65,11 @@ def get_open_positions() -> pd.DataFrame:
 def get_signals(limit: int = 200) -> pd.DataFrame:
     """Fetch recent signals — traded and skipped."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        df   = pd.read_sql_query("""
+        conn = _get_pool().get_connection()
+        df = pd.read_sql_query("""
             SELECT * FROM signals
             ORDER BY timestamp DESC
-            LIMIT ?
+            LIMIT %s
         """, conn, params=(limit,))
         conn.close()
         return df
@@ -57,16 +80,16 @@ def get_signals(limit: int = 200) -> pd.DataFrame:
 def get_strategy_stats() -> pd.DataFrame:
     """Aggregate win rate and P&L per strategy."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        df   = pd.read_sql_query("""
+        conn = _get_pool().get_connection()
+        df = pd.read_sql_query("""
             SELECT
                 strategy,
                 COUNT(*) as total_trades,
-                SUM(CASE WHEN outcome LIKE 'WIN%' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN outcome LIKE 'WIN%%' THEN 1 ELSE 0 END) as wins,
                 SUM(CASE WHEN outcome = 'LOSS' THEN 1 ELSE 0 END) as losses,
                 ROUND(AVG(profit_loss), 2) as avg_pnl,
                 ROUND(SUM(profit_loss), 2) as total_pnl,
-                ROUND(100.0 * SUM(CASE WHEN outcome LIKE 'WIN%' THEN 1 ELSE 0 END)
+                ROUND(100.0 * SUM(CASE WHEN outcome LIKE 'WIN%%' THEN 1 ELSE 0 END)
                       / COUNT(*), 1) as win_rate
             FROM trades
             WHERE outcome IS NOT NULL
@@ -77,6 +100,7 @@ def get_strategy_stats() -> pd.DataFrame:
         return df
     except Exception:
         return pd.DataFrame()
+
 
 def get_live_positions_mt5() -> list:
     """Fetch live open positions directly from MT5 with current P&L."""
@@ -162,18 +186,18 @@ def close_position_mt5(ticket: int) -> dict:
 def clear_all_database_data() -> dict:
     """Delete ALL data from all database tables."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_pool().get_connection()
+        c = conn.cursor(dictionary=True)
         tables = ['trades', 'signals', 'market_snapshots',
                   'strategy_performance']
         deleted = {}
         for table in tables:
             try:
-                cursor = conn.cursor()
-                cursor.execute(f"DELETE FROM {table}")
-                deleted[table] = cursor.rowcount
+                c.execute(f"DELETE FROM {table}")
+                deleted[table] = c.rowcount
             except Exception:
                 deleted[table] = 0
-        conn.commit()
+        c.close()
         conn.close()
         return {'success': True, 'deleted': deleted}
     except Exception as e:

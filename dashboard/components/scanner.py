@@ -50,7 +50,7 @@ def render():
     for symbol in WATCHLIST:
         with st.spinner(f"Scanning {symbol}..."):
             try:
-                master = master_scan(symbol, external_data=ext_data)
+                master = master_scan(symbol)
                 if master is None:
                     st.error(f"{symbol}: Scan failed")
                     continue

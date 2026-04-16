@@ -372,6 +372,7 @@ def sync_closed_trades():
     Sync trades closed by MT5 server (SL/TP hit on broker side,
     or manually closed from MT5 terminal) to our database.
     Call this every cycle alongside manage_positions().
+    v4.1: Uses MySQL-compatible db_manager functions.
     """
     from datetime import timezone
     import datetime as dt
@@ -387,7 +388,13 @@ def sync_closed_trades():
         return
 
     from database.db_manager import get_connection, close_trade
-    conn = get_connection()
+    
+    try:
+        conn = get_connection()
+        c = conn.cursor(dictionary=True)
+    except Exception as e:
+        log.error(f"[SYNC] Cannot get DB connection: {e}")
+        return
 
     for deal in deals:
         # Only our bot's trades, only closing deals (entry=1 means close)
@@ -397,13 +404,16 @@ def sync_closed_trades():
             continue
 
         # Check if already recorded as closed
-        c = conn.cursor()
-        c.execute("""
-            SELECT id, timestamp_close, profit_loss
-            FROM trades
-            WHERE ticket = ?
-        """, (deal.position_id,))
-        row = c.fetchone()
+        try:
+            c.execute("""
+                SELECT id, timestamp_close, profit_loss
+                FROM trades
+                WHERE ticket = %s
+            """, (deal.position_id,))
+            row = c.fetchone()
+        except Exception as e:
+            log.error(f"[SYNC] DB query error: {e}")
+            continue
 
         if row and row['timestamp_close'] is None:
             # Trade exists but not yet closed in our DB — update it
@@ -431,4 +441,5 @@ def sync_closed_trades():
             except Exception as e:
                 log.error(f"[SYNC] Failed to record close: {e}")
 
+    c.close()
     conn.close()

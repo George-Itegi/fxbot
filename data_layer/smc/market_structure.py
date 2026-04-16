@@ -13,6 +13,8 @@ import pandas as pd
 from dotenv import load_dotenv
 import os
 
+from data_layer.momentum_velocity import get_pip_size
+
 load_dotenv()
 
 
@@ -131,7 +133,8 @@ def detect_structure(df: pd.DataFrame) -> dict:
     last_sh_time = str(high_times[-1])
     last_sl_time = str(low_times[-1])
     min_break_pips = 5.0
-    pip_size       = 0.0001
+    # v4.1 FIX: Use centralized get_pip_size() instead of hardcoded 0.0001
+    pip_size = get_pip_size(df['close'].iloc[-1])
 
     bos = None
     bull_break = (current_price - last_sh) / pip_size

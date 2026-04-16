@@ -2,6 +2,10 @@
 # data_layer/tick_aggregator.py
 # PURPOSE: Continuous tick-streaming and volume-bar aggregator.
 # Normalizes market volatility for world-class scalping.
+#
+# v4.1 FIX: Delta calculation was completely broken — used
+#   `bid >= ask` which is ALWAYS False (ask > bid in all markets).
+#   Now uses proper tick classification from tick_fetcher.
 # =============================================================
 
 import time
@@ -44,15 +48,28 @@ class TickAggregator:
         while self.running:
             for symbol in self.symbols:
                 try:
-                    # Fetch only the latest ticks since last poll
                     ticks = mt5.copy_ticks_from(symbol, int(time.time() - 1), 100, mt5.COPY_TICKS_ALL)
                     if ticks is None or len(ticks) == 0: continue
                     
                     df = pd.DataFrame(ticks)
                     df['time'] = pd.to_datetime(df['time'], unit='s')
                     
-                    # 1. Update rolling tick buffer (for delta)
-                    self.tick_data[symbol] = pd.concat([self.tick_data[symbol], df]).tail(2000)
+                    # Classify each tick for direction (FIXED v4.1)
+                    from data_layer.tick_fetcher import classify_tick, get_tick_threshold
+                    df['prev_bid'] = df['bid'].shift(1)
+                    df['prev_ask'] = df['ask'].shift(1)
+                    df['side'] = df.apply(
+                        lambda row: classify_tick(
+                            row['flags'], row['bid'], row['ask'], row.get('last', 0),
+                            row['prev_bid'], row['prev_ask'], symbol
+                        ),
+                        axis=1
+                    )
+                    
+                    # 1. Update rolling tick buffer (with proper classification)
+                    self.tick_data[symbol] = pd.concat(
+                        [self.tick_data[symbol], df]
+                    ).tail(2000)
                     
                     # 2. Build Volume Bars
                     for _, tick in df.iterrows():
@@ -61,35 +78,49 @@ class TickAggregator:
                 except Exception as e:
                     log.error(f"Error in aggregator for {symbol}: {e}")
             
-            time.sleep(0.5) # Fast poll for scalping
+            time.sleep(0.5)
 
     def _process_tick_for_bar(self, symbol: str, tick: pd.Series):
         """Logic to aggregate ticks into a volume-based bar."""
-        vol = tick.get('volume', 1.0) # Fallback to 1 if no volume
+        vol = tick.get('volume', 1.0)
         self.current_bar_vol[symbol] += vol
         
-        # If threshold reached, close bar and start new one
         if self.current_bar_vol[symbol] >= self.volume_threshold:
-            # Simplistic bar creation - in production, this would track OHLC
             new_bar = {
                 'time': tick['time'],
                 'close': tick['bid'],
                 'volume': self.current_bar_vol[symbol]
             }
             self.volume_bars[symbol].append(new_bar)
-            self.volume_bars[symbol] = self.volume_bars[symbol][-100:] # Keep last 100 bars
+            self.volume_bars[symbol] = self.volume_bars[symbol][-100:]
             self.current_bar_vol[symbol] = 0.0
 
     def get_latest_delta(self, symbol: str, window: int = 100) -> float:
-        """Calculate delta from the continuous tick buffer."""
+        """
+        Calculate delta from the continuous tick buffer.
+        v4.1 FIX: Uses 'side' column from tick_fetcher classification
+        instead of the broken `bid >= ask` comparison.
+        """
         df = self.tick_data.get(symbol)
-        if df is None or df.empty: return 0.0
+        if df is None or df.empty:
+            return 0.0
         
-        # Identify aggressive side (MT5 specific tick flags or simple bid/ask logic)
-        # For simplicity, assuming 'last' price vs bid/ask
         recent = df.tail(window)
-        buys = len(recent[recent['bid'] >= recent['ask']]) # Aggressive buy approximation
-        sells = len(recent) - buys
+        
+        # Check if 'side' column exists (it should after v4.1 fix)
+        if 'side' in recent.columns:
+            buys = len(recent[recent['side'] == 'BUY'])
+            sells = len(recent[recent['side'] == 'SELL'])
+        else:
+            # Fallback: use consecutive bid comparison
+            buys = 0
+            sells = 0
+            for i in range(1, len(recent)):
+                if recent.iloc[i]['bid'] > recent.iloc[i-1]['bid']:
+                    buys += 1
+                elif recent.iloc[i]['bid'] < recent.iloc[i-1]['bid']:
+                    sells += 1
+        
         return buys - sells
 
 # Global singleton

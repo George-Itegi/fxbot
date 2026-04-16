@@ -28,6 +28,7 @@ from data_layer.smc.liquidity_sweeps import (
 )
 from data_layer.smc.premium_discount import calculate_premium_discount
 from data_layer.smc.htf_alignment import check_htf_alignment
+from data_layer.momentum_velocity import get_pip_size
 
 load_dotenv()
 
@@ -63,8 +64,8 @@ def scan_smc(symbol: str, timeframe=None) -> dict | None:
         return None
     current_price = tick.bid
 
-    sym_info = mt5.symbol_info(symbol)
-    pip_size = sym_info.point * 10 if sym_info else 0.0001
+    # v4.1 FIX: Use centralized get_pip_size() instead of naive point*10
+    pip_size = get_pip_size(symbol)
 
     # --- 1. Market Structure ---
     df_swings = find_swing_points(df, swing_length=5)

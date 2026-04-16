@@ -2,120 +2,170 @@
 # database/db_manager.py
 # The system's memory. Every signal, trade, and data point
 # is recorded here for AI analysis and performance review.
+#
+# v4.1: Converted from SQLite to MySQL (mysql-connector-python).
+# Uses connection pooling with automatic reconnect.
+# All ON CONFLICT → ON DUPLICATE KEY UPDATE for MySQL syntax.
 # =============================================================
 
-import sqlite3
 import os
+import mysql.connector
+from mysql.connector import Error, pooling
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'apex_trader.db')
+# ── MySQL Connection ──────────────────────────────────────────
+# Reads from environment variables or .env file.
+# Falls back to sensible defaults for local development.
+DB_HOST     = os.getenv('DB_HOST', 'localhost')
+DB_PORT     = int(os.getenv('DB_PORT', '3306'))
+DB_USER     = os.getenv('DB_USER', 'root')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_NAME     = os.getenv('DB_NAME', 'apex_trader')
+
+# Connection pool (shared across all threads)
+_pool = None
+
+
+def _get_pool():
+    """Create or return the MySQL connection pool."""
+    global _pool
+    if _pool is None:
+        try:
+            _pool = pooling.MySQLConnectionPool(
+                pool_name="apex_pool",
+                pool_size=5,
+                pool_reset_session=True,
+                host=DB_HOST,
+                port=DB_PORT,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=DB_NAME,
+                autocommit=True,
+            )
+        except Error as e:
+            print(f"[DATABASE] ❌ Cannot create MySQL pool: {e}")
+            raise
+    return _pool
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get a connection from the pool."""
+    pool = _get_pool()
+    return pool.get_connection()
+
+
+def _row_to_dict(cursor, row):
+    """Convert a DB row to a dict (simulates sqlite3.Row)."""
+    if row is None:
+        return None
+    return {cursor.description[i][0]: row[i] for i in range(len(cursor.description))}
 
 
 def init_db():
-    """Create all tables on first run."""
+    """Create all tables on first run (MySQL syntax)."""
     conn = get_connection()
-    c = conn.cursor()
+    c = conn.cursor(dictionary=True)
 
     # --- TRADES TABLE ---
     c.execute("""
         CREATE TABLE IF NOT EXISTS trades (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket            INTEGER,
-            timestamp_open    TEXT,
-            timestamp_close   TEXT,
-            symbol            TEXT,
-            direction         TEXT,
-            strategy          TEXT,
-            session           TEXT,
-            timeframe         TEXT,
-            entry_price       REAL,
-            exit_price        REAL,
-            sl_price          REAL,
-            tp_price          REAL,
-            lot_size          REAL,
-            profit_loss       REAL,
-            outcome           TEXT,
-            ai_score          REAL,
-            confluence_count  INTEGER,
-            rsi_at_entry      REAL,
-            atr_at_entry      REAL,
-            spread_at_entry   REAL,
-            market_regime     TEXT,
-            notes             TEXT
+            id                INT AUTO_INCREMENT PRIMARY KEY,
+            ticket            INT,
+            timestamp_open    DATETIME,
+            timestamp_close   DATETIME,
+            symbol            VARCHAR(20),
+            direction         VARCHAR(10),
+            strategy          VARCHAR(50),
+            session           VARCHAR(30),
+            timeframe         VARCHAR(10),
+            entry_price       DOUBLE,
+            exit_price        DOUBLE,
+            sl_price          DOUBLE,
+            tp_price          DOUBLE,
+            lot_size          DOUBLE,
+            profit_loss       DOUBLE,
+            outcome           VARCHAR(20),
+            ai_score          DOUBLE,
+            confluence_count  INT,
+            rsi_at_entry      DOUBLE,
+            atr_at_entry      DOUBLE,
+            spread_at_entry   DOUBLE,
+            market_regime     VARCHAR(30),
+            notes             TEXT,
+            INDEX idx_ticket (ticket),
+            INDEX idx_symbol (symbol),
+            INDEX idx_outcome (outcome)
         )
     """)
 
     # --- SIGNALS TABLE (every evaluated signal, traded or not) ---
     c.execute("""
         CREATE TABLE IF NOT EXISTS signals (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp        TEXT,
-            symbol           TEXT,
-            direction        TEXT,
-            strategy         TEXT,
-            ai_score         REAL,
-            confluence_count INTEGER,
-            was_traded       INTEGER,
+            id               INT AUTO_INCREMENT PRIMARY KEY,
+            timestamp        DATETIME,
+            symbol           VARCHAR(20),
+            direction        VARCHAR(10),
+            strategy         VARCHAR(50),
+            ai_score         DOUBLE,
+            confluence_count INT,
+            was_traded       TINYINT,
             skip_reason      TEXT,
-            session          TEXT,
-            market_regime    TEXT
+            session          VARCHAR(30),
+            market_regime    VARCHAR(30),
+            INDEX idx_symbol (symbol),
+            INDEX idx_strategy (strategy)
         )
     """)
 
     # --- MARKET SNAPSHOT TABLE (external data logged each cycle) ---
     c.execute("""
         CREATE TABLE IF NOT EXISTS market_snapshots (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp       TEXT,
-            fear_greed      REAL,
-            vix             REAL,
-            dxy             REAL,
-            gold_price      REAL,
-            oil_price       REAL,
-            sp500           REAL,
-            bond_yield_10y  REAL,
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            timestamp       DATETIME,
+            fear_greed      DOUBLE,
+            vix             DOUBLE,
+            dxy             DOUBLE,
+            gold_price      DOUBLE,
+            oil_price       DOUBLE,
+            sp500           DOUBLE,
+            bond_yield_10y  DOUBLE,
             cot_net_pos     TEXT,
-            news_sentiment  REAL
+            news_sentiment  DOUBLE
         )
     """)
 
     # --- STRATEGY PERFORMANCE TABLE (updated after each trade closes) ---
     c.execute("""
         CREATE TABLE IF NOT EXISTS strategy_performance (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            strategy     TEXT UNIQUE,
-            total_trades INTEGER DEFAULT 0,
-            wins         INTEGER DEFAULT 0,
-            losses       INTEGER DEFAULT 0,
-            breakevens   INTEGER DEFAULT 0,
-            total_pnl    REAL DEFAULT 0.0,
-            win_rate     REAL DEFAULT 0.0,
-            avg_rr       REAL DEFAULT 0.0,
-            last_updated TEXT
+            id           INT AUTO_INCREMENT PRIMARY KEY,
+            strategy     VARCHAR(50) UNIQUE,
+            total_trades INT DEFAULT 0,
+            wins         INT DEFAULT 0,
+            losses       INT DEFAULT 0,
+            breakevens   INT DEFAULT 0,
+            total_pnl    DOUBLE DEFAULT 0.0,
+            win_rate     DOUBLE DEFAULT 0.0,
+            avg_rr       DOUBLE DEFAULT 0.0,
+            last_updated DATETIME
         )
     """)
 
-    conn.commit()
+    c.close()
     conn.close()
-    print("[DATABASE] ✅ All tables initialized.")
+    print("[DATABASE] ✅ All tables initialized (MySQL).")
+
 
 def log_trade(data: dict):
     """Record a new trade when it opens."""
     conn = get_connection()
-    c = conn.cursor()
+    c = conn.cursor(dictionary=True)
     c.execute("""
         INSERT INTO trades (
             ticket, timestamp_open, symbol, direction, strategy, session,
             timeframe, entry_price, sl_price, tp_price, lot_size,
             ai_score, confluence_count, rsi_at_entry, atr_at_entry,
             spread_at_entry, market_regime, notes
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """, (
         data.get('ticket'), datetime.now().isoformat(),
         data['symbol'], data['direction'], data['strategy'],
@@ -125,7 +175,7 @@ def log_trade(data: dict):
         data.get('rsi'), data.get('atr'), data.get('spread'),
         data.get('market_regime'), data.get('notes')
     ))
-    conn.commit()
+    c.close()
     conn.close()
 
 
@@ -137,14 +187,14 @@ def close_trade(ticket: int, exit_price: float,
     outcome: 'WIN_TP' | 'WIN_TP2' | 'LOSS' | 'BREAKEVEN' | 'MANUAL'
     """
     conn = get_connection()
-    c = conn.cursor()
+    c = conn.cursor(dictionary=True)
     c.execute("""
         UPDATE trades
-        SET timestamp_close = ?,
-            exit_price      = ?,
-            profit_loss     = ?,
-            outcome         = ?
-        WHERE ticket = ?
+        SET timestamp_close = %s,
+            exit_price      = %s,
+            profit_loss     = %s,
+            outcome         = %s
+        WHERE ticket = %s
     """, (
         datetime.now().isoformat(),
         exit_price,
@@ -155,65 +205,65 @@ def close_trade(ticket: int, exit_price: float,
 
     # Also update strategy_performance table
     if c.rowcount > 0:
-        c.execute("SELECT strategy FROM trades WHERE ticket = ?", (ticket,))
+        c.execute("SELECT strategy FROM trades WHERE ticket = %s", (ticket,))
         row = c.fetchone()
         if row:
             strategy = row['strategy']
             won = 1 if 'WIN' in outcome else 0
             lost = 1 if outcome == 'LOSS' else 0
             be = 1 if outcome == 'BREAKEVEN' else 0
+            now = datetime.now().isoformat()
+
+            # MySQL: INSERT ... ON DUPLICATE KEY UPDATE
             c.execute("""
                 INSERT INTO strategy_performance
                     (strategy, total_trades, wins, losses, breakevens,
                      total_pnl, win_rate, last_updated)
-                VALUES (?, 1, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(strategy) DO UPDATE SET
+                VALUES (%s, 1, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
                     total_trades = total_trades + 1,
-                    wins         = wins + ?,
-                    losses       = losses + ?,
-                    breakevens   = breakevens + ?,
-                    total_pnl    = round(total_pnl + ?, 2),
-                    win_rate     = round(100.0*(wins+?) /
+                    wins         = wins + VALUES(wins),
+                    losses       = losses + VALUES(losses),
+                    breakevens   = breakevens + VALUES(breakevens),
+                    total_pnl    = round(total_pnl + VALUES(total_pnl), 2),
+                    win_rate     = round(100.0*(wins+VALUES(wins)) /
                                    (total_trades+1), 1),
-                    last_updated = ?
+                    last_updated = VALUES(last_updated)
             """, (
                 strategy, won, lost, be,
-                round(profit_loss, 2), datetime.now().isoformat(),
-                won, lost, be,
-                round(profit_loss, 2), won,
-                datetime.now().isoformat()
+                round(profit_loss, 2), now,
             ))
 
-    conn.commit()
+    c.close()
     conn.close()
 
 
 def log_signal(data: dict):
     conn = get_connection()
-    c = conn.cursor()
+    c = conn.cursor(dictionary=True)
     c.execute("""
         INSERT INTO signals (
             timestamp, symbol, direction, strategy, ai_score,
             confluence_count, was_traded, skip_reason, session, market_regime
-        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """, (
         datetime.now().isoformat(), data['symbol'], data.get('direction'),
         data.get('strategy'), data.get('ai_score'), data.get('confluence_count'),
         int(data.get('was_traded', False)), data.get('skip_reason'),
         data.get('session'), data.get('market_regime')
     ))
-    conn.commit()
+    c.close()
     conn.close()
 
 
 def log_market_snapshot(data: dict):
     conn = get_connection()
-    c = conn.cursor()
+    c = conn.cursor(dictionary=True)
     c.execute("""
         INSERT INTO market_snapshots (
             timestamp, fear_greed, vix, dxy, gold_price,
             oil_price, sp500, bond_yield_10y, cot_net_pos, news_sentiment
-        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """, (
         datetime.now().isoformat(),
         data.get('fear_greed'), data.get('vix'), data.get('dxy'),
@@ -221,5 +271,5 @@ def log_market_snapshot(data: dict):
         data.get('bond_yield_10y'), str(data.get('cot_net_pos', {})),
         data.get('news_sentiment')
     ))
-    conn.commit()
+    c.close()
     conn.close()

@@ -1,16 +1,20 @@
 # =============================================================
-# main.py — APEX TRADER v4.0
+# main.py — APEX TRADER v4.1
 # The master orchestrator. Run this file to start the bot.
 # Connects ALL layers: Data → SMC → External → Strategies
 #                    → AI Models → Risk → Execution
 #
-# v4.0 CHANGES:
+# v4.1 CHANGES:
+#   - MySQL database support (replaces SQLite)
+#   - Fixed fractal alignment blocking all trades (relaxed gating)
+#   - Fixed pip calculation for indices/metals (JP225, XAUUSD, etc.)
+#   - Fixed tick aggregator delta (was always 0)
+#   - Fixed dashboard scanner crash
 #   - Bias cross-validation: strategy direction vs master combined_bias
 #   - Re-entry logic: resume if setup still valid after TP
-#   - Consecutive loss protection: pause after N consecutive losses
 #   - Correlation risk check: prevent currency over-exposure
-#   - Pass direction to can_trade() for correlation check
-#   - Score inflation fix: deduplicated scoring in market_scanner
+#   - ATR-adaptive trailing stop + ATR-based M1 Scalp SL
+#   - Score deduplication in market_scanner
 # =============================================================
 
 import time
@@ -50,7 +54,7 @@ def run():
 
     log.info("=" * 60)
     log.info("  APEX TRADER — INSTITUTIONAL GRADE BOT")
-    log.info("  Version 4.0 | Signal Quality + Risk Improvements")
+    log.info("  Version 4.1 | Signal Quality + Risk + MySQL + Pip Fixes")
     log.info("=" * 60)
 
     # ── Startup checks ────────────────────────────────────────
@@ -267,16 +271,32 @@ def _scan_and_trade(symbol: str,
     log.info(f"  {symbol}: Score={final_score} | {bias}"
              f" | {state} | -> {action} | Fractal: {fractal_rec}")
 
-    # ── Fractal Alignment Gate (RELAXED for high-confidence) ──
+    # ── Fractal Alignment Gate (v4.1 RELAXED) ──
+    # setup_quality is 0-3 from fractal_alignment: in_zone + M5_confirmed + M1_aligned
+    setup_quality = fractal.get('setup_quality', 0)
+    factors_agreed = fractal.get('factors_agreed', 0)
+    
     if not fractal_aligned:
-        if final_score >= 75 and state == "TRENDING_STRONG" and m5_confirmed:
+        # Bypass conditions (from most to least strict):
+        # 1. High score + trending + any setup confirmation
+        if final_score >= 70 and state in ("TRENDING_STRONG", "BREAKOUT_ACCEPTED") and setup_quality >= 2:
             log.info(f"  {symbol}: M1 bypassed — high-confidence setup "
-                     f"(score={final_score}, TRENDING_STRONG, M5 confirmed)")
-        elif final_score >= 70 and m5_confirmed and bias not in ("CONFLICTED", "NEUTRAL"):
+                     f"(score={final_score}, {state}, setup_q={setup_quality})")
+        # 2. Good score + M5 confirmed + directional bias
+        elif final_score >= 60 and m5_confirmed and bias not in ("CONFLICTED", "NEUTRAL"):
             log.info(f"  {symbol}: M1 bypassed — strong setup "
                      f"(score={final_score}, bias={bias}, M5 confirmed)")
+        # 3. Very high score alone (strong institutional signal)
+        elif final_score >= 80 and bias not in ("CONFLICTED", "NEUTRAL"):
+            log.info(f"  {symbol}: M1 bypassed — very high score "
+                     f"(score={final_score}, bias={bias})")
+        # 4. In setup zone + M5 confirmed (enough structure)
+        elif setup_quality >= 2 and bias not in ("CONFLICTED", "NEUTRAL"):
+            log.info(f"  {symbol}: M1 bypassed — in setup zone with M5 confirm "
+                     f"(setup_q={setup_quality}, bias={bias})")
         else:
-            log.info(f"  {symbol}: Skipping due to no fractal alignment.")
+            log.info(f"  {symbol}: Skipping due to no fractal alignment. "
+                     f"(score={final_score} q={setup_quality} factors={factors_agreed})")
             return False
 
     # ── Check scalping signal — skip if market is too choppy ──
