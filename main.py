@@ -108,19 +108,23 @@ def run():
             log.info(f"  SCAN | {cycle_t} | {session}")
             log.info(f"{'='*52}")
 
-            # ── Scan each symbol ──────────────────────────────
-            for symbol in WATCHLIST:
-                try:
-                    placed = _scan_and_trade(
-                        symbol,
-                        master_scan, run_strategies,
-                        can_trade, calculate_lot_size,
-                        place_order, log_signal)
-                    if placed:
-                        trade_count += 1
-                        TRADE_COUNT_SINCE_TRAIN += 1
-                except Exception as e:
-                    log.error(f"[CYCLE] Error scanning {symbol}: {e}")
+            # ── Scan each symbol in parallel ──────────────────────────────
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
+                futures = [executor.submit(_scan_and_trade,
+                                           symbol,
+                                           master_scan, run_strategies,
+                                           can_trade, calculate_lot_size,
+                                           place_order, log_signal)
+                           for symbol in WATCHLIST]
+                for future in futures:
+                    try:
+                        placed = future.result()
+                        if placed:
+                            trade_count += 1
+                            TRADE_COUNT_SINCE_TRAIN += 1
+                    except Exception as e:
+                        log.error(f"[CYCLE] Error during parallel scan: {e}")
 
             # ── Retrain models if enough new trades ───────────
             if TRADE_COUNT_SINCE_TRAIN >= MODEL_RETRAIN_TRADES:

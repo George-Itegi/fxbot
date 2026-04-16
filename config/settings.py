@@ -8,15 +8,26 @@ WATCHLIST = [
     # Major Forex pairs
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
     "USDCAD", "USDCHF", "NZDUSD",
+    "EURGBP", "EURAUD", "EURCAD", "EURCHF", "EURNZD",
+    "GBPAUD", "GBPCAD", "GBPCHF", "GBPNZD",
+    "AUDCAD", "AUDCHF", "AUDNZD",
+    "CADCHF", "CADJPY",
+    "CHFJPY",
+    "NZDCAD", "NZDCHF", "NZDJPY",
     # Cross pairs
     "GBPJPY", "EURJPY", "AUDJPY",
     # Commodities
     "XAUUSD",  # Gold
     "XAGUSD",  # Silver
+    "WTIUSD",  # Crude Oil
+    "BRNUSD",  # Brent Oil
     # Indices
     "US30",    # Dow Jones
     "US500",   # S&P 500
     "USTEC",   # Nasdaq
+    "DE30",    # DAX
+    "UK100",   # FTSE 100
+    "JP225",   # Nikkei 225
 ]
 
 # --- TIMEFRAMES USED BY THE SYSTEM ---
