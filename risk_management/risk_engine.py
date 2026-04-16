@@ -42,7 +42,7 @@ def calculate_lot_size(symbol: str, sl_pips: float) -> float:
     # Gold XAUUSD: 1 pip = 0.1
     # Oil: 1 pip = 0.01
     # Standard forex: 1 pip = 0.0001
-    sym = symbol.upper()
+    sym = str(symbol).upper()
     close_price = sym_info.bid
     if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         pip_size = 1.0
@@ -184,7 +184,7 @@ def is_spread_acceptable(symbol: str) -> bool:
         return False
 
     # Use same pip calculation as calculate_lot_size
-    sym = symbol.upper()
+    sym = str(symbol).upper()
     if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         pip_size = 1.0
     elif "XAU" in sym:

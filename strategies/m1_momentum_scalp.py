@@ -160,7 +160,7 @@ def evaluate(symbol: str,
     if m15_bias == "NEUTRAL":
         return None  # No clear bias = no scalp
     
-    direction = m15_bias
+    direction = str(m15_bias)
     score += 15
     confluence.append(f"M15_BIAS_{m15_bias}")
     

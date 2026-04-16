@@ -30,52 +30,52 @@ class FeatureStore:
             'symbol': symbol,
             
             # --- Price & Volatility ---
-            'current_price': market_data.get('current_price'),
-            'atr_m15': market_data.get('atr'), # Assumed from market_report
+            'current_price': float(market_data.get('current_price', 0) or 0),
+            'atr_m15': float(market_data.get('atr', 0) or 0),
             
             # --- Order Flow (Microstructure) ---
-            'delta_full': market_data.get('delta', {}).get('delta', 0),
-            'delta_rolling': market_data.get('rolling_delta', {}).get('delta', 0),
-            'delta_bias': market_data.get('delta', {}).get('bias', 'NEUTRAL'),
-            'delta_strength': market_data.get('delta', {}).get('strength', 'WEAK'),
+            'delta_full': int(market_data.get('delta', {}).get('delta', 0) or 0),
+            'delta_rolling': int(market_data.get('rolling_delta', {}).get('delta', 0) or 0),
+            'delta_bias': str(market_data.get('delta', {}).get('bias', 'NEUTRAL')),
+            'delta_strength': str(market_data.get('delta', {}).get('strength', 'WEAK')),
 
             # --- Order Flow Imbalance (NEW) ---
-            'of_imbalance': market_data.get('order_flow_imbalance', {}).get('imbalance', 0),
-            'of_direction': market_data.get('order_flow_imbalance', {}).get('direction', 'NEUTRAL'),
-            'of_strength': market_data.get('order_flow_imbalance', {}).get('strength', 'NONE'),
-            'of_can_buy': market_data.get('order_flow_imbalance', {}).get('can_buy', False),
-            'of_can_sell': market_data.get('order_flow_imbalance', {}).get('can_sell', False),
+            'of_imbalance': float(market_data.get('order_flow_imbalance', {}).get('imbalance', 0) or 0),
+            'of_direction': str(market_data.get('order_flow_imbalance', {}).get('direction', 'NEUTRAL')),
+            'of_strength': str(market_data.get('order_flow_imbalance', {}).get('strength', 'NONE')),
+            'of_can_buy': bool(market_data.get('order_flow_imbalance', {}).get('can_buy', False)),
+            'of_can_sell': bool(market_data.get('order_flow_imbalance', {}).get('can_sell', False)),
 
             # --- Volume Surge Detection (NEW) ---
-            'volume_surge_detected': market_data.get('volume_surge', {}).get('surge_detected', False),
-            'volume_surge_ratio': market_data.get('volume_surge', {}).get('surge_ratio', 0),
-            'volume_surge_direction': market_data.get('volume_surge', {}).get('surge_direction', 'NEUTRAL'),
+            'volume_surge_detected': bool(market_data.get('volume_surge', {}).get('surge_detected', False)),
+            'volume_surge_ratio': float(market_data.get('volume_surge', {}).get('surge_ratio', 0) or 0),
+            'volume_surge_direction': str(market_data.get('volume_surge', {}).get('surge_direction', 'NEUTRAL')),
 
             # --- Momentum Velocity (NEW) ---
-            'momentum_velocity': market_data.get('momentum', {}).get('velocity_pips_min', 0),
-            'momentum_direction': market_data.get('momentum', {}).get('velocity_direction', 'FLAT'),
-            'momentum_is_scalpable': market_data.get('momentum', {}).get('is_scalpable', False),
-            'momentum_is_choppy': market_data.get('momentum', {}).get('is_choppy', True),
+            'momentum_velocity': float(market_data.get('momentum', {}).get('velocity_pips_min', 0) or 0),
+            'momentum_direction': str(market_data.get('momentum', {}).get('velocity_direction', 'FLAT')),
+            'momentum_is_scalpable': bool(market_data.get('momentum', {}).get('is_scalpable', False)),
+            'momentum_is_choppy': bool(market_data.get('momentum', {}).get('is_choppy', True)),
             
             # --- Context (VWAP & Volume) ---
-            'dist_from_vwap': market_data.get('vwap', {}).get('pip_from_vwap', 0),
-            'vwap_position': market_data.get('vwap', {}).get('position', 'UNKNOWN'),
-            'dist_from_poc': market_data.get('profile', {}).get('pip_to_poc', 0),
-            'va_zone': market_data.get('profile', {}).get('price_position', 'UNKNOWN'),
+            'dist_from_vwap': float(market_data.get('vwap', {}).get('pip_from_vwap', 0) or 0),
+            'vwap_position': str(market_data.get('vwap', {}).get('position', 'UNKNOWN')),
+            'dist_from_poc': float(market_data.get('profile', {}).get('pip_to_poc', 0) or 0),
+            'va_zone': str(market_data.get('profile', {}).get('price_position', 'UNKNOWN')),
             
             # --- SMC (Institutional Structure) ---
-            'smc_trend': smc_data.get('structure', {}).get('trend', 'NEUTRAL'),
-            'smc_bias': smc_data.get('smc_bias', 'NEUTRAL'),
-            'smc_score': smc_data.get('smc_score', 0),
-            'htf_approved': smc_data.get('htf_alignment', {}).get('approved', False),
-            'pd_zone': smc_data.get('premium_discount', {}).get('zone', 'UNKNOWN'),
-            'pd_bias': smc_data.get('premium_discount', {}).get('bias', 'NEUTRAL'),
+            'smc_trend': str(smc_data.get('structure', {}).get('trend', 'NEUTRAL')),
+            'smc_bias': str(smc_data.get('smc_bias', 'NEUTRAL')),
+            'smc_score': int(smc_data.get('smc_score', 0) or 0),
+            'htf_approved': bool(smc_data.get('htf_alignment', {}).get('approved', False)),
+            'pd_zone': str(smc_data.get('premium_discount', {}).get('zone', 'UNKNOWN')),
+            'pd_bias': str(smc_data.get('premium_discount', {}).get('bias', 'NEUTRAL')),
             
             # --- Liquidity & Blocks ---
             'dist_to_nearest_ob': self._calc_dist(market_data.get('current_price'), smc_data.get('nearest_ob')),
             'dist_to_nearest_pool': self._calc_dist(market_data.get('current_price'), smc_data.get('nearest_pool')),
-            'last_sweep_bias': smc_data.get('last_sweep', {}).get('bias', 'NONE'),
-            'last_sweep_reversal': smc_data.get('last_sweep', {}).get('reversal_pips', 0),
+            'last_sweep_bias': str(smc_data.get('last_sweep', {}).get('bias', 'NONE')),
+            'last_sweep_reversal': float(smc_data.get('last_sweep', {}).get('reversal_pips', 0) or 0),
         }
         
         if external_data:

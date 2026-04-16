@@ -114,9 +114,9 @@ def get_vwap_context(symbol: str, timeframe=None,
         return {}
     current_price = tick.bid
 
-    # Pip size
-    sym_info = mt5.symbol_info(symbol)
-    pip_size = sym_info.point * 10 if sym_info else 0.0001
+    # Pip size — use centralized get_pip_size() for correct calculation
+    from data_layer.momentum_velocity import get_pip_size
+    pip_size = get_pip_size(symbol)
 
     # Calculate VWAP and bands
     df = calculate_vwap(df)

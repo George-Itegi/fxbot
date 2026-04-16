@@ -83,14 +83,19 @@ def scan_symbol(symbol: str) -> dict | None:
 
     # --- 7. Combined Bias ---
     bias_votes = []
-    if full_delta.get('bias')    == 'BULLISH': bias_votes.append(1)
-    elif full_delta.get('bias')  == 'BEARISH': bias_votes.append(-1)
-    if rolling_delta.get('bias') == 'BULLISH': bias_votes.append(1)
-    elif rolling_delta.get('bias')== 'BEARISH': bias_votes.append(-1)
-    if profile.get('bias')       == 'BULLISH': bias_votes.append(1)
-    elif profile.get('bias')     == 'BEARISH': bias_votes.append(-1)
-    if vwap.get('bias') in ('BULLISH', 'STRONG_BULL'): bias_votes.append(1)
-    elif vwap.get('bias') in ('BEARISH', 'STRONG_BEAR'): bias_votes.append(-1)
+    full_bias = str(full_delta.get('bias', 'NEUTRAL'))
+    rolling_bias = str(rolling_delta.get('bias', 'NEUTRAL'))
+    profile_bias = str(profile.get('bias', 'NEUTRAL'))
+    vwap_bias = str(vwap.get('bias', 'NEUTRAL'))
+    
+    if full_bias == 'BULLISH': bias_votes.append(1)
+    elif full_bias == 'BEARISH': bias_votes.append(-1)
+    if rolling_bias == 'BULLISH': bias_votes.append(1)
+    elif rolling_bias == 'BEARISH': bias_votes.append(-1)
+    if profile_bias == 'BULLISH': bias_votes.append(1)
+    elif profile_bias == 'BEARISH': bias_votes.append(-1)
+    if vwap_bias in ('BULLISH', 'STRONG_BULL'): bias_votes.append(1)
+    elif vwap_bias in ('BEARISH', 'STRONG_BEAR'): bias_votes.append(-1)
 
     vote_sum = sum(bias_votes)
     if vote_sum >= 2:

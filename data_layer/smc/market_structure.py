@@ -18,6 +18,16 @@ from data_layer.momentum_velocity import get_pip_size
 load_dotenv()
 
 
+def _get_pip_size_from_price(price: float) -> float:
+    """Fallback pip size based on price when symbol name is unavailable."""
+    if price > 500:     # Indices (JP225 ~39000, US30 ~40000, etc.)
+        return 1.0
+    elif price > 50:    # JPY pairs, Gold
+        return 0.01
+    else:               # Standard forex
+        return 0.0001
+
+
 def connect():
     if not mt5.initialize():
         print(f"MT5 init failed: {mt5.last_error()}")
@@ -133,8 +143,8 @@ def detect_structure(df: pd.DataFrame) -> dict:
     last_sh_time = str(high_times[-1])
     last_sl_time = str(low_times[-1])
     min_break_pips = 5.0
-    # v4.1 FIX: Use centralized get_pip_size() instead of hardcoded 0.0001
-    pip_size = get_pip_size(df['close'].iloc[-1])
+    # v4.1 FIX: Use price-based pip size (detect_structure has no symbol param)
+    pip_size = _get_pip_size_from_price(float(current_price))
 
     bos = None
     bull_break = (current_price - last_sh) / pip_size

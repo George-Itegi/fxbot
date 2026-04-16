@@ -25,7 +25,7 @@ INDICES = {'US30', 'US500', 'USTEC', 'DE30', 'UK100', 'JP225'}
 
 def get_symbol_category(symbol: str) -> str:
     """Classify symbol into category for proper tick handling."""
-    sym = symbol.upper()
+    sym = str(symbol).upper()
     if sym in INDICES:
         return 'INDEX'
     if sym in OIL:

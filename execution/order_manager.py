@@ -13,7 +13,7 @@ def _get_pip_point(symbol: str, sym_info) -> float:
     For JPY pairs, 1 pip = 0.01. For standard forex, 1 pip = 0.0001.
     Gold = 0.1 (ounces), Silver = 0.01.
     """
-    sym = symbol.upper()
+    sym = str(symbol).upper()
     # Indices — trade in full points (1 point = 1 pip)
     if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         return 1.0
@@ -37,7 +37,7 @@ def _get_pip_point_for_pricing(symbol: str) -> float:
     """Get pip size for pricing calculations (used by strategies).
     Must match _get_pip_point exactly.
     """
-    sym = symbol.upper()
+    sym = str(symbol).upper()
     if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         return 1.0
     if "XAU" in sym:

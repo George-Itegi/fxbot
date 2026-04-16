@@ -74,9 +74,9 @@ def master_scan(symbol: str, session: str = None) -> dict | None:
 
     # Premium/discount penalty
     pd           = smc.get("premium_discount", {})
-    pd_bias      = pd.get("bias", "")
-    market_bias  = market.get("combined_bias", "NEUTRAL")
-    smc_bias     = smc.get("smc_bias", "NEUTRAL")
+    pd_bias      = str(pd.get("bias", ""))
+    market_bias  = str(market.get("combined_bias", "NEUTRAL"))
+    smc_bias     = str(smc.get("smc_bias", "NEUTRAL"))
     pd_penalty   = 15 if (
         (market_bias == "BULLISH" and pd_bias == "SELL") or
         (market_bias == "BEARISH" and pd_bias == "BUY")

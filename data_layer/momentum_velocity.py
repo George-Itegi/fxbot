@@ -195,7 +195,7 @@ def calculate_candle_velocity(df_candles: pd.DataFrame,
 
 def get_pip_size(symbol: str) -> float:
     """Get pip size for a symbol. Matches order_manager._get_pip_point exactly."""
-    sym = symbol.upper()
+    sym = str(symbol).upper()
     if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         return 1.0  # Index points
     if "XAU" in sym:

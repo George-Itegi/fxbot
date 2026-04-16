@@ -1,8 +1,16 @@
 # =============================================================
-# main.py — APEX TRADER v4.1
+# main.py — APEX TRADER v4.2
 # The master orchestrator. Run this file to start the bot.
 # Connects ALL layers: Data → SMC → External → Strategies
 #                    → AI Models → Risk → Execution
+#
+# v4.2 CHANGES:
+#   - Fixed numpy.float64 .upper() error in parallel scan
+#   - Added str() type safety at ALL .upper() call sites
+#   - Added full traceback logging for parallel scan errors
+#   - Sanitized all bias/direction fields from dict.get() calls
+#   - Feature store now enforces explicit type casting
+#   - Strategy engine sanitizes signal direction before use
 #
 # v4.1 CHANGES:
 #   - MySQL database support (replaces SQLite)
@@ -18,10 +26,12 @@
 # =============================================================
 
 import time
+import traceback
 import MetaTrader5 as mt5
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import os
+import numpy as np
 
 from core.connection import connect, disconnect, is_algo_trading_enabled
 from core.logger import get_logger
@@ -54,7 +64,7 @@ def run():
 
     log.info("=" * 60)
     log.info("  APEX TRADER — INSTITUTIONAL GRADE BOT")
-    log.info("  Version 4.1 | Signal Quality + Risk + MySQL + Pip Fixes")
+    log.info("  Version 4.2 | numpy.float64 Fix + Type Safety + Traceback Logging")
     log.info("=" * 60)
 
     # ── Startup checks ────────────────────────────────────────
@@ -150,7 +160,7 @@ def run():
                             trade_count += 1
                             TRADE_COUNT_SINCE_TRAIN += 1
                     except Exception as e:
-                        log.error(f"[CYCLE] Error during parallel scan: {e}")
+                        log.error(f"[CYCLE] Error during parallel scan: {e}\n{traceback.format_exc()}")
 
             # ── Retrain models if enough new trades ───────────
             if TRADE_COUNT_SINCE_TRAIN >= MODEL_RETRAIN_TRADES:
@@ -337,7 +347,7 @@ def _scan_and_trade(symbol: str,
         return False
 
     strategy_name = signal.get('strategy', 'UNKNOWN')
-    direction     = signal.get('direction', '')
+    direction     = str(signal.get('direction', ''))
     score         = signal.get('score', 0)
     log.info(f"  {symbol}: SIGNAL {direction} from {strategy_name}"
              f" score={score}")
@@ -348,6 +358,9 @@ def _scan_and_trade(symbol: str,
     # If master says BULLISH but strategy says SELL → BLOCK.
     # Exception: CONFLICTED bias → allow strategy direction.
     # ══════════════════════════════════════════════════════════
+    # Sanitize direction — ensure it's a proper string
+    direction = direction.upper() if isinstance(direction, str) else str(direction)
+    
     if bias not in ("NEUTRAL", "CONFLICTED"):
         if bias == "BULLISH" and direction == "SELL":
             log.warning(f"  {symbol}: ❌ BIAS CONFLICT — Master says {bias} "

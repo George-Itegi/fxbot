@@ -52,7 +52,7 @@ def evaluate(symbol: str,
     m15 = df_m15.iloc[-1]
 
     # Pip size detection — matches order_manager._get_pip_point exactly
-    sym = symbol.upper()
+    sym = str(symbol).upper()
     close_price = float(m15['close'])
     if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         pip_size = 1.0

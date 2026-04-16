@@ -91,6 +91,9 @@ def run_strategies(symbol: str,
                 signal['session']      = session
                 signal['timestamp']    = datetime.now(
                     timezone.utc).strftime('%H:%M:%S UTC')
+                # Sanitize direction to prevent numpy float leaking
+                if 'direction' in signal:
+                    signal['direction'] = str(signal['direction'])
                 signals.append(signal)
                 log.info(f"[ENGINE] {symbol} signal: {strategy_name}"
                          f" {signal['direction']} score={signal['score']}")
