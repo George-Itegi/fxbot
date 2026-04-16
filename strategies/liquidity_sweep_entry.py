@@ -1,11 +1,3 @@
-# =============================================================
-# strategies/liquidity_sweep_entry.py
-# Strategy 3: Liquidity Sweep + BOS Entry
-# Fires after stop hunts — the actual institutional entry trigger.
-# Best state : BREAKOUT_ACCEPTED after sweep
-# Best session: London open 08:00 UTC, NY open 13:00 UTC
-# =============================================================
-
 import pandas as pd
 from core.logger import get_logger
 
@@ -14,7 +6,6 @@ log = get_logger(__name__)
 STRATEGY_NAME = "LIQUIDITY_SWEEP_ENTRY"
 MIN_SCORE     = 65
 VERSION       = "1.0"
-
 
 def evaluate(symbol: str,
              df_m15:  pd.DataFrame,
@@ -30,6 +21,9 @@ def evaluate(symbol: str,
     if not features: return None
 
     current_price = features.get("current_price")
+    if current_price is None: return None
+    close_price = current_price # Define close_price for clarity
+
     pip_size = 0.01 if current_price > 50 else 0.0001
     atr_pips = features.get("atr_m15", 10) # Default to 10 if not found
 
@@ -39,7 +33,8 @@ def evaluate(symbol: str,
     # Get sweep data from feature store
     last_sweep_bias = features.get("last_sweep_bias", "NONE")
     last_sweep_reversal = features.get("last_sweep_reversal", 0)
-    swept_level = smc_report.get("last_sweep", {}).get("swept_level", 0) # Still need this from smc_report
+    swept_level = smc_report.get("last_sweep", {}).get("swept_level")
+    if swept_level is None: return None # Ensure swept_level is not None
     
     smc_bias = features.get("smc_bias", "NEUTRAL")
     htf_ok = features.get("htf_approved", False)
@@ -48,6 +43,13 @@ def evaluate(symbol: str,
     # Delta from feature store
     delta_bias = features.get("delta_bias", "NEUTRAL")
     delta_strength = features.get("delta_strength", "WEAK")
+
+    # BOS data
+    bos = smc_report.get("bos")
+
+    # M15 and H1 data for indicators
+    m15 = df_m15.iloc[-1] if not df_m15.empty else {}
+    h1 = df_h1.iloc[-1] if not df_h1.empty else {}
 
     # Must have a recent sweep
     if last_sweep_bias == "NONE":
@@ -98,7 +100,7 @@ def evaluate(symbol: str,
                 score += 5; confluence.append("DELTA_STRONG")
 
         # Volume spike on reversal
-        if m15['tick_volume'] > m15['vol_ma20'] * 1.5:
+        if 'tick_volume' in m15 and 'vol_ma20' in m15 and m15['tick_volume'] > m15['vol_ma20'] * 1.5:
             score += 10; confluence.append("VOLUME_SPIKE")
 
         # HTF + SMC alignment
@@ -115,7 +117,7 @@ def evaluate(symbol: str,
             sl_pips   = round((close_price - sl_price) / pip_size, 1)
             tp1_pips  = round((tp1_price - close_price) / pip_size, 1)
             tp2_pips  = round((tp2_price - close_price) / pip_size, 1)
-            log.info(f"[{STRATEGY_NAME}] BUY {symbol} after sweep"
+            log.info(f"[{STRATEGY_NAME}] BUY {symbol} after sweep" \
                      f" Score:{score} | {', '.join(confluence)}")
             return {
                 "direction":    "BUY",
@@ -164,7 +166,7 @@ def evaluate(symbol: str,
             if delta_strength in ('STRONG', 'MODERATE'):
                 score += 5; confluence.append("DELTA_STRONG")
 
-        if m15['tick_volume'] > m15['vol_ma20'] * 1.5:
+        if 'tick_volume' in m15 and 'vol_ma20' in m15 and m15['tick_volume'] > m15['vol_ma20'] * 1.5:
             score += 10; confluence.append("VOLUME_SPIKE")
 
         if htf_ok and smc_bias == 'BEARISH':
@@ -180,7 +182,7 @@ def evaluate(symbol: str,
             sl_pips   = round((sl_price - close_price) / pip_size, 1)
             tp1_pips  = round((close_price - tp1_price) / pip_size, 1)
             tp2_pips  = round((close_price - tp2_price) / pip_size, 1)
-            log.info(f"[{STRATEGY_NAME}] SELL {symbol} after sweep"
+            log.info(f"[{STRATEGY_NAME}] SELL {symbol} after sweep" \
                      f" Score:{score} | {', '.join(confluence)}")
             return {
                 "direction":    "SELL",
