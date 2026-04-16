@@ -145,20 +145,21 @@ def interpret_intermarket(data: dict) -> dict:
 
 
 def get_current_session() -> str:
-    """Return current trading session based on UTC time."""
+    """Return current trading session based on UTC time.
+    Aligned with institutional market behaviors."""
     hour = datetime.now(timezone.utc).hour
-    if 7 <= hour < 10:
+    if 21 <= hour < 24:
+        return 'SYDNEY'
+    elif 0 <= hour < 7:
+        return 'TOKYO'
+    elif 7 <= hour < 8:
         return 'LONDON_OPEN'
-    elif 10 <= hour < 12:
-        return 'LONDON_MID'
+    elif 8 <= hour < 12:
+        return 'LONDON_SESSION'
     elif 12 <= hour < 16:
         return 'NY_LONDON_OVERLAP'
-    elif 16 <= hour < 20:
-        return 'NY_SESSION'
-    elif 0 <= hour < 7:
-        return 'ASIAN_SESSION'
-    else:
-        return 'DEAD_ZONE'
+    else:  # 16-20
+        return 'NY_AFTERNOON'
 
 
 def is_good_for_day_trading(risk_env: str, vix: float) -> dict:

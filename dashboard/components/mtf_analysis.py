@@ -10,13 +10,12 @@ from config.settings import WATCHLIST
 TIMEFRAMES = ["D1", "H4", "H1", "M30", "M15", "M5"]
 
 SESSION_COLORS = {
-    "ASIAN":            "#1a3a5c",
-    "LONDON_PRE":       "#2a4a6c",
-    "LONDON_KILLZONE":  "#1a5c1a",
-    "LONDON_MID":       "#2a6c2a",
+    "SYDNEY":            "#2a2a3a",
+    "TOKYO":             "#1a3a5c",
+    "LONDON_OPEN":       "#2a4a6c",
+    "LONDON_SESSION":    "#1a5c1a",
     "NY_LONDON_OVERLAP":"#5c3a00",
-    "NY_SESSION":       "#5c1a00",
-    "DEAD_ZONE":        "#2a2a2a",
+    "NY_AFTERNOON":      "#5c1a00",
 }
 
 
@@ -148,12 +147,11 @@ def _show_confluence_verdict(summary: list):
     from data_layer.market_regime import get_session
     current = get_session()
     session_advice = {
-        "LONDON_KILLZONE":   "🟢 PRIME TIME — Best session for entries. High probability.",
-        "NY_LONDON_OVERLAP": "🟢 PRIME TIME — Highest volume. Best for breakouts.",
-        "NY_SESSION":        "🟡 GOOD — Active session. Trade with caution.",
-        "LONDON_MID":        "🟡 MODERATE — OK for continuation trades.",
-        "ASIAN":             "🔴 AVOID — Low liquidity. Setups are less reliable.",
-        "LONDON_PRE":        "🟡 PREPARE — Market warming up. Wait for London open.",
-        "DEAD_ZONE":         "🔴 DEAD ZONE — No trading. Wait for London.",
+        "LONDON_OPEN":       "🟡 MANIPULATION — Watch for Judas Swing. Avoid first breakout.",
+        "LONDON_SESSION":    "🟢 EXPANSION — Strong directional moves. Best for trend entries.",
+        "NY_LONDON_OVERLAP": "🟢 DISTRIBUTION — Highest volume. Best for breakouts.",
+        "NY_AFTERNOON":      "🟡 LATE DISTRIBUTION — Liquidation phase. Reversals possible.",
+        "TOKYO":             "🔵 ACCUMULATION — Tight ranges. Smart money builds positions.",
+        "SYDNEY":            "⚪ PRICE DISCOVERY — Thin liquidity. Early ranges forming.",
     }
     st.info(f"Current: **{current}**\n\n{session_advice.get(current, 'Unknown session')}")

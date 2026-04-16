@@ -29,12 +29,12 @@ FEAR_GREED_REFRESH_HOURS  = 4
 NEWS_REFRESH_MINUTES      = 15
 
 SESSION_MULTIPLIERS = {
-    'LONDON_OPEN':       1.2,
-    'LONDON_MID':        1.0,
-    'NY_LONDON_OVERLAP': 1.4,
-    'NY_SESSION':        1.1,
-    'ASIAN_SESSION':     0.7,
-    'DEAD_ZONE':         0.5,  # Reduced but not zero (testing mode)
+    'LONDON_OPEN':       1.2,   # Manipulation — high opportunity but deceptive
+    'NY_LONDON_OVERLAP': 1.4,   # Distribution — best window, highest liquidity
+    'NY_AFTERNOON':      1.1,   # Late distribution — good but fading
+    'LONDON_SESSION':    1.3,   # Expansion — strong directional moves
+    'TOKYO':             0.7,   # Accumulation — tight ranges, low volatility
+    'SYDNEY':            0.5,   # Price discovery — thin liquidity
 }
 
 def _needs_refresh(key: str, max_hours: float = 1.0) -> bool:

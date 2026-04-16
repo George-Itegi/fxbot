@@ -35,11 +35,14 @@ def extract_features(signal: dict,
         pd_z= s.get('premium_discount', {})
         htf = s.get('htf_alignment', {})
 
-        # Session encoding
+        # Session encoding — aligned with institutional behaviors
         session_map = {
-            'LONDON_KILLZONE': 3, 'NY_LONDON_OVERLAP': 4,
-            'NY_SESSION': 2, 'LONDON_OPEN': 3,
-            'ASIAN_SESSION': 1, 'DEAD_ZONE': 0,
+            'NY_LONDON_OVERLAP': 4,  # Distribution — highest liquidity
+            'LONDON_SESSION':    3,  # Expansion — strong moves
+            'LONDON_OPEN':       3,  # Manipulation — high opportunity
+            'NY_AFTERNOON':      2,  # Late distribution
+            'TOKYO':             1,  # Accumulation
+            'SYDNEY':            0,  # Price discovery
         }
         sess_enc = session_map.get(
             signal.get('session', 'UNKNOWN'), 1)
@@ -149,8 +152,8 @@ def train_model() -> bool:
         y = []
         for row in rows:
             ai_score, sl, tp, rsi, atr, spread, session, regime, outcome = row
-            sess_map = {'LONDON_KILLZONE': 3, 'NY_LONDON_OVERLAP': 4,
-                        'NY_SESSION': 2, 'ASIAN_SESSION': 1}
+            sess_map = {'LONDON_SESSION': 3, 'NY_LONDON_OVERLAP': 4,
+                        'NY_AFTERNOON': 2, 'TOKYO': 1, 'SYDNEY': 0}
             features = [
                 float(ai_score or 50),
                 float(sl or 10),

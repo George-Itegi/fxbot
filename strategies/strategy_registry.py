@@ -2,6 +2,14 @@
 # strategies/strategy_registry.py
 # Tracks every strategy's lifecycle, performance, and phase.
 # VIRTUAL → PAPER_TRADING → LIVE_ACTIVE → DEGRADING → RETIRED
+#
+# Session names aligned with institutional market behaviors:
+#   SYDNEY            21:00-00:00 UTC  (Price Discovery)
+#   TOKYO             00:00-07:00 UTC  (Accumulation)
+#   LONDON_OPEN       07:00-08:00 UTC  (Manipulation)
+#   LONDON_SESSION    08:00-12:00 UTC  (Expansion)
+#   NY_LONDON_OVERLAP 12:00-16:00 UTC  (Distribution)
+#   NY_AFTERNOON      16:00-21:00 UTC  (Late Distribution)
 # =============================================================
 
 from datetime import datetime
@@ -29,7 +37,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["TRENDING_STRONG", "BREAKOUT_ACCEPTED"],
-        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_SESSION", "LONDON_OPEN"],
+        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON", "LONDON_OPEN"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -38,7 +46,7 @@ REGISTRY = {
         "created_at":  "2026-04-14",
         "promoted_to_paper": "2026-04-14",
         "promoted_to_live":  None,
-        "notes":       "Upgraded from scalping bot v1",
+        "notes":       "Expansion/Distribution — ride the daily trend (London+NY)",
     },
     "SMC_OB_REVERSAL": {
         "name":        "SMC Order Block Reversal",
@@ -47,7 +55,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["TRENDING_STRONG"],
-        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_SESSION", "LONDON_OPEN"],
+        "best_session":["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -56,7 +64,7 @@ REGISTRY = {
         "created_at":  "2026-04-14",
         "promoted_to_paper": "2026-04-14",
         "promoted_to_live":  None,
-        "notes":       "Institutional OB entry strategy",
+        "notes":       "Manipulation — catches Judas Swing reversals at London open",
     },
     "LIQUIDITY_SWEEP_ENTRY": {
         "name":        "Liquidity Sweep Entry",
@@ -65,7 +73,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["BREAKOUT_ACCEPTED"],
-        "best_session":["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_SESSION"],
+        "best_session":["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -74,7 +82,7 @@ REGISTRY = {
         "created_at":  "2026-04-14",
         "promoted_to_paper": "2026-04-14",
         "promoted_to_live":  None,
-        "notes":       "Stop hunt reversal entry",
+        "notes":       "Manipulation — stop hunt reversal after Judas Swing",
     },
     "VWAP_MEAN_REVERSION": {
         "name":        "VWAP Mean Reversion",
@@ -83,7 +91,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["BALANCED"],
-        "best_session":["LONDON_OPEN", "LONDON_SESSION", "ASIAN"],
+        "best_session":["TOKYO", "LONDON_OPEN", "LONDON_SESSION", "NY_AFTERNOON"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -92,7 +100,7 @@ REGISTRY = {
         "created_at":  "2026-04-14",
         "promoted_to_paper": "2026-04-14",
         "promoted_to_live":  None,
-        "notes":       "Fair value reversion strategy",
+        "notes":       "Accumulation — range-bound mean reversion (Tokyo/range markets)",
     },
     "ORDER_FLOW_EXHAUSTION": {
         "name":        "Order Flow Exhaustion",
@@ -101,7 +109,7 @@ REGISTRY = {
         "phase":       PHASE_VIRTUAL,
         "status":      "ACTIVE",
         "best_state":  ["BREAKOUT_REJECTED", "REVERSAL_RISK"],
-        "best_session":["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_SESSION"],
+        "best_session":["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON", "TOKYO"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -110,7 +118,7 @@ REGISTRY = {
         "created_at":  "2026-04-16",
         "promoted_to_paper": None,
         "promoted_to_live":  None,
-        "notes":       "Order flow delta divergence scalp",
+        "notes":       "Distribution — catches flow exhaustion at NY liquidation",
     },
     "M1_MOMENTUM_SCALP": {
         "name":        "M1 Momentum Scalp",
@@ -119,7 +127,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["TRENDING_STRONG", "BREAKOUT_ACCEPTED"],
-        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_SESSION", "LONDON_OPEN"],
+        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON", "LONDON_OPEN"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -128,7 +136,7 @@ REGISTRY = {
         "created_at":  "2026-04-17",
         "promoted_to_paper": "2026-04-17",
         "promoted_to_live":  None,
-        "notes":       "M15 bias + M5 sweep + M1 engulfing + volume spike scalp",
+        "notes":       "Expansion/Distribution — momentum scalp on institutional moves (London+NY)",
     },
     "OPENING_RANGE_BREAKOUT": {
         "name":        "Opening Range Breakout",
@@ -137,7 +145,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["TRENDING_STRONG", "BALANCED"],
-        "best_session":["LONDON_OPEN", "LONDON_SESSION"],
+        "best_session":["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -146,7 +154,7 @@ REGISTRY = {
         "created_at":  "2026-04-17",
         "promoted_to_paper": "2026-04-17",
         "promoted_to_live":  None,
-        "notes":       "First 15min London range, enter on retest of breakout",
+        "notes":       "Manipulation/Expansion — ORB on London open range, retest entry",
     },
     "DELTA_DIVERGENCE": {
         "name":        "Delta Divergence",
@@ -155,7 +163,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["BREAKOUT_REJECTED", "REVERSAL_RISK", "BALANCED"],
-        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_SESSION"],
+        "best_session":["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
@@ -164,7 +172,7 @@ REGISTRY = {
         "created_at":  "2026-04-17",
         "promoted_to_paper": "2026-04-17",
         "promoted_to_live":  None,
-        "notes":       "Price vs delta divergence - catches fake breakouts",
+        "notes":       "Manipulation/Distribution — catches fake breakouts and trapped retail",
     },
 }
 

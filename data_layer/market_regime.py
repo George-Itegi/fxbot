@@ -75,43 +75,49 @@ def detect_regime(df_h1: pd.DataFrame, symbol: str = None) -> str:
 def get_session() -> str:
     """
     Return the current trading session based on UTC hour.
-    FIXED: Covers all 24 hours with no gaps or overlaps.
+    Aligned with real institutional forex session behaviors.
 
-    Session breakdown (UTC):
-      ASIAN               00:00 - 07:00  (Tokyo/Sydney session)
-      LONDON_OPEN         07:00 - 08:00  (London opens, transition)
-      LONDON_SESSION      08:00 - 12:00  (Full London session)
-      NY_LONDON_OVERLAP   12:00 - 16:00  (Highest liquidity window)
-      NY_SESSION          16:00 - 20:00  (New York afternoon)
-      DEAD_ZONE           20:00 - 00:00  (Low liquidity, avoid trading)
+    Session breakdown (UTC) — based on EAT (UTC+3) market structure:
+      SYDNEY             21:00 - 00:00  (Price Discovery — reacts to weekend news,
+                                         thin liquidity, early ranges)
+      TOKYO              00:00 - 07:00  (Accumulation — tight ranges, low volatility,
+                                         smart money builds positions quietly)
+      LONDON_OPEN        07:00 - 08:00  (Manipulation — Judas Swing, false breakouts,
+                                         stop hunts, traps retail before real move)
+      LONDON_SESSION     08:00 - 12:00  (Expansion — sets the daily trend,
+                                         strong directional moves)
+      NY_LONDON_OVERLAP  12:00 - 16:00  (Distribution — highest liquidity,
+                                         institutions exit, massive volume)
+      NY_AFTERNOON       16:00 - 21:00  (Late Distribution — liquidation,
+                                         high volatility, reversals or continuation)
     """
     from datetime import datetime, timezone
     hour = datetime.now(timezone.utc).hour
 
-    if 0 <= hour < 7:
-        return "ASIAN"
+    if 21 <= hour < 24:
+        return "SYDNEY"
+    elif 0 <= hour < 7:
+        return "TOKYO"
     elif 7 <= hour < 8:
         return "LONDON_OPEN"
     elif 8 <= hour < 12:
         return "LONDON_SESSION"
     elif 12 <= hour < 16:
         return "NY_LONDON_OVERLAP"
-    elif 16 <= hour < 20:
-        return "NY_SESSION"
-    else:  # 20-23
-        return "DEAD_ZONE"
+    else:  # 16-20
+        return "NY_AFTERNOON"
 
 
 def is_preferred_session() -> bool:
     """
     Returns True during high-probability trading windows.
-    FIXED: Now includes full London and NY sessions, not just killzones.
+    London + NY sessions (manipulation, expansion, distribution).
     """
     return get_session() in [
         "LONDON_OPEN",
         "LONDON_SESSION",
         "NY_LONDON_OVERLAP",
-        "NY_SESSION",
+        "NY_AFTERNOON",
     ]
 
 
@@ -126,13 +132,14 @@ def get_session_quality() -> float:
     """
     Returns a session quality multiplier (0.0 - 1.0).
     Used to boost or reduce confidence during different sessions.
+    Based on real institutional behavior patterns.
     """
     quality_map = {
-        "NY_LONDON_OVERLAP": 1.0,   # Best liquidity
-        "LONDON_SESSION":    0.9,   # Strong London
-        "NY_SESSION":        0.8,   # NY afternoon (weaker)
-        "LONDON_OPEN":       0.7,   # Transition, can be volatile
-        "ASIAN":             0.4,   # Low liquidity
-        "DEAD_ZONE":         0.3,   # Low liquidity — reduced but not blocked (testing mode)
+        "NY_LONDON_OVERLAP": 1.0,   # Distribution — highest liquidity, best window
+        "LONDON_SESSION":    0.9,   # Expansion — strong directional moves
+        "NY_AFTERNOON":      0.8,   # Late distribution — still good but fading
+        "LONDON_OPEN":       0.7,   # Manipulation — volatile, Judas swings
+        "TOKYO":             0.4,   # Accumulation — tight ranges, low volatility
+        "SYDNEY":            0.3,   # Price discovery — thin liquidity
     }
     return quality_map.get(get_session(), 0.5)

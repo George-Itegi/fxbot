@@ -43,13 +43,13 @@ def _tag_session(dt) -> str:
     """Tag each candle with the trading session it belongs to."""
     try:
         hour = dt.hour
-        if 0  <= hour <  7:  return "ASIAN"
-        if 7  <= hour <  8:  return "LONDON_PRE"
-        if 8  <= hour < 11:  return "LONDON_KILLZONE"
-        if 11 <= hour < 12:  return "LONDON_MID"
+        if 21 <= hour < 24: return "SYDNEY"
+        if 0  <= hour <  7:  return "TOKYO"
+        if 7  <= hour <  8:  return "LONDON_OPEN"
+        if 8  <= hour < 12:  return "LONDON_SESSION"
         if 12 <= hour < 16:  return "NY_LONDON_OVERLAP"
-        if 16 <= hour < 20:  return "NY_SESSION"
-        return "DEAD_ZONE"
+        if 16 <= hour < 21:  return "NY_AFTERNOON"
+        return "SYDNEY"
     except Exception:
         return "UNKNOWN"
 

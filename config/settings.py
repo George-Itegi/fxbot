@@ -99,23 +99,31 @@ SYMBOL_COOLDOWN_MINUTES = 60
 MIN_RISK_REWARD_RATIO = 1.5
 
 # --- SESSION WINDOWS (UTC hours) ---
-# FIXED: Covers all 24 hours with no gaps.
-# Broadened to include full London & NY sessions (not just killzones).
+# Aligned with real institutional forex session behaviors (EAT/UTC+3 reference)
+# Covers all 24 hours with no gaps.
 SESSIONS = {
-    "ASIAN":               {"start": 0,  "end": 7},
-    "LONDON_OPEN":         {"start": 7,  "end": 8},
-    "LONDON_SESSION":      {"start": 8,  "end": 12},
-    "NY_LONDON_OVERLAP":   {"start": 12, "end": 16},
-    "NY_SESSION":          {"start": 16, "end": 20},
-    "DEAD_ZONE":           {"start": 20, "end": 24},
+    "SYDNEY":             {"start": 21, "end": 24},  # Price Discovery
+    "TOKYO":              {"start": 0,  "end": 7},   # Accumulation
+    "LONDON_OPEN":        {"start": 7,  "end": 8},   # Manipulation
+    "LONDON_SESSION":     {"start": 8,  "end": 12},  # Expansion
+    "NY_LONDON_OVERLAP":  {"start": 12, "end": 16},  # Distribution (peak)
+    "NY_AFTERNOON":       {"start": 16, "end": 21},  # Late Distribution
 }
 
-# Preferred sessions — ALL sessions enabled for testing (including dead zone + asian)
+# Session behavior descriptions (for logging/reference)
+SESSION_BEHAVIORS = {
+    "SYDNEY":            "Price Discovery — reacts to weekend news, thin liquidity",
+    "TOKYO":             "Accumulation — tight ranges, smart money builds positions",
+    "LONDON_OPEN":       "Manipulation — Judas Swing, false breakouts, stop hunts",
+    "LONDON_SESSION":    "Expansion — sets daily trend, strong directional moves",
+    "NY_LONDON_OVERLAP": "Distribution — highest liquidity, institutional exit",
+    "NY_AFTERNOON":      "Late Distribution — liquidation, reversals or continuation",
+}
+
+# Preferred sessions — London + NY (manipulation, expansion, distribution)
 PREFERRED_SESSIONS = [
-    "ASIAN",
     "LONDON_OPEN",
     "LONDON_SESSION",
     "NY_LONDON_OVERLAP",
-    "NY_SESSION",
-    "DEAD_ZONE",
+    "NY_AFTERNOON",
 ]
