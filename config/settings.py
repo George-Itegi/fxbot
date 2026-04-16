@@ -31,8 +31,31 @@ WATCHLIST = [
 ]
 
 # --- TIMEFRAMES USED BY THE SYSTEM ---
-# H4=trend, H1=structure, M30=context, M15=entry, M5=timing
-TIMEFRAMES = ["M5", "M15", "M30", "H1", "H4"]
+# H4=trend, H1=structure, M30=context, M15=bias, M5=structure confirm, M1=entry
+TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "H4"]
+
+# --- SCALPING PARAMETERS (NEW) ---
+# These control the hybrid intraday + scalping behavior
+SCALPING = {
+    # Volume Surge Detection
+    "VOLUME_SURGE_MULTIPLIER": 2.0,   # 2x average = institutional entry
+    "VOLUME_SURGE_MIN_TICKS": 20,     # Minimum ticks for analysis
+
+    # Order Flow Imbalance
+    "OF_IMBALANCE_WINDOW": 50,         # Last N ticks for imbalance calc
+    "OF_IMBALANCE_BUY_THRESHOLD": 0.3,  # Only BUY when imbalance > +0.3
+    "OF_IMBALANCE_SELL_THRESHOLD": -0.3, # Only SELL when imbalance < -0.3
+
+    # Momentum Velocity
+    "VELOCITY_WINDOW_SECONDS": 60,     # Measurement window (seconds)
+    "MIN_SCALP_VELOCITY": 1.0,         # Pips/min — minimum for scalping
+    "CHOPPY_VELOCITY": 0.5,            # Pips/min — below this = skip
+
+    # M1 Entry Confirmation
+    "M1_VOLUME_MULTIPLIER": 1.5,       # M1 candle volume > 1.5x avg = confirmed
+    "M1_STOCHRSI_OVERSOLD": 40,        # M1 StochRSI below this = oversold
+    "M1_STOCHRSI_OVERBOUGHT": 60,      # M1 StochRSI above this = overbought
+}
 
 # --- RISK MANAGEMENT ---
 RISK_PERCENT_PER_TRADE = 1.0    # % of balance risked per trade

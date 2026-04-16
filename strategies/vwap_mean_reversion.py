@@ -8,8 +8,10 @@ MIN_SCORE = 65
 VERSION = "1.1"
 MIN_RR = 1.5
 
-def evaluate(symbol, df_m15, df_h1, market_report=None,
-             smc_report=None, external_data=None, master_report=None):
+def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
+             market_report=None,
+             smc_report=None, external_data=None, master_report=None,
+             df_h4=None):
     if df_m15 is None or df_h1 is None or market_report is None:
         return None
     m15 = df_m15.iloc[-1]

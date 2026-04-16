@@ -9,10 +9,14 @@ MIN_SCORE     = 65
 VERSION       = "1.0"
 
 def evaluate(symbol: str,
-             df_m15:  pd.DataFrame,
-             df_h1:   pd.DataFrame,
+             df_m1: pd.DataFrame = None,
+             df_m5: pd.DataFrame = None,
+             df_m15:  pd.DataFrame = None,
+             df_h1:   pd.DataFrame = None,
              smc_report:    dict = None,
-             market_report: dict = None) -> dict | None:
+             market_report: dict = None,
+             df_h4: pd.DataFrame = None,
+             master_report: dict = None) -> dict | None:
     """
     Fires when price makes a new swing level but order flow delta
     is exhausted (divergence).

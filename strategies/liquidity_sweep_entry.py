@@ -8,10 +8,14 @@ MIN_SCORE     = 65
 VERSION       = "1.0"
 
 def evaluate(symbol: str,
+             df_m1: pd.DataFrame,
+             df_m5: pd.DataFrame,
              df_m15:  pd.DataFrame,
              df_h1:   pd.DataFrame,
              smc_report:    dict = None,
-             market_report: dict = None) -> dict | None:
+             market_report: dict = None,
+             df_h4: pd.DataFrame = None,
+             master_report: dict = None) -> dict | None:
     """
     Fires when price sweeps a liquidity pool then reverses
     with BOS confirmation on M15.

@@ -13,9 +13,11 @@ from dotenv import load_dotenv
 import os
 
 from data_layer.tick_fetcher import get_ticks
-from data_layer.delta_calculator import calculate_delta, get_rolling_delta
+from data_layer.delta_calculator import calculate_delta, get_rolling_delta, calculate_order_flow_imbalance
 from data_layer.volume_profile import get_full_profile
 from data_layer.vwap_calculator import get_vwap_context
+from data_layer.tick_volume_surge import detect_tick_volume_surge
+from data_layer.momentum_velocity import calculate_momentum_velocity, get_pip_size
 
 load_dotenv()
 
@@ -69,7 +71,17 @@ def scan_symbol(symbol: str) -> dict | None:
         print(f"[SCANNER] Missing profile/vwap data for {symbol}")
         return None
 
-    # --- 4. Combined Bias ---
+    # --- 4. Order Flow Imbalance ---
+    order_flow_imb = calculate_order_flow_imbalance(df_ticks, window=50)
+
+    # --- 5. Tick Volume Surge Detection ---
+    volume_surge = detect_tick_volume_surge(df_ticks, surge_multiplier=2.0)
+
+    # --- 6. Momentum Velocity ---
+    pip_size = get_pip_size(symbol)
+    momentum = calculate_momentum_velocity(df_ticks, pip_size=pip_size, window_seconds=60)
+
+    # --- 7. Combined Bias ---
     bias_votes = []
     if full_delta.get('bias')    == 'BULLISH': bias_votes.append(1)
     elif full_delta.get('bias')  == 'BEARISH': bias_votes.append(-1)
@@ -93,6 +105,9 @@ def scan_symbol(symbol: str) -> dict | None:
         'timestamp':      datetime.now(timezone.utc).strftime('%H:%M:%S'),
         'delta':          full_delta,
         'rolling_delta':  rolling_delta,
+        'order_flow_imbalance': order_flow_imb,
+        'volume_surge':   volume_surge,
+        'momentum':       momentum,
         'profile':        profile,
         'vwap':           vwap,
         'combined_bias':  combined_bias,
@@ -119,6 +134,9 @@ def print_report(report: dict):
     p    = report['profile']
     v    = report['vwap']
     bias = report['combined_bias']
+    imb  = report.get('order_flow_imbalance', {})
+    surge = report.get('volume_surge', {})
+    mom  = report.get('momentum', {})
 
     bias_icon  = "📈" if bias == "BULLISH" else "📉" if bias == "BEARISH" else "↔️"
     state      = report.get('market_state', 'UNKNOWN')
@@ -150,6 +168,26 @@ def print_report(report: dict):
     print(f"  Buy Ticks     : {d.get('buy_ticks', 0)}")
     print(f"  Sell Ticks    : {d.get('sell_ticks', 0)}")
 
+    print(f"\n  ── ORDER FLOW IMBALANCE ────────────────────")
+    print(f"  Imbalance     : {imb.get('imbalance', 0):+.2f}"
+          f"  ({imb.get('direction', '?')} / {imb.get('strength', '?')})")
+    print(f"  Can BUY       : {'YES' if imb.get('can_buy') else 'NO'}"
+          f"  |  Can SELL: {'YES' if imb.get('can_sell') else 'NO'}")
+
+    print(f"\n  ── VOLUME SURGE ───────────────────────────")
+    surge_icon = "!!" if surge.get('surge_detected') else "--"
+    print(f"  Surge         : {surge_icon}"
+          f"  Ratio: {surge.get('surge_ratio', 0)}x"
+          f"  ({surge.get('surge_strength', '?')})"
+          f"  Dir: {surge.get('surge_direction', '?')}")
+
+    print(f"\n  ── MOMENTUM VELOCITY ──────────────────────")
+    mom_icon = ">>>" if mom.get('is_scalpable') else "..."
+    print(f"  Velocity      : {mom_icon} {mom.get('velocity_pips_min', 0)} pips/min"
+          f"  ({mom.get('velocity_direction', '?')})"
+          f"  | Scalpable: {mom.get('is_scalpable')}"
+          f"  | Choppy: {mom.get('is_choppy')}")
+
     print(f"\n  ── VOLUME PROFILE ──────────────────────────")
     print(f"  Current Price : {p.get('current_price')}")
     print(f"  POC           : {p.get('poc')}  ← Most traded level")
@@ -179,7 +217,8 @@ def calculate_tradeability_score(report: dict) -> dict:
     Score how tradeable a setup is from 0 to 100.
     Higher = better quality trade opportunity.
     Combines: delta strength, VWAP distance, POC distance,
-    price position, and delta/price agreement.
+    price position, delta/price agreement,
+    + NEW: volume surge, order flow imbalance, momentum velocity.
     """
     score = 0
     reasons = []
@@ -188,73 +227,118 @@ def calculate_tradeability_score(report: dict) -> dict:
     rd = report.get('rolling_delta', {})
     p  = report.get('profile', {})
     v  = report.get('vwap', {})
+    imb = report.get('order_flow_imbalance', {})
+    surge = report.get('volume_surge', {})
+    mom = report.get('momentum', {})
 
-    # --- Delta direction (20 pts) ---
+    # --- Delta direction (15 pts) ---
     if d.get('bias') == rd.get('bias') and d.get('bias') != 'NEUTRAL':
-        score += 20
+        score += 15
         reasons.append(f"Delta aligned ({d.get('bias')})")
     elif d.get('bias') != 'NEUTRAL':
-        score += 10
+        score += 8
         reasons.append("Delta partially aligned")
 
-    # --- Delta strength (15 pts) ---
+    # --- Delta strength (10 pts) ---
     strength = rd.get('strength', 'WEAK')
     if strength == 'STRONG':
-        score += 15
+        score += 10
         reasons.append("Strong rolling delta")
     elif strength == 'MODERATE':
-        score += 8
+        score += 5
         reasons.append("Moderate rolling delta")
 
-    # --- Price vs VWAP distance (20 pts) ---
+    # --- Order Flow Imbalance (20 pts) ---
+    imbalance = imb.get('imbalance', 0)
+    imb_strength = imb.get('strength', 'NONE')
+    if imb_strength == 'EXTREME':
+        score += 20
+        reasons.append(f"Extreme OF imbalance ({imbalance:+.2f})")
+    elif imb_strength == 'STRONG':
+        score += 15
+        reasons.append(f"Strong OF imbalance ({imbalance:+.2f})")
+    elif imb_strength == 'MODERATE':
+        score += 10
+        reasons.append(f"Moderate OF imbalance ({imbalance:+.2f})")
+    elif imb_strength == 'WEAK':
+        score += 3
+
+    # --- Volume Surge Detection (15 pts) ---
+    if surge.get('surge_detected', False):
+        surge_str = surge.get('surge_strength', 'NONE')
+        if surge_str == 'EXTREME':
+            score += 15
+            reasons.append(f"Extreme volume surge ({surge.get('surge_ratio')}x)")
+        elif surge_str == 'STRONG':
+            score += 12
+            reasons.append(f"Strong volume surge ({surge.get('surge_ratio')}x)")
+        else:
+            score += 8
+            reasons.append(f"Volume surge detected ({surge.get('surge_ratio')}x)")
+    else:
+        # Penalty for no institutional activity
+        score -= 3
+
+    # --- Momentum Velocity (10 pts) ---
+    if mom.get('is_scalpable', False):
+        score += 10
+        reasons.append(f"Momentum strong ({mom.get('velocity_pips_min')} pips/min)")
+    elif mom.get('is_choppy', True):
+        score -= 5
+        reasons.append(f"Choppy market ({mom.get('velocity_pips_min')} pips/min)")
+    else:
+        score += 4
+        reasons.append(f"Moderate momentum ({mom.get('velocity_pips_min')} pips/min)")
+
+    # --- Price vs VWAP distance (15 pts) ---
     pip_vwap = abs(v.get('pip_from_vwap', 999))
     vwap_pos = v.get('position', '')
     if pip_vwap <= 10:
-        score += 20
+        score += 15
         reasons.append("Price very close to VWAP (high value)")
     elif pip_vwap <= 20:
-        score += 14
+        score += 10
         reasons.append("Price near VWAP")
     elif pip_vwap <= 35:
-        score += 7
+        score += 5
         reasons.append("Price moderately extended from VWAP")
     else:
         score += 0
         reasons.append("Price far from VWAP (extended/risky)")
 
-    # --- Price vs POC distance (15 pts) ---
+    # --- Price vs POC distance (10 pts) ---
     pip_poc = abs(p.get('pip_to_poc', 999))
     if pip_poc <= 10:
-        score += 15
+        score += 10
         reasons.append("Price at POC (highest value zone)")
     elif pip_poc <= 30:
-        score += 10
+        score += 7
         reasons.append("Price near POC")
     elif pip_poc <= 60:
-        score += 5
+        score += 3
         reasons.append("Price moderately far from POC")
 
-    # --- Price position in value area (20 pts) ---
+    # --- Price position in value area (10 pts) ---
     pos = p.get('price_position', '')
     if pos == 'INSIDE_VA':
-        score += 15
+        score += 10
         reasons.append("Price inside value area (balanced)")
     elif pos in ('ABOVE_VAH', 'BELOW_VAL'):
-        score += 10
+        score += 5
         reasons.append("Price outside value area (breakout)")
 
-    # --- Delta agrees with price position (10 pts) ---
+    # --- Delta agrees with price position (5 pts) ---
     bias    = report.get('combined_bias', 'NEUTRAL')
     d_bias  = d.get('bias', 'NEUTRAL')
     if bias == 'BULLISH' and d_bias == 'BULLISH':
-        score += 10
+        score += 5
         reasons.append("Delta confirms bullish bias")
     elif bias == 'BEARISH' and d_bias == 'BEARISH':
-        score += 10
+        score += 5
         reasons.append("Delta confirms bearish bias")
 
     return {
-        'score':   min(score, 100),
+        'score':   min(max(score, 0), 100),
         'reasons': reasons,
     }
 
@@ -263,6 +347,7 @@ def detect_market_state(report: dict, score: int) -> str:
     """
     Classify the market into one of 6 institutional states.
     This tells the bot exactly what kind of market it is in.
+    Now includes momentum velocity and volume surge for better state detection.
     """
     p       = report.get('profile', {})
     v       = report.get('vwap', {})
@@ -272,6 +357,13 @@ def detect_market_state(report: dict, score: int) -> str:
     pos     = p.get('price_position', '')
     pip_vwap= abs(v.get('pip_from_vwap', 0))
     votes   = report.get('bias_votes', 0)
+    mom     = report.get('momentum', {})
+    surge   = report.get('volume_surge', {})
+
+    # CHOPPY: low momentum velocity, no surge, price inside VA
+    if mom.get('is_choppy', False) and not surge.get('surge_detected', False):
+        if pos == 'INSIDE_VA':
+            return "BALANCED"
 
     # REVERSAL_RISK: price extended, delta turning opposite
     if pip_vwap > 30 and d.get('bias') != rd.get('bias'):
@@ -281,14 +373,22 @@ def detect_market_state(report: dict, score: int) -> str:
     if votes >= 3 and pip_vwap > 25:
         return "TRENDING_EXTENDED"
 
-    # BREAKOUT_ACCEPTED: outside value area, delta confirms
+    # BREAKOUT_ACCEPTED: outside value area, delta confirms + surge
     if pos in ('ABOVE_VAH', 'BELOW_VAL'):
-        if d.get('bias') == bias and rd.get('bias') == bias:
+        delta_confirms = d.get('bias') == bias and rd.get('bias') == bias
+        surge_confirms = surge.get('surge_detected', False)
+        if delta_confirms and surge_confirms:
+            return "BREAKOUT_ACCEPTED"
+        elif delta_confirms:
             return "BREAKOUT_ACCEPTED"
         else:
             return "BREAKOUT_REJECTED"
 
-    # TRENDING_STRONG: all factors aligned, not extended
+    # TRENDING_STRONG: all factors aligned + momentum active
+    if votes >= 3 and pip_vwap <= 20 and mom.get('is_scalpable', False):
+        return "TRENDING_STRONG"
+
+    # TRENDING_STRONG (legacy): all factors aligned, not extended
     if votes >= 3 and pip_vwap <= 20:
         return "TRENDING_STRONG"
 

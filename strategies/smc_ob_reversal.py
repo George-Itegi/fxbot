@@ -18,10 +18,14 @@ VERSION       = "1.0"
 
 
 def evaluate(symbol: str,
+             df_m1: pd.DataFrame,
+             df_m5: pd.DataFrame,
              df_m15:  pd.DataFrame,
              df_h1:   pd.DataFrame,
              smc_report:   dict = None,
-             market_report: dict = None) -> dict | None:
+             market_report: dict = None,
+             df_h4: pd.DataFrame = None,
+             master_report: dict = None) -> dict | None:
     """
     Fires when price returns to an unmitigated Order Block
     and shows reversal confirmation (StochRSI + delta + candle).

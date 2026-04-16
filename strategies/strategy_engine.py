@@ -55,7 +55,9 @@ def run_strategies(symbol: str,
         log.info(f"[ENGINE] {symbol} — score too low ({final_score})")
         return None
 
-    # Fetch candle data
+    # Fetch candle data (M1 + M5 + M15 + H1 + H4 for hybrid intraday + scalping)
+    df_m1  = get_candles(symbol, 'M1',  100)
+    df_m5  = get_candles(symbol, 'M5',  200)
     df_m15 = get_candles(symbol, 'M15', 200)
     df_h1  = get_candles(symbol, 'H1',  200)
     df_h4  = get_candles(symbol, 'H4',  100)
@@ -71,7 +73,7 @@ def run_strategies(symbol: str,
         try:
             signal = _run_one_strategy(
                 strategy_name, symbol,
-                df_m15, df_h1, df_h4,
+                df_m1, df_m5, df_m15, df_h1, df_h4,
                 smc_report, market_report,
                 market_state, session, master_report)
 
@@ -96,7 +98,7 @@ def run_strategies(symbol: str,
     return best
 
 def _run_one_strategy(name, symbol,
-                      df_m15, df_h1, df_h4,
+                      df_m1, df_m5, df_m15, df_h1, df_h4,
                       smc_report, market_report,
                       market_state, session,
                       master_report=None) -> dict | None:
@@ -122,32 +124,32 @@ def _run_one_strategy(name, symbol,
 
     if name == "EMA_TREND_MTF":
         return ema_evaluate(
-            symbol, df_m15, df_h1, df_h4,
+            symbol, df_m1, df_m5, df_m15, df_h1, df_h4,
             smc_report=smc_report,
             master_report=market_report)
 
     elif name == "SMC_OB_REVERSAL":
         return ob_evaluate(
-            symbol, df_m15, df_h1,
+            symbol, df_m1, df_m5, df_m15, df_h1,
             smc_report=smc_report,
             market_report=market_report)
 
     elif name == "LIQUIDITY_SWEEP_ENTRY":
         return sweep_evaluate(
-            symbol, df_m15, df_h1,
+            symbol, df_m1, df_m5, df_m15, df_h1,
             smc_report=smc_report,
             market_report=market_report)
 
     elif name == "VWAP_MEAN_REVERSION":
         return vwap_evaluate(
-            symbol, df_m15, df_h1,
+            symbol, df_m1, df_m5, df_m15, df_h1,
             market_report=market_report,
             smc_report=smc_report,
             master_report=master_report)
 
     elif name == "ORDER_FLOW_EXHAUSTION":
         return exhaustion_evaluate(
-            symbol, df_m15, df_h1,
+            symbol, df_m1, df_m5, df_m15, df_h1,
             smc_report=smc_report,
             market_report=market_report)
 

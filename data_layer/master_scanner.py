@@ -87,6 +87,15 @@ def master_scan(symbol: str) -> dict | None:
         combined_bias   = "CONFLICTED"
         bias_confidence = "LOW"
 
+    # --- NEW: Scalping gates from market report ---
+    order_flow_imb = market.get("order_flow_imbalance", {})
+    volume_surge   = market.get("volume_surge", {})
+    momentum       = market.get("momentum", {})
+
+    # Scalping signal: imbalance confirms direction + surge active + momentum strong
+    scalping_signal = _evaluate_scalping_signal(
+        combined_bias, order_flow_imb, volume_surge, momentum)
+
     last_sweep    = smc.get("last_sweep")
     sweep_aligned = last_sweep.get("bias") == combined_bias if last_sweep else False
 
@@ -114,6 +123,86 @@ def master_scan(symbol: str) -> dict | None:
         "pd_penalty":       pd_penalty,
         "sweep_aligned":    sweep_aligned,
         "recommendation":   recommendation,
+        # --- NEW: Scalping data ---
+        "order_flow_imbalance": order_flow_imb,
+        "volume_surge":    volume_surge,
+        "momentum":        momentum,
+        "scalping_signal": scalping_signal,
+    }
+
+
+def _evaluate_scalping_signal(combined_bias: str,
+                              order_flow_imb: dict,
+                              volume_surge: dict,
+                              momentum: dict) -> dict:
+    """
+    Evaluate whether current conditions support a scalping entry.
+    Requires: order flow imbalance confirms direction + volume surge active
+    + momentum velocity is sufficient for a quick move.
+    """
+    imb = order_flow_imb.get("imbalance", 0)
+    imb_dir = order_flow_imb.get("direction", "NEUTRAL")
+    imb_strength = order_flow_imb.get("strength", "NONE")
+
+    surge_detected = volume_surge.get("surge_detected", False)
+    surge_ratio = volume_surge.get("surge_ratio", 0)
+    surge_dir = volume_surge.get("surge_direction", "NEUTRAL")
+
+    is_scalpable = momentum.get("is_scalpable", False)
+    is_choppy = momentum.get("is_choppy", True)
+    velocity = momentum.get("velocity_pips_min", 0)
+    vel_dir = momentum.get("velocity_direction", "FLAT")
+
+    # Check if all three scalping filters align with the bias
+    gates_passed = 0
+    total_gates = 3
+
+    # Gate 1: Order flow imbalance confirms direction
+    imbalance_ok = False
+    if combined_bias == "BULLISH" and imb >= 0.3:
+        imbalance_ok = True
+        gates_passed += 1
+    elif combined_bias == "BEARISH" and imb <= -0.3:
+        imbalance_ok = True
+        gates_passed += 1
+
+    # Gate 2: Volume surge active (institutional participation)
+    surge_ok = surge_detected and (
+        (surge_dir == "BUY" and combined_bias == "BULLISH") or
+        (surge_dir == "SELL" and combined_bias == "BEARISH") or
+        surge_ratio >= 2.5  # Very strong surge overrides direction
+    )
+    if surge_ok:
+        gates_passed += 1
+
+    # Gate 3: Momentum velocity sufficient
+    velocity_ok = is_scalpable and (
+        (vel_dir == "UP" and combined_bias == "BULLISH") or
+        (vel_dir == "DOWN" and combined_bias == "BEARISH")
+    )
+    if velocity_ok:
+        gates_passed += 1
+
+    # Overall scalping readiness
+    if gates_passed == 3:
+        scalping_status = "ALL_CLEAR"
+    elif gates_passed == 2:
+        scalping_status = "PARTIAL"
+    elif is_choppy:
+        scalping_status = "CHOPPY_SKIP"
+    else:
+        scalping_status = "INSUFFICIENT"
+
+    return {
+        "status": scalping_status,
+        "gates_passed": gates_passed,
+        "total_gates": total_gates,
+        "imbalance_ok": imbalance_ok,
+        "surge_ok": surge_ok,
+        "velocity_ok": velocity_ok,
+        "imbalance": imb,
+        "surge_ratio": surge_ratio,
+        "velocity_pips_min": velocity,
     }
 
 def _get_recommendation(score, confidence, state,
@@ -223,6 +312,27 @@ def print_master_report(r: dict):
           f"  ({d.get('bias','?')} / {d.get('strength','?')})")
     print(f"  Delta (rolling): {rd.get('delta',0):+d}"
           f"  ({rd.get('bias','?')} / {rd.get('strength','?')})")
+
+    # NEW: Scalping data
+    sc = r.get("scalping_signal", {})
+    imb = r.get("order_flow_imbalance", {})
+    surge = r.get("volume_surge", {})
+    mom = r.get("momentum", {})
+
+    print(f"\n  ── SCALPING GATES ──────────────────────────")
+    scalping_icon = {"ALL_CLEAR": "ALL CLEAR", "PARTIAL": "PARTIAL",
+                     "CHOPPY_SKIP": "CHOPPY SKIP", "INSUFFICIENT": "INSUFFICIENT"}
+    print(f"  Status      : {scalping_icon.get(sc.get('status','?'), sc.get('status','?'))}"
+          f"  ({sc.get('gates_passed',0)}/{sc.get('total_gates',3)} gates)")
+    print(f"  Imbalance   : {imb.get('imbalance',0):+.2f}"
+          f"  ({imb.get('strength','?')})"
+          f"  | BUY:{'Y' if sc.get('imbalance_ok') else 'N'}"
+          f"  SELL:{'Y' if imb.get('can_sell') else 'N'}")
+    print(f"  Vol Surge   : {surge.get('surge_ratio',0)}x"
+          f"  ({surge.get('surge_strength','?')})"
+          f"  | OK:{'Y' if sc.get('surge_ok') else 'N'}")
+    print(f"  Velocity    : {mom.get('velocity_pips_min',0)} pips/min"
+          f"  Scalpable:{'Y' if sc.get('velocity_ok') else 'N'}")
 
     print(f"\n  ── MARKET CONTEXT ──────────────────────────")
     print(f"  VWAP     : {vwap.get('vwap')}"

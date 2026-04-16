@@ -187,6 +187,13 @@ def _scan_and_trade(symbol: str,
         log.info(f"  {symbol}: Skipping due to no fractal alignment.")
         return False
 
+    # NEW: Check scalping signal — skip if market is too choppy
+    scalping = master.get("scalping_signal", {})
+    if scalping.get("status") == "CHOPPY_SKIP":
+        log.info(f"  {symbol}: Skipping — choppy market "
+                 f"(velocity: {scalping.get('velocity_pips_min', 0)} pips/min)")
+        return False
+
     # ── Run strategy engine ───────────────────────────────
     signal = run_strategies(symbol, master)
 

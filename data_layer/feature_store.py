@@ -38,6 +38,24 @@ class FeatureStore:
             'delta_rolling': market_data.get('rolling_delta', {}).get('delta', 0),
             'delta_bias': market_data.get('delta', {}).get('bias', 'NEUTRAL'),
             'delta_strength': market_data.get('delta', {}).get('strength', 'WEAK'),
+
+            # --- Order Flow Imbalance (NEW) ---
+            'of_imbalance': market_data.get('order_flow_imbalance', {}).get('imbalance', 0),
+            'of_direction': market_data.get('order_flow_imbalance', {}).get('direction', 'NEUTRAL'),
+            'of_strength': market_data.get('order_flow_imbalance', {}).get('strength', 'NONE'),
+            'of_can_buy': market_data.get('order_flow_imbalance', {}).get('can_buy', False),
+            'of_can_sell': market_data.get('order_flow_imbalance', {}).get('can_sell', False),
+
+            # --- Volume Surge Detection (NEW) ---
+            'volume_surge_detected': market_data.get('volume_surge', {}).get('surge_detected', False),
+            'volume_surge_ratio': market_data.get('volume_surge', {}).get('surge_ratio', 0),
+            'volume_surge_direction': market_data.get('volume_surge', {}).get('surge_direction', 'NEUTRAL'),
+
+            # --- Momentum Velocity (NEW) ---
+            'momentum_velocity': market_data.get('momentum', {}).get('velocity_pips_min', 0),
+            'momentum_direction': market_data.get('momentum', {}).get('velocity_direction', 'FLAT'),
+            'momentum_is_scalpable': market_data.get('momentum', {}).get('is_scalpable', False),
+            'momentum_is_choppy': market_data.get('momentum', {}).get('is_choppy', True),
             
             # --- Context (VWAP & Volume) ---
             'dist_from_vwap': market_data.get('vwap', {}).get('pip_from_vwap', 0),
