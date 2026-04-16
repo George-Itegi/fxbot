@@ -194,11 +194,14 @@ def print_master_report(r: dict):
         "BREAKOUT_ACCEPTED":"✅","BREAKOUT_REJECTED":"❌",
     }
 
-    print(f"\n{"█"*57}")
+    BLOCK_CHAR = "█"
+    LINE_CHAR = "─"
+    DOUBLE_LINE_CHAR = "═"
+
+    print(f"\n{BLOCK_CHAR*57}")
     print(f"  APEX TRADER — MASTER REPORT")
     print(f"  {r["symbol"]}  |  {r["timestamp"]}")
-    print(f"{"█"*57}")
-    print(f"  BIAS        : {bias} {bias_icon}"
+    print(f"  {BLOCK_CHAR*57}")   print(f"  BIAS        : {bias} {bias_icon}"
           f"  |  CONFIDENCE: {conf} {conf_icon}")
     print(f"  STATE       : {state} {state_icons.get(state,"")}")
     print(f"  SESSION     : {r.get("session","?")}"
@@ -212,7 +215,7 @@ def print_master_report(r: dict):
           f"  |  H4={htf.get("h4_bias")}")
     print(f"  ACTION      : {rec["action"]} {act_icon.get(rec["action"],"")}")
     print(f"  REASON      : {rec["reason"]}")
-    print(f"{"─"*57}")
+    print(f"{LINE_CHAR*57}")
 
     print(f"\n  ── ORDER FLOW ──────────────────────────────")
     print(f"  Delta (full)   : {d.get("delta",0):+d}"
@@ -287,7 +290,7 @@ def print_master_report(r: dict):
         print(f"  FVG           : No significant FVGs detected")
 
     # Report end
-    print(f"{"█"*57}\n")
+    print(f"{BLOCK_CHAR*57}\n")
 
 # =============================================================
 # STANDALONE TEST
@@ -310,18 +313,18 @@ if __name__ == "__main__":
             print(f"  ⚠️ Could not scan {symbol}\n")
 
     # Summary Table
-    print(f"\n{"═"*57}")
+    print(f"\n{DOUBLE_LINE_CHAR*57}")
     print(f"  SUMMARY — Best Opportunities")
-    print(f"{"═"*57}")
+    print(f"{DOUBLE_LINE_CHAR*57}")
     print(f"  {"Symbol":<8} {"Bias":<12} {"Score":<7}"
           f" {"State":<22} {"Action"}")
-    print(f"  {"─"*55}")
+    print(f"  {LINE_CHAR*55}")
     for r in sorted(results, key=lambda x: x["final_score"], reverse=True):
         htf_flag  = "" if r["htf_approved"] else " ❌HTF"
         print(f"  {r["symbol"]:<8} {r["combined_bias"]:<12}"
               f" {r["final_score"]:<7}"
               f" {r["market_state"]:<22}"
               f" {r["recommendation"]["action"]}{htf_flag}")
-    print(f"{"═"*57}")
+    print(f"{DOUBLE_LINE_CHAR*57}")
 
     mt5.shutdown()
