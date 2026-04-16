@@ -18,3 +18,23 @@ Stage Summary:
 - User needs to: set up XAMPP MySQL, create database, fill .env, run from fxbot/ directory
 - Dashboard command: `streamlit run dashboard/app.py` from fxbot/ directory
 - Bot command: `python main.py` from fxbot/ directory
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix numpy.float64 .upper() crash blocking ~22/37 symbols
+
+Work Log:
+- User ran v4.1 successfully: MySQL connected, MT5 connected, all 37 symbols in watchlist
+- ~22 symbols crashed with `'numpy.float64' object has no attribute 'upper'`
+- Traced bug to `data_layer/smc/market_structure.py` line 137:
+  `pip_size = get_pip_size(df['close'].iloc[-1])` — passes price float64 instead of symbol string
+- `get_pip_size(symbol: str)` in momentum_velocity.py calls `symbol.upper()` → crash
+- Fix: Added `_get_pip_size_from_price(price: float)` to market_structure.py
+- Also fixed `vwap_calculator.py` line 119: old naive `sym_info.point * 10` → now uses `get_pip_size(symbol)`
+- WTIUSD/BRNUSD/DE30 spread_too_wide = normal during Sydney session (thin liquidity)
+
+Stage Summary:
+- Bug fixed: market_structure.py now uses price-based pip detection
+- Bug fixed: vwap_calculator.py now uses centralized get_pip_size()
+- User needs to copy updated files to their D:\forexbot\ directory
