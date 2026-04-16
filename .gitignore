@@ -1,0 +1,36 @@
+# ======================================
+# .gitignore — Never commit these files
+# ======================================
+
+# Credentials — NEVER share this
+.env
+
+# Database files (large, personal data)
+database/*.db
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.conda/
+
+# Logs (can get large)
+logs/*.log
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/

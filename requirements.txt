@@ -1,0 +1,31 @@
+# ======================================
+# APEX TRADER — Python Dependencies
+# Install with: pip install -r requirements.txt
+# ======================================
+
+# MetaTrader 5 bridge
+MetaTrader5>=5.0.45
+
+# Data & analysis
+pandas>=2.0.0
+numpy>=1.24.0
+yfinance>=0.2.40
+
+# Environment & config
+python-dotenv>=1.0.0
+
+# AI integration
+anthropic>=0.25.0
+
+# HTTP requests (external APIs)
+requests>=2.31.0
+
+# Database
+# sqlite3 is built-in — no install needed
+
+# Dashboard (Phase 2)
+streamlit>=1.32.0
+plotly>=5.20.0
+
+# Scheduling
+schedule>=1.2.0
