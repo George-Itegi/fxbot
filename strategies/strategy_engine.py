@@ -107,9 +107,18 @@ def _run_one_strategy(name, symbol,
     best_sessions = info.get('best_session', [])
 
     # Soft filter — warn but still run if outside best conditions
+    # Soft filter for market state
     if best_states and market_state not in best_states:
         log.info(f"[ENGINE] {name} — state {market_state}"
                  f" not ideal (best: {best_states})")
+
+    # Prioritize NY sessions: if current session is a preferred NY session, don't soft-filter based on strategy's best_sessions
+    from config.settings import PREFERRED_SESSIONS
+    is_preferred_ny_session = session in [s for s in PREFERRED_SESSIONS if 'NY' in s]
+
+    if best_sessions and session not in best_sessions and not is_preferred_ny_session:
+        log.info(f"[ENGINE] {name} — session {session}"
+                 f" not ideal (best: {best_sessions})")
 
     if name == "EMA_TREND_MTF":
         return ema_evaluate(

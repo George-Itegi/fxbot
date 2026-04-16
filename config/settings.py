@@ -46,6 +46,10 @@ MIN_AI_SCORE           = 72     # Minimum score (0-100) to place a trade
 MIN_CONFLUENCE_COUNT   = 3      # Minimum factors that must agree
 
 # --- SPREAD LIMITS (in pips) ---
+PROFIT_GUARD_TRIGGER_PIPS = 5.0  # Pips profit to activate profit protection
+TRAILING_STOP_PIPS        = 10.0 # Pips to trail SL behind current price
+DYNAMIC_TP_MULTIPLIER     = 2.0  # Multiplier for initial TP when trailing
+
 MAX_SPREAD = {
     # Majors
     "EURUSD": 2.0, "GBPUSD": 2.5, "USDJPY": 2.5,
@@ -83,7 +87,8 @@ SESSIONS = {
     "LONDON_OPEN":    {"start": 7,  "end": 10},
     "LONDON_KILLZONE":{"start": 8,  "end": 11},
     "NY_KILLZONE":    {"start": 13, "end": 16},
-    "NY_LONDON_OVERLAP": {"start": 12, "end": 16},
+    "NY_LONDON_OVERLAP": {"start": 12, "end": 17},
+    "NY_CLOSE":       {"start": 17, "end": 20},
     "DEAD_ZONE":      {"start": 20, "end": 23},
 }
-PREFERRED_SESSIONS = ["LONDON_KILLZONE", "NY_KILLZONE", "NY_LONDON_OVERLAP"]
+PREFERRED_SESSIONS = ["NY_KILLZONE", "NY_LONDON_OVERLAP", "LONDON_KILLZONE"] # Prioritize NY session

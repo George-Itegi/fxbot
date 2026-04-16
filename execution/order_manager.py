@@ -1,15 +1,9 @@
-# =============================================================
-# execution/order_manager.py  v2.0
-# FIXED: correct pip calc, SL/TP validation, fallback close
-# =============================================================
-
 import MetaTrader5 as mt5
 from core.logger import get_logger
-from config.settings import MAGIC_NUMBER
+from config.settings import MAGIC_NUMBER, PROFIT_GUARD_TRIGGER_PIPS, TRAILING_STOP_PIPS, DYNAMIC_TP_MULTIPLIER
 from database.db_manager import log_trade, close_trade
 
 log = get_logger(__name__)
-
 
 def _get_pip_point(symbol: str, sym_info) -> float:
     """Correct pip size for every symbol."""
@@ -23,7 +17,6 @@ def _get_pip_point(symbol: str, sym_info) -> float:
     if sym_info.digits <= 3:
         return 0.01    # JPY pairs
     return 0.0001      # Standard forex
-
 
 def place_order(symbol: str, direction: str, lot_size: float,
                 sl_pips: float, tp_pips: float,
@@ -105,7 +98,7 @@ def manage_positions():
     """
     Every 30s: manage all bot positions.
     1. Force close if TP or SL hit (fallback safety)
-    2. Move to breakeven after 5 pip profit
+    2. Implement dynamic profit protection (trailing stop & dynamic TP)
     """
     positions = mt5.positions_get()
     if not positions:
@@ -148,22 +141,41 @@ def manage_positions():
             _close_position(pos, "SL_HIT", sym_info)
             continue
 
-        # ── Breakeven at 5 pip profit ─────────────────────
+        # ── Dynamic Profit Protection (Trailing Stop & Dynamic TP) ──
+        profit_pips = 0
         if pos.type == mt5.ORDER_TYPE_BUY:
             profit_pips = (price - pos.price_open) / point
         else:
             profit_pips = (pos.price_open - price) / point
 
-        if profit_pips >= 5.0:
-            be_sl = pos.price_open
-            needs_update = (
-                (pos.type == mt5.ORDER_TYPE_BUY and pos.sl < be_sl) or
-                (pos.type == mt5.ORDER_TYPE_SELL and
-                 (pos.sl > be_sl or pos.sl == 0))
-            )
-            if needs_update:
-                _modify_sl(pos, be_sl, sym_info, "BREAKEVEN")
+        if profit_pips >= PROFIT_GUARD_TRIGGER_PIPS:
+            # Calculate new trailing stop loss
+            new_sl = 0.0
+            if pos.type == mt5.ORDER_TYPE_BUY:
+                new_sl = round(price - TRAILING_STOP_PIPS * point, sym_info.digits)
+                # Ensure new SL is above original SL and entry price
+                if new_sl > pos.sl and new_sl > pos.price_open:
+                    _modify_sl(pos, new_sl, sym_info, "TRAILING_SL")
+            else: # SELL
+                new_sl = round(price + TRAILING_STOP_PIPS * point, sym_info.digits)
+                # Ensure new SL is below original SL and entry price
+                if new_sl < pos.sl and new_sl < pos.price_open:
+                    _modify_sl(pos, new_sl, sym_info, "TRAILING_SL")
 
+            # Dynamically adjust TP (optional, but good for extending winners)
+            # This logic can be more sophisticated, e.g., based on ATR, market structure
+            # For now, we'll extend it by a multiplier if it's getting close
+            current_tp_pips = abs(pos.tp - pos.price_open) / point
+            if profit_pips > current_tp_pips * 0.75: # If 75% to original TP
+                new_tp = 0.0
+                if pos.type == mt5.ORDER_TYPE_BUY:
+                    new_tp = round(pos.price_open + current_tp_pips * DYNAMIC_TP_MULTIPLIER * point, sym_info.digits)
+                    if new_tp > pos.tp: # Only extend if new TP is further
+                        _modify_tp(pos, new_tp, sym_info, "DYNAMIC_TP")
+                else: # SELL
+                    new_tp = round(pos.price_open - current_tp_pips * DYNAMIC_TP_MULTIPLIER * point, sym_info.digits)
+                    if new_tp < pos.tp: # Only extend if new TP is further
+                        _modify_tp(pos, new_tp, sym_info, "DYNAMIC_TP")
 
 def _close_position(pos, reason: str, sym_info=None):
     """Close a position with market order."""
@@ -206,8 +218,6 @@ def _close_position(pos, reason: str, sym_info=None):
             outcome = "WIN_TP"
         elif reason == "SL_HIT":
             outcome = "LOSS"
-        elif reason == "BREAKEVEN":
-            outcome = "BREAKEVEN"
         elif reason == "MANUAL":
             outcome = "MANUAL" if pos.profit >= 0 else "MANUAL_LOSS"
         else:
@@ -230,7 +240,6 @@ def _close_position(pos, reason: str, sym_info=None):
               f"code:{code} {mt5.last_error()}")
     return False
 
-
 def _modify_sl(pos, new_sl: float, sym_info, label: str):
     """Modify stop loss."""
     new_sl = round(new_sl, sym_info.digits)
@@ -247,6 +256,23 @@ def _modify_sl(pos, new_sl: float, sym_info, label: str):
                  f"{pos.symbol} #{pos.ticket}")
     else:
         log.warning(f"[EXEC] SL modify failed: {mt5.last_error()}")
+
+def _modify_tp(pos, new_tp: float, sym_info, label: str):
+    """Modify take profit."""
+    new_tp = round(new_tp, sym_info.digits)
+    request = {
+        "action":   mt5.TRADE_ACTION_SLTP,
+        "symbol":   pos.symbol,
+        "position": pos.ticket,
+        "sl":       pos.sl,
+        "tp":       new_tp,
+    }
+    result = mt5.order_send(request)
+    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+        log.info(f"[EXEC] 📈 {label} TP:{new_tp} "
+                 f"{pos.symbol} #{pos.ticket}")
+    else:
+        log.warning(f"[EXEC] TP modify failed: {mt5.last_error()}")
 
 def sync_closed_trades():
     """
