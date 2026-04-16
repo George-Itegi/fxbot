@@ -42,8 +42,8 @@ MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
 
 # --- SIGNAL QUALITY ---
-MIN_AI_SCORE           = 72     # Minimum score (0-100) to place a trade
-MIN_CONFLUENCE_COUNT   = 3      # Minimum factors that must agree
+MIN_AI_SCORE           = 80     # Minimum score (0-100) to place a trade (Increased for higher quality)
+MIN_CONFLUENCE_COUNT   = 4      # Minimum factors that must agree (Increased for stricter confluence)
 
 <<<<<<< HEAD
 # --- SPREAD LIMITS (very loose testing mode) ---

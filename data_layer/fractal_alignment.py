@@ -37,24 +37,12 @@ class FractalAlignment:
         # This identifies WHEN to pull the trigger.
         trigger_context = self._evaluate_trigger_timing(market_report)
 
-        # Final Alignment Logic
-        # For testing, we will relax the alignment conditions.
-        # A signal is considered 'aligned' if we are in a setup zone AND
-        # either the macro context is approved OR the trigger context is aligned.
-        aligned = False
-        if setup_location['in_zone']:
-            if (macro_approved and macro_bias == trigger_context['bias']) or trigger_context['delta_aligned']:
-                aligned = True
-
-        # Further relaxation for testing: if we have a trigger and a setup, consider it aligned
-        # regardless of macro for now, to generate more signals.
-        if setup_location['in_zone'] and trigger_context['delta_aligned']:
-            aligned = True
-
-        # Even more relaxed for initial testing: if there's a setup zone, allow it to pass for now
-        # This will allow strategies to fire and then be filtered by AI/Risk.
-        if setup_location['in_zone']:
-            aligned = True
+        # Final Alignment Logic (Stricter for higher quality signals)
+        # Requires: in a setup zone AND macro context approved AND macro bias matches trigger bias AND trigger delta aligned
+        aligned = setup_location['in_zone'] and \
+                  macro_approved and \
+                  (macro_bias == trigger_context['bias']) and \
+                  trigger_context['delta_aligned']
 
         return {
             'symbol': self.symbol,
