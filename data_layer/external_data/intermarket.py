@@ -176,11 +176,12 @@ def is_good_for_day_trading(risk_env: str, vix: float) -> dict:
             'allowed':  True,
             'reason':   f'Risk-off but VIX manageable — trade safe havens only',
         }
-    if risk_env == 'DEAD_ZONE':
-        return {
-            'allowed':  False,
-            'reason':   'Dead zone — low liquidity, avoid trading',
-        }
+    # DEAD_ZONE block DISABLED for testing — all sessions tradable
+    # if risk_env == 'DEAD_ZONE':
+    #     return {
+    #         'allowed':  False,
+    #         'reason':   'Dead zone — low liquidity, avoid trading',
+    #     }
     return {
         'allowed':  True,
         'reason':   f'Conditions OK — {risk_env}, VIX={vix:.1f}',

@@ -117,11 +117,9 @@ def is_preferred_session() -> bool:
 
 def is_tradeable_session() -> bool:
     """
-    Returns False only during DEAD_ZONE and late ASIAN.
-    All other sessions (London, NY, overlap) are tradeable.
+    Returns True for ALL sessions — DEAD_ZONE block disabled for testing.
     """
-    session = get_session()
-    return session not in ["DEAD_ZONE", "ASIAN"]
+    return True
 
 
 def get_session_quality() -> float:
@@ -135,6 +133,6 @@ def get_session_quality() -> float:
         "NY_SESSION":        0.8,   # NY afternoon (weaker)
         "LONDON_OPEN":       0.7,   # Transition, can be volatile
         "ASIAN":             0.4,   # Low liquidity
-        "DEAD_ZONE":         0.0,   # No trading
+        "DEAD_ZONE":         0.3,   # Low liquidity — reduced but not blocked (testing mode)
     }
     return quality_map.get(get_session(), 0.5)

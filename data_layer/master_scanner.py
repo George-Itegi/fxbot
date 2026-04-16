@@ -112,11 +112,12 @@ def master_scan(symbol: str, session: str = None) -> dict | None:
     sweep_aligned = last_sweep.get("bias") == combined_bias if last_sweep else False
 
     # --- Session-aware gating ---
+    # DEAD_ZONE block DISABLED for testing — all sessions tradable
     day_trade_ok = True
     block_reason = None
-    if session == "DEAD_ZONE":
-        day_trade_ok = False
-        block_reason = "dead_zone - no trading during low liquidity"
+    # if session == "DEAD_ZONE":
+    #     day_trade_ok = False
+    #     block_reason = "dead_zone - no trading during low liquidity"
 
     recommendation = _get_recommendation(
         final_score, bias_confidence,

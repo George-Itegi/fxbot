@@ -110,10 +110,12 @@ SESSIONS = {
     "DEAD_ZONE":           {"start": 20, "end": 24},
 }
 
-# Preferred sessions — full London + NY + overlap
+# Preferred sessions — ALL sessions enabled for testing (including dead zone + asian)
 PREFERRED_SESSIONS = [
+    "ASIAN",
     "LONDON_OPEN",
     "LONDON_SESSION",
     "NY_LONDON_OVERLAP",
     "NY_SESSION",
+    "DEAD_ZONE",
 ]

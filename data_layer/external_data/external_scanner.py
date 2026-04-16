@@ -34,7 +34,7 @@ SESSION_MULTIPLIERS = {
     'NY_LONDON_OVERLAP': 1.4,
     'NY_SESSION':        1.1,
     'ASIAN_SESSION':     0.7,
-    'DEAD_ZONE':         0.0,
+    'DEAD_ZONE':         0.5,  # Reduced but not zero (testing mode)
 }
 
 def _needs_refresh(key: str, max_hours: float = 1.0) -> bool:
@@ -117,12 +117,13 @@ def _build_report(symbols: list) -> dict:
 
     # ── Master gate ───────────────────────────────────────────
     # ONLY these block trading — COT/IM/FG do NOT block signals
+    # DEAD_ZONE block DISABLED for testing — all sessions tradable
     day_trade_ok    = True
     blocking_reason = None
-    if session == 'DEAD_ZONE':
-        day_trade_ok    = False
-        blocking_reason = "DEAD ZONE — low liquidity"
-    elif blackout.get('blackout'):
+    # if session == 'DEAD_ZONE':
+    #     day_trade_ok    = False
+    #     blocking_reason = "DEAD ZONE — low liquidity"
+    if blackout.get('blackout'):
         day_trade_ok    = False
         blocking_reason = f"NEWS BLACKOUT: {blackout.get('reason')}"
     elif volatility.get('volatility_score', 0) >= 70:
