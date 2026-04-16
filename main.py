@@ -169,13 +169,19 @@ def _scan_and_trade(symbol: str,
         log.info(f"  {symbol}: Master scan failed")
         return False
 
-    final_score = master.get('final_score', 0)
-    bias        = master.get('combined_bias', 'NEUTRAL')
-    state       = master.get('market_state', 'UNKNOWN')
-    action      = master.get('recommendation', {}).get('action', 'SKIP')
+    final_score = master.get("final_score", 0)
+    bias        = master.get("combined_bias", "NEUTRAL")
+    state       = master.get("market_state", "UNKNOWN")
+    action      = master.get("recommendation", {}).get("action", "SKIP")
+    fractal_rec = master.get("fractal_alignment", {}).get("recommendation", "N/A")
 
     log.info(f"  {symbol}: Score={final_score} | {bias}"
-             f" | {state} | → {action}")
+             f" | {state} | → {action} | Fractal: {fractal_rec}")
+
+    # New check: Only proceed if fractal alignment is READY
+    if not master.get("fractal_alignment", {}).get("aligned", False):
+        log.info(f"  {symbol}: Skipping due to no fractal alignment.")
+        return False
 
     # ── Run strategy engine ───────────────────────────────
     signal = run_strategies(symbol, master)
