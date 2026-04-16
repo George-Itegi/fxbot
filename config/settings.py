@@ -37,7 +37,7 @@ TIMEFRAMES = ["M5", "M15", "M30", "H1", "H4"]
 # --- RISK MANAGEMENT ---
 RISK_PERCENT_PER_TRADE = 1.0    # % of balance risked per trade
 MAX_OPEN_TRADES        = 5      # Max simultaneous positions
-MAX_DAILY_LOSS_PERCENT = 6.0    # Bot shuts down if this is hit
+MAX_DAILY_LOSS_PERCENT = 3.0    # Bot shuts down if this is hit
 MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
 
@@ -45,63 +45,44 @@ MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
 MIN_AI_SCORE           = 80     # Minimum score (0-100) to place a trade (Increased for higher quality)
 MIN_CONFLUENCE_COUNT   = 4      # Minimum factors that must agree (Increased for stricter confluence)
 
-<<<<<<< HEAD
-# --- SPREAD LIMITS (very loose testing mode) ---
-=======
-# --- SPREAD LIMITS (in pips) ---
+# --- PROFIT PROTECTION ---
 PROFIT_GUARD_TRIGGER_PIPS = 5.0  # Pips profit to activate profit protection
 TRAILING_STOP_PIPS        = 10.0 # Pips to trail SL behind current price
 DYNAMIC_TP_MULTIPLIER     = 2.0  # Multiplier for initial TP when trailing
 
->>>>>>> 0d62e3f3f66c6487e7062bd8a3b3394013b385f5
+# --- SPREAD LIMITS (in pips) ---
+# Temporarily setting all MAX_SPREAD values to 999.0 to bypass the check for testing.
 MAX_SPREAD = {
-    # Majors
-    "EURUSD": 20.0, "GBPUSD": 25.0, "USDJPY": 25.0,
-    "AUDUSD": 25.0, "USDCAD": 30.0, "USDCHF": 30.0, "NZDUSD": 30.0,
-
-    # Minor Forex pairs
-    "EURGBP": 30.0, "EURAUD": 40.0, "EURCAD": 40.0, "EURCHF": 40.0, "EURNZD": 50.0,
-    "GBPAUD": 50.0, "GBPCAD": 50.0, "GBPCHF": 50.0, "GBPNZD": 60.0,
-    "AUDCAD": 35.0, "AUDCHF": 35.0, "AUDNZD": 35.0,
-    "CADCHF": 40.0, "CADJPY": 40.0,
-    "CHFJPY": 45.0,
-    "NZDCAD": 35.0, "NZDCHF": 35.0, "NZDJPY": 40.0,
-
-    # JPY crosses
-    "GBPJPY": 50.0, "EURJPY": 45.0, "AUDJPY": 45.0,
-
-    # Commodities
-    "XAUUSD": 400.0, "XAGUSD": 600.0,
-    "WTIUSD": 50.0,
-    "BRNUSD": 50.0,
-
-    # Indices
-    "US30": 600.0, "US500": 150.0, "USTEC": 200.0,
-    "DE30": 300.0, "UK100": 200.0, "JP225": 400.0,
-
-    # Default fallback
-    "DEFAULT": 40.0,
+    "EURUSD": 999.0, "GBPUSD": 999.0, "USDJPY": 999.0,
+    "AUDUSD": 999.0, "USDCAD": 999.0, "USDCHF": 999.0, "NZDUSD": 999.0,
+    "EURGBP": 999.0, "EURAUD": 999.0, "EURCAD": 999.0, "EURCHF": 999.0, "EURNZD": 999.0,
+    "GBPAUD": 999.0, "GBPCAD": 999.0, "GBPCHF": 999.0, "GBPNZD": 999.0,
+    "AUDCAD": 999.0, "AUDCHF": 999.0, "AUDNZD": 999.0,
+    "CADCHF": 999.0, "CADJPY": 999.0,
+    "CHFJPY": 999.0,
+    "NZDCAD": 999.0, "NZDCHF": 999.0, "NZDJPY": 999.0,
+    "GBPJPY": 999.0, "EURJPY": 999.0, "AUDJPY": 999.0,
+    "XAUUSD": 999.0, "XAGUSD": 999.0,
+    "WTIUSD": 999.0, "BRNUSD": 999.0,
+    "US30": 999.0, "US500": 999.0, "USTEC": 999.0,
+    "DE30": 999.0, "UK100": 999.0, "JP225": 999.0,
+    "DEFAULT": 999.0,
 }
 
 # --- TRADE COOLDOWN (minutes per symbol) ---
-# Prevents the same symbol from being traded repeatedly
-SYMBOL_COOLDOWN_MINUTES = 60   # Min 60 mins between trades on same symbol
+SYMBOL_COOLDOWN_MINUTES = 60
 
 # --- MINIMUM RISK/REWARD ---
-MIN_RISK_REWARD_RATIO = 1.5    # TP must be at least 1.5x the SL distance
+MIN_RISK_REWARD_RATIO = 1.5
 
 # --- SESSION WINDOWS (UTC hours) ---
 SESSIONS = {
     "ASIAN":          {"start": 0,  "end": 7},
     "LONDON_OPEN":    {"start": 7,  "end": 10},
     "LONDON_KILLZONE":{"start": 8,  "end": 11},
-    "NY_KILLZONE":    {"start": 13, "end": 16},
+    "NY_KILLZONE":    {"start": 13, "end": 17},
     "NY_LONDON_OVERLAP": {"start": 12, "end": 17},
     "NY_CLOSE":       {"start": 17, "end": 20},
     "DEAD_ZONE":      {"start": 20, "end": 23},
 }
-<<<<<<< HEAD
-PREFERRED_SESSIONS = ["LONDON_KILLZONE", "NY_KILLZONE", "NY_LONDON_OVERLAP, ASIAN"]
-=======
-PREFERRED_SESSIONS = ["NY_KILLZONE", "NY_LONDON_OVERLAP", "LONDON_KILLZONE"] # Prioritize NY session
->>>>>>> 0d62e3f3f66c6487e7062bd8a3b3394013b385f5
+PREFERRED_SESSIONS = ["NY_KILLZONE", "NY_LONDON_OVERLAP", "LONDON_KILLZONE"]
