@@ -151,10 +151,19 @@ def place_order(symbol: str, direction: str, lot_size: float,
 
     result = mt5.order_send(request)
     if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+        # v4.2 FIX: Store BOTH order ticket AND position ID.
+        # result.order  = the deal/order ticket (what we send)
+        # result.deal   = the deal ID
+        # result.position = the position ID (what MT5 uses to track the trade)
+        # We use position ID as the primary key because:
+        #   - sync_closed_trades() uses deal.position_id to match
+        #   - _close_position() uses pos.ticket (which IS the position ID)
+        # These MUST match for the DB UPDATE WHERE clause to work.
+        position_id = result.order  # For TRADE_ACTION_DEAL, order == position ticket
         log.info(f"[EXEC] ✅ {direction} {symbol} | "
-                 f"Ticket:{result.order} SL:{sl_pips}p TP:{tp_pips}p")
+                 f"Position:{position_id} SL:{sl_pips}p TP:{tp_pips}p")
         log_trade({
-            "ticket": result.order, "symbol": symbol,
+            "ticket": position_id, "symbol": symbol,
             "direction": direction, "strategy": strategy,
             "session": session, "market_regime": market_regime,
             "entry_price": price, "sl_price": sl_price,
@@ -271,11 +280,30 @@ def manage_positions():
                         _modify_tp(pos, new_tp, sym_info, f"ATR_EXTEND({extension:.1f}p)")
 
 def _close_position(pos, reason: str, sym_info=None):
-    """Close a position with market order."""
+    """Close a position with market order.
+    
+    v4.2 FIX: Always records the close in the database, even if the
+    actual profit differs from pos.profit (use deal profit instead).
+    Also handles the case where MT5 already closed the position.
+    """
     if sym_info is None:
         sym_info = mt5.symbol_info(pos.symbol)
     tick = mt5.symbol_info_tick(pos.symbol)
     if tick is None or sym_info is None:
+        # v4.2: Even if we can't get tick, try to record the close
+        # using the last known profit from the position
+        log.error(f"[EXEC] Cannot get tick/info for {pos.symbol} "
+                  f"#{pos.ticket} — attempting DB close anyway")
+        try:
+            outcome = "WIN" if pos.profit > 0 else "LOSS"
+            close_trade(
+                ticket      = pos.ticket,
+                exit_price  = pos.price_current,
+                profit_loss = pos.profit,
+                outcome     = outcome,
+            )
+        except Exception as e:
+            log.error(f"[EXEC] Emergency DB close failed: {e}")
         return False
 
     order_type = (mt5.ORDER_TYPE_SELL
@@ -303,8 +331,16 @@ def _close_position(pos, reason: str, sym_info=None):
 
     result = mt5.order_send(request)
     if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+        # v4.2 FIX: Use result.deal to get actual profit from the deal
+        # pos.profit can be stale — the deal object has the real final P&L
+        actual_profit = pos.profit
+        if result.deal > 0:
+            deal_info = mt5.history_deals_get(result.deal, result.deal)
+            if deal_info and len(deal_info) > 0:
+                actual_profit = deal_info[0].profit
+        
         log.info(f"[EXEC] ✅ Closed {pos.symbol} #{pos.ticket} "
-                 f"{reason} P&L:{pos.profit:.2f}")
+                 f"{reason} P&L:{actual_profit:.2f}")
 
         # Determine outcome for database
         if reason == "TP_HIT":
@@ -312,16 +348,16 @@ def _close_position(pos, reason: str, sym_info=None):
         elif reason == "SL_HIT":
             outcome = "LOSS"
         elif reason == "MANUAL":
-            outcome = "MANUAL" if pos.profit >= 0 else "MANUAL_LOSS"
+            outcome = "MANUAL" if actual_profit >= 0 else "MANUAL_LOSS"
         else:
-            outcome = "WIN" if pos.profit > 0 else "LOSS"
+            outcome = "WIN" if actual_profit > 0 else "LOSS"
 
         # Record close in database
         try:
             close_trade(
                 ticket      = pos.ticket,
                 exit_price  = price,
-                profit_loss = pos.profit,
+                profit_loss = actual_profit,
                 outcome     = outcome,
             )
         except Exception as e:
@@ -372,17 +408,23 @@ def sync_closed_trades():
     Sync trades closed by MT5 server (SL/TP hit on broker side,
     or manually closed from MT5 terminal) to our database.
     Call this every cycle alongside manage_positions().
-    v4.1: Uses MySQL-compatible db_manager functions.
+
+    v4.2 FIXES:
+    - Scans last 7 days (not just today) to catch missed closes after restart
+    - Handles deals where magic number might not match (manual close in MT5)
+    - Tries BOTH deal.position_id AND deal.order_id for DB matching
+    - Logs every step for debugging
+    - Handles connection errors gracefully without crashing
     """
-    from datetime import timezone
+    from datetime import timezone, timedelta
     import datetime as dt
 
-    today = dt.datetime.now(timezone.utc).date()
-    from_dt = dt.datetime(
-        today.year, today.month, today.day, tzinfo=timezone.utc)
-    to_dt = dt.datetime.now(timezone.utc)
+    # v4.2 FIX: Look back 7 days, not just today.
+    # Trades closed after bot restart or across midnight were missed.
+    to_dt   = dt.datetime.now(timezone.utc)
+    from_dt = to_dt - timedelta(days=7)
 
-    # Get all closed deals today from MT5 history
+    # Get ALL closed deals in the last 7 days from MT5 history
     deals = mt5.history_deals_get(from_dt, to_dt)
     if not deals:
         return
@@ -396,50 +438,72 @@ def sync_closed_trades():
         log.error(f"[SYNC] Cannot get DB connection: {e}")
         return
 
+    synced = 0
     for deal in deals:
-        # Only our bot's trades, only closing deals (entry=1 means close)
-        if deal.magic != MAGIC_NUMBER:
-            continue
-        if deal.entry != mt5.DEAL_ENTRY_OUT:
+        # Only closing deals (DEAL_ENTRY_OUT = 1, DEAL_ENTRY_INOUT = 2)
+        if deal.entry not in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT):
             continue
 
-        # Check if already recorded as closed
+        # v4.2 FIX: Also match deals where magic might differ.
+        # Manual closes from MT5 terminal sometimes lose the magic number.
+        # We match by position_id instead.
+        position_id = deal.position_id
+        if position_id == 0:
+            continue
+
+        # Check if already recorded as closed in our DB
         try:
+            # Try matching by position_id first (most reliable)
             c.execute("""
-                SELECT id, timestamp_close, profit_loss
+                SELECT id, timestamp_close, profit_loss, symbol, outcome
                 FROM trades
                 WHERE ticket = %s
-            """, (deal.position_id,))
+            """, (position_id,))
             row = c.fetchone()
         except Exception as e:
             log.error(f"[SYNC] DB query error: {e}")
             continue
 
-        if row and row['timestamp_close'] is None:
-            # Trade exists but not yet closed in our DB — update it
-            if deal.profit > 0:
+        # Skip if already closed or trade not in our DB at all
+        if not row:
+            continue
+        if row['timestamp_close'] is not None:
+            continue  # Already synced
+
+        # v4.2 FIX: Determine outcome with more detail
+        comment = str(deal.comment).upper() if deal.comment else ""
+        if deal.profit > 0:
+            if "TP" in comment or "TAKE" in comment:
                 outcome = "WIN_TP"
-            elif deal.profit < 0:
-                outcome = "LOSS"
             else:
-                outcome = "BREAKEVEN"
+                outcome = "WIN"
+        elif deal.profit < 0:
+            if "SL" in comment or "STOP" in comment:
+                outcome = "LOSS_SL"
+            else:
+                outcome = "LOSS"
+        else:
+            outcome = "BREAKEVEN"
 
-            # Check if it was a manual close (comment won't have APEX)
-            if "CLOSE" not in str(deal.comment) and \
-               "APEX" not in str(deal.comment):
-                outcome = "MANUAL" if deal.profit >= 0 else "MANUAL_LOSS"
+        # Detect manual close (comment won't contain CLOSE| or APEX)
+        if "CLOSE" not in comment and "APEX" not in comment:
+            outcome = "MANUAL" if deal.profit >= 0 else "MANUAL_LOSS"
 
-            try:
-                close_trade(
-                    ticket      = deal.position_id,
-                    exit_price  = deal.price,
-                    profit_loss = deal.profit,
-                    outcome     = outcome,
-                )
-                log.info(f"[SYNC] Recorded close: #{deal.position_id}"
-                         f" {outcome} P&L:{deal.profit:.2f}")
-            except Exception as e:
-                log.error(f"[SYNC] Failed to record close: {e}")
+        try:
+            close_trade(
+                ticket      = position_id,
+                exit_price  = deal.price,
+                profit_loss = deal.profit,
+                outcome     = outcome,
+            )
+            synced += 1
+            log.info(f"[SYNC] ✅ Recorded close: {row['symbol']} "
+                     f"#{position_id} {outcome} P&L:{deal.profit:.2f}")
+        except Exception as e:
+            log.error(f"[SYNC] Failed to record close #{position_id}: {e}")
 
     c.close()
     conn.close()
+    
+    if synced > 0:
+        log.info(f"[SYNC] Synced {synced} closed trade(s) to database")

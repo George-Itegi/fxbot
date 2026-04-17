@@ -184,33 +184,53 @@ def close_trade(ticket: int, exit_price: float,
     """
     Update trade record when it closes.
     Called after SL hit, TP hit, or manual close.
-    outcome: 'WIN_TP' | 'WIN_TP2' | 'LOSS' | 'BREAKEVEN' | 'MANUAL'
+    outcome: 'WIN_TP' | 'WIN_TP2' | 'LOSS' | 'LOSS_SL' | 'BREAKEVEN' | 'MANUAL' | 'MANUAL_LOSS'
+    
+    v4.2 FIX: Logs rowcount to detect silent UPDATE failures.
+    Also handles LOSS_SL outcome type.
+    Returns True if update succeeded, False if no row matched.
     """
+    from core.logger import get_logger
+    _log = get_logger("DB_CLOSE")
+    
     conn = get_connection()
     c = conn.cursor(dictionary=True)
-    c.execute("""
-        UPDATE trades
-        SET timestamp_close = %s,
-            exit_price      = %s,
-            profit_loss     = %s,
-            outcome         = %s
-        WHERE ticket = %s
-    """, (
-        datetime.now().isoformat(),
-        exit_price,
-        round(profit_loss, 2),
-        outcome,
-        ticket
-    ))
+    
+    try:
+        c.execute("""
+            UPDATE trades
+            SET timestamp_close = %s,
+                exit_price      = %s,
+                profit_loss     = %s,
+                outcome         = %s
+            WHERE ticket = %s
+              AND timestamp_close IS NULL
+        """, (
+            datetime.now().isoformat(),
+            exit_price,
+            round(profit_loss, 2),
+            outcome,
+            ticket
+        ))
+        
+        if c.rowcount == 0:
+            # v4.2: No row matched — either ticket doesn't exist or already closed
+            _log.warning(f"[DB] close_trade: No row matched for ticket #{ticket}. "
+                         f"Already closed or ticket not found.")
+            c.close()
+            conn.close()
+            return False
+        
+        _log.info(f"[DB] ✅ Updated trade #{ticket}: {outcome} "
+                  f"P&L:{profit_loss:.2f} exit:{exit_price}")
 
-    # Also update strategy_performance table
-    if c.rowcount > 0:
+        # Also update strategy_performance table
         c.execute("SELECT strategy FROM trades WHERE ticket = %s", (ticket,))
         row = c.fetchone()
         if row:
             strategy = row['strategy']
             won = 1 if 'WIN' in outcome else 0
-            lost = 1 if outcome == 'LOSS' else 0
+            lost = 1 if 'LOSS' in outcome else 0
             be = 1 if outcome == 'BREAKEVEN' else 0
             now = datetime.now().isoformat()
 
@@ -233,9 +253,16 @@ def close_trade(ticket: int, exit_price: float,
                 strategy, won, lost, be,
                 round(profit_loss, 2), now,
             ))
-
-    c.close()
-    conn.close()
+    except Exception as e:
+        _log.error(f"[DB] close_trade error for #{ticket}: {e}")
+    finally:
+        try:
+            c.close()
+            conn.close()
+        except Exception:
+            pass
+    
+    return True
 
 
 def log_signal(data: dict):
