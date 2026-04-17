@@ -59,7 +59,7 @@ SCALPING = {
 
 # --- RISK MANAGEMENT ---
 RISK_PERCENT_PER_TRADE = 1.0    # % of balance risked per trade
-MAX_OPEN_TRADES        = 5      # Max simultaneous positions
+MAX_OPEN_TRADES        = 50     # Max simultaneous positions (raised for testing — was 5)
 MAX_DAILY_LOSS_PERCENT = 3.0    # Bot shuts down if this is hit
 MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
@@ -69,8 +69,8 @@ MIN_AI_SCORE           = 80     # Minimum score (0-100) to place a trade (Increa
 MIN_CONFLUENCE_COUNT   = 4      # Minimum factors that must agree (Increased for stricter confluence)
 
 # --- PROFIT PROTECTION ---
-PROFIT_GUARD_TRIGGER_PIPS = 5.0  # Pips profit to activate profit protection
-TRAILING_STOP_PIPS        = 10.0 # Pips to trail SL behind current price
+PROFIT_GUARD_TRIGGER_PIPS = 5.0  # Pips profit to activate break-even move
+TRAILING_STOP_PIPS        = 8.0  # Pips to trail SL behind current price (fallback if no ATR)
 DYNAMIC_TP_MULTIPLIER     = 2.0  # Multiplier for initial TP when trailing
 
 # --- SPREAD LIMITS (in pips) ---
@@ -93,7 +93,7 @@ MAX_SPREAD = {
 }
 
 # --- TRADE COOLDOWN (minutes per symbol) ---
-SYMBOL_COOLDOWN_MINUTES = 60
+SYMBOL_COOLDOWN_MINUTES = 10     # Reduced for testing — was 60
 
 # --- MINIMUM RISK/REWARD ---
 MIN_RISK_REWARD_RATIO = 1.5
@@ -116,8 +116,8 @@ LIMIT_ORDER_PRICE_OFFSET_PIPS = 3.0  # Offset from ideal price (pips)
 LIMIT_ORDER_EXPIRE_MINUTES = 30      # Cancel if not filled within this time
 
 # --- CONSECUTIVE LOSS PROTECTION ---
-MAX_CONSECUTIVE_LOSSES = 4           # Pause after this many consecutive losses
-CONSECUTIVE_LOSS_PAUSE_MINUTES = 30 # How long to pause trading after limit hit
+MAX_CONSECUTIVE_LOSSES = 8           # Raised for testing — was 4
+CONSECUTIVE_LOSS_PAUSE_MINUTES = 15 # Reduced for testing — was 30
 
 # --- SESSION WINDOWS (UTC hours) ---
 # Aligned with real institutional forex session behaviors (EAT/UTC+3 reference)

@@ -176,13 +176,37 @@ def place_order(symbol: str, direction: str, lot_size: float,
               f" {mt5.last_error()}")
     return False
 
+# v4.2: Cache ATR values to avoid fetching every 1 second (expensive)
+_atr_cache: dict = {}  # {symbol: (atr_pips, timestamp)}
+_ATR_CACHE_SECONDS = 30  # Refresh ATR every 30 seconds
+
+
+def _get_cached_atr(symbol: str) -> float:
+    """Get ATR with 30-second cache to avoid expensive MT5 calls every loop."""
+    import time
+    now = time.time()
+    cached = _atr_cache.get(symbol)
+    if cached and (now - cached[1]) < _ATR_CACHE_SECONDS:
+        return cached[0]
+    # Fresh fetch
+    atr = get_atr_for_symbol(symbol, 'M5', 50)
+    _atr_cache[symbol] = (atr, now)
+    return atr
+
+
 def manage_positions():
     """
     Every 1s (background thread): manage all bot positions.
     1. Force close if TP or SL hit (fallback safety)
-    2. ATR-adaptive trailing stop — adjusts SL based on current volatility
-    3. Dynamic TP extension based on ATR when 75% to target
-    4. Break-even move: move SL to entry after 1x ATR profit
+    2. Break-even move: move SL to entry after trigger profit
+    3. ATR-adaptive trailing stop — adjusts SL based on current volatility
+    4. Dynamic TP extension based on ATR when 75% to target
+    
+    v4.2 FIX: ATR is cached (30s) to avoid 50-candle fetch every second.
+    Break-even and trailing now use INDEPENDENT thresholds.
+    Break-even triggers at PROFIT_GUARD_TRIGGER_PIPS (config).
+    Trailing starts AFTER break-even, at trail_distance from price.
+    Added verbose logging so you can SEE trailing working.
     """
     positions = mt5.positions_get()
     if not positions:
@@ -232,52 +256,78 @@ def manage_positions():
         else:
             profit_pips = (pos.price_open - price) / point
 
-        # ── ATR-Adaptive Trailing Stop ────────────────────
-        # Fetch current ATR for dynamic trailing distance
-        atr_pips = get_atr_for_symbol(pos.symbol, 'M5', 50)
-        if atr_pips <= 0:
-            atr_pips = TRAILING_STOP_PIPS  # Fallback to config
+        # ── Get ATR (cached to avoid expensive fetch every second) ──
+        atr_pips = _get_cached_atr(pos.symbol)
 
-        # Trailing distance = max of ATR * 1.5, TRAILING_STOP_PIPS (config minimum)
-        trail_distance = max(atr_pips * 1.5, TRAILING_STOP_PIPS)
-
-        # Break-even trigger: after 1x ATR profit, move SL to entry
-        be_trigger = atr_pips * 1.0 if atr_pips > 0 else PROFIT_GUARD_TRIGGER_PIPS
+        # ── STEP 1: Break-Even Move ───────────────────────
+        # Move SL to entry + tiny buffer after PROFIT_GUARD_TRIGGER_PIPS profit.
+        # This is INDEPENDENT of ATR — uses config value directly.
+        be_trigger = PROFIT_GUARD_TRIGGER_PIPS  # e.g. 5 pips
 
         if profit_pips >= be_trigger:
             if pos.type == mt5.ORDER_TYPE_BUY:
-                # Break-even: move SL to entry price first
-                be_sl = round(pos.price_open + point * 0.1, sym_info.digits)
-                if pos.sl < pos.price_open and profit_pips >= be_trigger:
-                    _modify_sl(pos, be_sl, sym_info, "BREAKEVEN")
+                be_sl = round(pos.price_open + point * 0.5, sym_info.digits)
+                if pos.sl < pos.price_open:
+                    _modify_sl(pos, be_sl, sym_info,
+                               f"BREAKEVEN(+{profit_pips:.1f}p)")
+            else:
+                be_sl = round(pos.price_open - point * 0.5, sym_info.digits)
+                if pos.sl > pos.price_open:
+                    _modify_sl(pos, be_sl, sym_info,
+                               f"BREAKEVEN(+{profit_pips:.1f}p)")
 
-                # ATR trailing: trail SL behind price
+        # ── STEP 2: ATR-Adaptive Trailing Stop ────────────
+        # Trail distance: use ATR * 1.5 if available, else config default.
+        # Trailing ONLY activates AFTER break-even (SL must be >= entry).
+        if atr_pips > 0:
+            trail_distance = atr_pips * 1.5
+        else:
+            trail_distance = TRAILING_STOP_PIPS
+
+        # Only trail if SL is already at or above entry (break-even done)
+        if pos.type == mt5.ORDER_TYPE_BUY:
+            sl_at_or_above_entry = pos.sl >= pos.price_open
+            if sl_at_or_above_entry and profit_pips > trail_distance:
                 new_sl = round(price - trail_distance * point, sym_info.digits)
-                if new_sl > pos.sl and new_sl > pos.price_open:
-                    _modify_sl(pos, new_sl, sym_info, f"ATR_TRAIL({atr_pips:.1f}p)")
-
-            else:  # SELL
-                be_sl = round(pos.price_open - point * 0.1, sym_info.digits)
-                if pos.sl > pos.price_open and profit_pips >= be_trigger:
-                    _modify_sl(pos, be_sl, sym_info, "BREAKEVEN")
-
+                # Only trail UP — never move SL backwards
+                if new_sl > pos.sl:
+                    _modify_sl(pos, new_sl, sym_info,
+                               f"TRAIL(+{profit_pips:.1f}p, trail={trail_distance:.1f}p)")
+                    log.info(f"[EXEC] 📈 {pos.symbol} #{pos.ticket} "
+                             f"TRAILING SL: {pos.sl:.5f} -> {new_sl:.5f} "
+                             f"(+{profit_pips:.1f}p, trail_dist={trail_distance:.1f}p)")
+        else:
+            sl_at_or_below_entry = pos.sl <= pos.price_open
+            if sl_at_or_below_entry and profit_pips > trail_distance:
                 new_sl = round(price + trail_distance * point, sym_info.digits)
-                if new_sl < pos.sl and new_sl < pos.price_open:
-                    _modify_sl(pos, new_sl, sym_info, f"ATR_TRAIL({atr_pips:.1f}p)")
+                if new_sl < pos.sl:
+                    _modify_sl(pos, new_sl, sym_info,
+                               f"TRAIL(+{profit_pips:.1f}p, trail={trail_distance:.1f}p)")
+                    log.info(f"[EXEC] 📈 {pos.symbol} #{pos.ticket} "
+                             f"TRAILING SL: {pos.sl:.5f} -> {new_sl:.5f} "
+                             f"(+{profit_pips:.1f}p, trail_dist={trail_distance:.1f}p)")
 
-            # ── Dynamic TP extension based on ATR ──
+        # ── STEP 3: Dynamic TP Extension ───────────────────
+        if pos.tp > 0:
             current_tp_pips = abs(pos.tp - pos.price_open) / point
             if profit_pips > current_tp_pips * 0.75 and current_tp_pips > 0:
-                # Extend TP to current profit + 2x ATR (let winners run)
-                extension = max(atr_pips * 2.0, trail_distance * 1.5)
+                extension = max(atr_pips * 2.0, trail_distance * 1.5) if atr_pips > 0 else trail_distance * 1.5
                 if pos.type == mt5.ORDER_TYPE_BUY:
                     new_tp = round(price + extension * point, sym_info.digits)
                     if new_tp > pos.tp:
-                        _modify_tp(pos, new_tp, sym_info, f"ATR_EXTEND({extension:.1f}p)")
-                else:  # SELL
+                        _modify_tp(pos, new_tp, sym_info,
+                                   f"EXTEND({extension:.1f}p)")
+                        log.info(f"[EXEC] 🎯 {pos.symbol} #{pos.ticket} "
+                                 f"TP EXTENDED: {pos.tp:.5f} -> {new_tp:.5f} "
+                                 f"(+{profit_pips:.1f}p)")
+                else:
                     new_tp = round(price - extension * point, sym_info.digits)
                     if new_tp < pos.tp:
-                        _modify_tp(pos, new_tp, sym_info, f"ATR_EXTEND({extension:.1f}p)")
+                        _modify_tp(pos, new_tp, sym_info,
+                                   f"EXTEND({extension:.1f}p)")
+                        log.info(f"[EXEC] 🎯 {pos.symbol} #{pos.ticket} "
+                                 f"TP EXTENDED: {pos.tp:.5f} -> {new_tp:.5f} "
+                                 f"(+{profit_pips:.1f}p)")
 
 def _close_position(pos, reason: str, sym_info=None):
     """Close a position with market order.
