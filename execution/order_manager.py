@@ -151,24 +151,49 @@ def place_order(symbol: str, direction: str, lot_size: float,
 
     result = mt5.order_send(request)
     if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
-        # v4.4 FIX: OrderSendResult does NOT have .position attribute!
-        # It only has: .order (order ticket), .deal (deal ticket)
-        # To get the real POSITION ticket, we must query mt5.positions_get().
-        # Position ticket = pos.ticket = deal.position_id (all same number)
-        position_id = result.order  # default fallback = order ticket
-        try:
-            open_positions = mt5.positions_get(symbol=symbol)
-            if open_positions:
-                # Find our most recently opened position for this symbol
-                for p in sorted(open_positions, key=lambda x: x.time, reverse=True):
-                    if p.magic == MAGIC_NUMBER:
-                        position_id = p.ticket
-                        break
-        except Exception as e:
-            log.warning(f"[EXEC] Could not look up position ticket: {e}")
+        # v4.5 FIX: Get the REAL position ticket using 3 methods:
+        #
+        # MT5 ticket system:
+        #   result.order = Order ticket (request ID — NOT the position)
+        #   result.deal  = Deal ticket (execution record)
+        #   deal.position_id = Position ticket (what MT5 tracks, what sync uses)
+        #   pos.ticket  = Position ticket (same as deal.position_id)
+        #
+        # sync_closed_trades() matches by deal.position_id against DB ticket column.
+        # So we MUST store deal.position_id in the DB.
+        #
+        # METHOD 1 (best): Look up the deal by result.deal → get deal.position_id
+        # METHOD 2 (fallback): mt5.positions_get() → find our position
+        # METHOD 3 (last resort): Use result.order (old behavior, has fallback matching)
 
-        log.info(f"[EXEC] 🎫 Opened {symbol}: order_ticket={result.order} "
-                 f"deal_id={result.deal} → DB ticket={position_id}")
+        position_id = result.order  # METHOD 3: default fallback
+        method = "order_ticket"
+
+        # METHOD 1: Use the deal to get position_id directly
+        if result.deal > 0:
+            try:
+                deal_info = mt5.history_deals_get(result.deal, result.deal)
+                if deal_info and len(deal_info) > 0 and deal_info[0].position_id > 0:
+                    position_id = deal_info[0].position_id
+                    method = "deal.position_id"
+            except Exception as e:
+                log.warning(f"[EXEC] Method 1 (deal lookup) failed: {e}")
+
+        # METHOD 2: Find our position from live positions list
+        if method == "order_ticket":
+            try:
+                open_positions = mt5.positions_get(symbol=symbol)
+                if open_positions:
+                    for p in sorted(open_positions, key=lambda x: x.time, reverse=True):
+                        if p.magic == MAGIC_NUMBER:
+                            position_id = p.ticket
+                            method = "positions_get"
+                            break
+            except Exception as e:
+                log.warning(f"[EXEC] Method 2 (positions_get) failed: {e}")
+
+        log.info(f"[EXEC] 🎫 Opened {symbol}: order={result.order} "
+                 f"deal={result.deal} → pos_id={position_id} (via {method})")
         log.info(f"[EXEC] ✅ {direction} {symbol} | "
                  f"Position:{position_id} SL:{sl_pips}p TP:{tp_pips}p")
         log_trade({
@@ -539,17 +564,21 @@ def sync_closed_trades():
         if position_id == 0 and order_id == 0:
             continue
 
+        # v4.5: Log every closing deal for diagnosis
+        log.info(f"[SYNC] Closing deal: {deal.symbol} deal_id={deal.deal} "
+                 f"pos_id={position_id} order_id={order_id} "
+                 f"profit={deal.profit:.2f} comment={deal.comment}")
+
         # Check if already recorded as closed in our DB
         try:
-            # v4.3: Try BOTH position_id AND order_id for matching.
-            # Old trades used result.order as ticket, new trades use result.position.
+            # v4.5: Try position_id first (primary match)
             c.execute("""
                 SELECT id, timestamp_close, profit_loss, symbol, outcome
                 FROM trades
                 WHERE ticket = %s AND timestamp_close IS NULL
             """, (position_id,))
             row = c.fetchone()
-            
+
             # Fallback: try order_id if position_id didn't match
             matched_ticket = position_id
             if not row and order_id > 0 and order_id != position_id:
@@ -562,13 +591,24 @@ def sync_closed_trades():
                 if row:
                     matched_ticket = order_id
                     log.info(f"[SYNC] Matched by order_id fallback: #{order_id}")
+
+            # v4.5: If still no match, log ALL open tickets for this symbol
+            if not row:
+                c.execute("""
+                    SELECT ticket, symbol, direction, timestamp_open
+                    FROM trades
+                    WHERE symbol = %s AND timestamp_close IS NULL
+                """, (deal.symbol,))
+                open_rows = c.fetchall()
+                open_tickets = [r['ticket'] for r in open_rows] if open_rows else []
+                log.debug(f"[SYNC] No DB match for {deal.symbol} pos_id={position_id} "
+                          f"order_id={order_id} — open DB tickets: {open_tickets}")
+                continue
         except Exception as e:
             log.error(f"[SYNC] DB query error: {e}")
             continue
 
-        # Skip if already closed or trade not in our DB at all
-        if not row:
-            continue
+        # Skip if already synced
         if row['timestamp_close'] is not None:
             continue  # Already synced
 
