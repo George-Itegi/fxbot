@@ -59,7 +59,7 @@ SCALPING = {
 
 # --- RISK MANAGEMENT ---
 RISK_PERCENT_PER_TRADE = 1.0    # % of balance risked per trade
-MAX_OPEN_TRADES        = 50     # Max simultaneous positions (raised for testing — was 5)
+MAX_OPEN_TRADES        = 999    # Max simultaneous positions (999 = effectively unlimited for testing)
 MAX_DAILY_LOSS_PERCENT = 3.0    # Bot shuts down if this is hit
 MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades

@@ -151,15 +151,16 @@ def place_order(symbol: str, direction: str, lot_size: float,
 
     result = mt5.order_send(request)
     if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
-        # v4.2 FIX: Store BOTH order ticket AND position ID.
-        # result.order  = the deal/order ticket (what we send)
-        # result.deal   = the deal ID
-        # result.position = the position ID (what MT5 uses to track the trade)
-        # We use position ID as the primary key because:
-        #   - sync_closed_trades() uses deal.position_id to match
-        #   - _close_position() uses pos.ticket (which IS the position ID)
-        # These MUST match for the DB UPDATE WHERE clause to work.
-        position_id = result.order  # For TRADE_ACTION_DEAL, order == position ticket
+        # v4.3 FIX: Store POSITION ID (not ORDER ticket) in database.
+        # In MT5, result.order = the order ticket (sent request)
+        #             result.position = the position ID (what MT5 tracks)
+        # These are DIFFERENT numbers! sync_closed_trades() matches
+        # by deal.position_id and _close_position() uses pos.ticket —
+        # both are position IDs. So the DB must store position ID.
+        position_id = result.position if result.position and result.position > 0 else result.order
+        log.info(f"[EXEC] 🎫 Opened {symbol}: order_ticket={result.order} "
+                 f"position_id={result.position} deal_id={result.deal} "
+                 f"→ DB ticket={position_id}")
         log.info(f"[EXEC] ✅ {direction} {symbol} | "
                  f"Position:{position_id} SL:{sl_pips}p TP:{tp_pips}p")
         log_trade({
@@ -202,11 +203,11 @@ def manage_positions():
     3. ATR-adaptive trailing stop — adjusts SL based on current volatility
     4. Dynamic TP extension based on ATR when 75% to target
     
-    v4.2 FIX: ATR is cached (30s) to avoid 50-candle fetch every second.
-    Break-even and trailing now use INDEPENDENT thresholds.
-    Break-even triggers at PROFIT_GUARD_TRIGGER_PIPS (config).
-    Trailing starts AFTER break-even, at trail_distance from price.
-    Added verbose logging so you can SEE trailing working.
+    v4.3 FIXES:
+    - Trailing now uses ATR * 1.0 (was 1.5) for tighter trails
+    - Trailing activates right after break-even (profit_pips > trail_distance)
+    - Added step-by-step diagnostic logging for every phase
+    - Logs broker stops_level to catch SL modify failures
     """
     positions = mt5.positions_get()
     if not positions:
@@ -259,6 +260,9 @@ def manage_positions():
         # ── Get ATR (cached to avoid expensive fetch every second) ──
         atr_pips = _get_cached_atr(pos.symbol)
 
+        # ── Broker minimum stop level (for logging) ──
+        min_stop_level = sym_info.trade_stops_level * point if sym_info.trade_stops_level > 0 else point
+
         # ── STEP 1: Break-Even Move ───────────────────────
         # Move SL to entry + tiny buffer after PROFIT_GUARD_TRIGGER_PIPS profit.
         # This is INDEPENDENT of ATR — uses config value directly.
@@ -270,47 +274,66 @@ def manage_positions():
                 if pos.sl < pos.price_open:
                     _modify_sl(pos, be_sl, sym_info,
                                f"BREAKEVEN(+{profit_pips:.1f}p)")
+                else:
+                    log.debug(f"[EXEC] {pos.symbol} #{pos.ticket} BE skip: "
+                              f"SL already at {pos.sl} (>= entry {pos.price_open})")
             else:
                 be_sl = round(pos.price_open - point * 0.5, sym_info.digits)
                 if pos.sl > pos.price_open:
                     _modify_sl(pos, be_sl, sym_info,
                                f"BREAKEVEN(+{profit_pips:.1f}p)")
+                else:
+                    log.debug(f"[EXEC] {pos.symbol} #{pos.ticket} BE skip: "
+                              f"SL already at {pos.sl} (<= entry {pos.price_open})")
 
         # ── STEP 2: ATR-Adaptive Trailing Stop ────────────
-        # Trail distance: use ATR * 1.5 if available, else config default.
-        # Trailing ONLY activates AFTER break-even (SL must be >= entry).
+        # v4.3: Trail distance = ATR * 1.0 (tighter, was 1.5)
+        # Trailing activates right after break-even (SL at/beyond entry).
+        # Requires profit_pips > trail_distance to start trailing.
         if atr_pips > 0:
-            trail_distance = atr_pips * 1.5
+            trail_distance = atr_pips * 1.0
         else:
             trail_distance = TRAILING_STOP_PIPS
 
-        # Only trail if SL is already at or above entry (break-even done)
+        # Only trail if SL is already at or beyond entry (break-even done)
         if pos.type == mt5.ORDER_TYPE_BUY:
             sl_at_or_above_entry = pos.sl >= pos.price_open
-            if sl_at_or_above_entry and profit_pips > trail_distance:
+            if not sl_at_or_above_entry:
+                log.debug(f"[EXEC] {pos.symbol} #{pos.ticket} Trail waiting: "
+                          f"SL={pos.sl} < entry={pos.price_open} (BE not done yet)")
+            elif profit_pips <= trail_distance:
+                log.debug(f"[EXEC] {pos.symbol} #{pos.ticket} Trail waiting: "
+                          f"profit={profit_pips:.1f}p <= trail_dist={trail_distance:.1f}p")
+            else:
                 new_sl = round(price - trail_distance * point, sym_info.digits)
-                # Only trail UP — never move SL backwards
                 if new_sl > pos.sl:
                     _modify_sl(pos, new_sl, sym_info,
                                f"TRAIL(+{profit_pips:.1f}p, trail={trail_distance:.1f}p)")
                     log.info(f"[EXEC] 📈 {pos.symbol} #{pos.ticket} "
                              f"TRAILING SL: {pos.sl:.5f} -> {new_sl:.5f} "
-                             f"(+{profit_pips:.1f}p, trail_dist={trail_distance:.1f}p)")
+                             f"(+{profit_pips:.1f}p, trail_dist={trail_distance:.1f}p, ATR={atr_pips:.1f}p)")
         else:
             sl_at_or_below_entry = pos.sl <= pos.price_open
-            if sl_at_or_below_entry and profit_pips > trail_distance:
+            if not sl_at_or_below_entry:
+                log.debug(f"[EXEC] {pos.symbol} #{pos.ticket} Trail waiting: "
+                          f"SL={pos.sl} > entry={pos.price_open} (BE not done yet)")
+            elif profit_pips <= trail_distance:
+                log.debug(f"[EXEC] {pos.symbol} #{pos.ticket} Trail waiting: "
+                          f"profit={profit_pips:.1f}p <= trail_dist={trail_distance:.1f}p")
+            else:
                 new_sl = round(price + trail_distance * point, sym_info.digits)
                 if new_sl < pos.sl:
                     _modify_sl(pos, new_sl, sym_info,
                                f"TRAIL(+{profit_pips:.1f}p, trail={trail_distance:.1f}p)")
                     log.info(f"[EXEC] 📈 {pos.symbol} #{pos.ticket} "
                              f"TRAILING SL: {pos.sl:.5f} -> {new_sl:.5f} "
-                             f"(+{profit_pips:.1f}p, trail_dist={trail_distance:.1f}p)")
+                             f"(+{profit_pips:.1f}p, trail_dist={trail_distance:.1f}p, ATR={atr_pips:.1f}p)")
 
         # ── STEP 3: Dynamic TP Extension ───────────────────
+        # v4.3: Extend TP when position is 60% to target (was 75%)
         if pos.tp > 0:
             current_tp_pips = abs(pos.tp - pos.price_open) / point
-            if profit_pips > current_tp_pips * 0.75 and current_tp_pips > 0:
+            if profit_pips > current_tp_pips * 0.60 and current_tp_pips > 0:
                 extension = max(atr_pips * 2.0, trail_distance * 1.5) if atr_pips > 0 else trail_distance * 1.5
                 if pos.type == mt5.ORDER_TYPE_BUY:
                     new_tp = round(price + extension * point, sym_info.digits)
@@ -319,7 +342,7 @@ def manage_positions():
                                    f"EXTEND({extension:.1f}p)")
                         log.info(f"[EXEC] 🎯 {pos.symbol} #{pos.ticket} "
                                  f"TP EXTENDED: {pos.tp:.5f} -> {new_tp:.5f} "
-                                 f"(+{profit_pips:.1f}p)")
+                                 f"(+{profit_pips:.1f}p, ext={extension:.1f}p)")
                 else:
                     new_tp = round(price - extension * point, sym_info.digits)
                     if new_tp < pos.tp:
@@ -327,7 +350,7 @@ def manage_positions():
                                    f"EXTEND({extension:.1f}p)")
                         log.info(f"[EXEC] 🎯 {pos.symbol} #{pos.ticket} "
                                  f"TP EXTENDED: {pos.tp:.5f} -> {new_tp:.5f} "
-                                 f"(+{profit_pips:.1f}p)")
+                                 f"(+{profit_pips:.1f}p, ext={extension:.1f}p)")
 
 def _close_position(pos, reason: str, sym_info=None):
     """Close a position with market order.
@@ -420,7 +443,7 @@ def _close_position(pos, reason: str, sym_info=None):
     return False
 
 def _modify_sl(pos, new_sl: float, sym_info, label: str):
-    """Modify stop loss."""
+    """Modify stop loss with detailed error logging."""
     new_sl = round(new_sl, sym_info.digits)
     request = {
         "action":   mt5.TRADE_ACTION_SLTP,
@@ -434,10 +457,14 @@ def _modify_sl(pos, new_sl: float, sym_info, label: str):
         log.info(f"[EXEC] 🛡️ {label} SL:{new_sl} "
                  f"{pos.symbol} #{pos.ticket}")
     else:
-        log.warning(f"[EXEC] SL modify failed: {mt5.last_error()}")
+        retcode = result.retcode if result else "None"
+        err = mt5.last_error()
+        log.warning(f"[EXEC] ⚠️ SL modify FAILED {label}: retcode={retcode} "
+                    f"error={err} | {pos.symbol} #{pos.ticket} "
+                    f"SL:{pos.sl}->{new_sl} stops_level={sym_info.trade_stops_level}")
 
 def _modify_tp(pos, new_tp: float, sym_info, label: str):
-    """Modify take profit."""
+    """Modify take profit with detailed error logging."""
     new_tp = round(new_tp, sym_info.digits)
     request = {
         "action":   mt5.TRADE_ACTION_SLTP,
@@ -451,7 +478,11 @@ def _modify_tp(pos, new_tp: float, sym_info, label: str):
         log.info(f"[EXEC] 📈 {label} TP:{new_tp} "
                  f"{pos.symbol} #{pos.ticket}")
     else:
-        log.warning(f"[EXEC] TP modify failed: {mt5.last_error()}")
+        retcode = result.retcode if result else "None"
+        err = mt5.last_error()
+        log.warning(f"[EXEC] ⚠️ TP modify FAILED {label}: retcode={retcode} "
+                    f"error={err} | {pos.symbol} #{pos.ticket} "
+                    f"TP:{pos.tp}->{new_tp}")
 
 def sync_closed_trades():
     """
@@ -494,22 +525,35 @@ def sync_closed_trades():
         if deal.entry not in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT):
             continue
 
-        # v4.2 FIX: Also match deals where magic might differ.
-        # Manual closes from MT5 terminal sometimes lose the magic number.
-        # We match by position_id instead.
+        # Match by position_id (most reliable)
         position_id = deal.position_id
-        if position_id == 0:
+        order_id = deal.order  # Also try order ticket as fallback
+        if position_id == 0 and order_id == 0:
             continue
 
         # Check if already recorded as closed in our DB
         try:
-            # Try matching by position_id first (most reliable)
+            # v4.3: Try BOTH position_id AND order_id for matching.
+            # Old trades used result.order as ticket, new trades use result.position.
             c.execute("""
                 SELECT id, timestamp_close, profit_loss, symbol, outcome
                 FROM trades
-                WHERE ticket = %s
+                WHERE ticket = %s AND timestamp_close IS NULL
             """, (position_id,))
             row = c.fetchone()
+            
+            # Fallback: try order_id if position_id didn't match
+            matched_ticket = position_id
+            if not row and order_id > 0 and order_id != position_id:
+                c.execute("""
+                    SELECT id, timestamp_close, profit_loss, symbol, outcome
+                    FROM trades
+                    WHERE ticket = %s AND timestamp_close IS NULL
+                """, (order_id,))
+                row = c.fetchone()
+                if row:
+                    matched_ticket = order_id
+                    log.info(f"[SYNC] Matched by order_id fallback: #{order_id}")
         except Exception as e:
             log.error(f"[SYNC] DB query error: {e}")
             continue
@@ -541,14 +585,14 @@ def sync_closed_trades():
 
         try:
             close_trade(
-                ticket      = position_id,
+                ticket      = matched_ticket,
                 exit_price  = deal.price,
                 profit_loss = deal.profit,
                 outcome     = outcome,
             )
             synced += 1
             log.info(f"[SYNC] ✅ Recorded close: {row['symbol']} "
-                     f"#{position_id} {outcome} P&L:{deal.profit:.2f}")
+                     f"#{matched_ticket} {outcome} P&L:{deal.profit:.2f}")
         except Exception as e:
             log.error(f"[SYNC] Failed to record close #{position_id}: {e}")
 

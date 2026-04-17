@@ -240,7 +240,9 @@ def can_trade(symbol: str,
     if is_daily_loss_limit_hit():
         return False, "daily_loss_limit"
 
-    if count_open_positions() >= MAX_OPEN_TRADES:
+    open_count = count_open_positions()
+    if open_count >= MAX_OPEN_TRADES:
+        log.info(f"[RISK] max_positions_reached: {open_count}/{MAX_OPEN_TRADES}")
         return False, "max_positions_reached"
 
     # FIX #1: No duplicate trades on same symbol
