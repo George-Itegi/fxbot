@@ -170,14 +170,38 @@ def place_order(symbol: str, direction: str, lot_size: float,
         method = "order_ticket"
 
         # METHOD 1: Use the deal to get position_id directly
-        if result.deal > 0:
+        # Try BOTH: by deal ticket AND by order ticket (different MT5 builds)
+        if method == "order_ticket":
             try:
                 deal_info = mt5.history_deals_get(result.deal, result.deal)
-                if deal_info and len(deal_info) > 0 and deal_info[0].position_id > 0:
-                    position_id = deal_info[0].position_id
-                    method = "deal.position_id"
+                if deal_info and len(deal_info) > 0:
+                    d = deal_info[0]
+                    pos_from_deal = getattr(d, 'position_id', 0)
+                    if pos_from_deal and pos_from_deal > 0:
+                        position_id = pos_from_deal
+                        method = "deal.position_id"
             except Exception as e:
-                log.warning(f"[EXEC] Method 1 (deal lookup) failed: {e}")
+                log.warning(f"[EXEC] Method 1a (deal lookup) failed: {e}")
+
+        # METHOD 1b: Look up by order ticket in deals history
+        if method == "order_ticket" and result.order > 0:
+            try:
+                from datetime import timezone, timedelta
+                import datetime as dt
+                to_dt = dt.datetime.now(timezone.utc)
+                from_dt = to_dt - timedelta(seconds=60)
+                order_deals = mt5.history_deals_get(from_dt, to_dt)
+                if order_deals:
+                    for d in order_deals:
+                        d_order = getattr(d, 'order', 0)
+                        if d_order == result.order:
+                            pos_from_deal = getattr(d, 'position_id', 0)
+                            if pos_from_deal and pos_from_deal > 0:
+                                position_id = pos_from_deal
+                                method = "order_deal_lookup"
+                                break
+            except Exception as e:
+                log.warning(f"[EXEC] Method 1b (order deal lookup) failed: {e}")
 
         # METHOD 2: Find our position from live positions list
         if method == "order_ticket":
@@ -565,7 +589,9 @@ def sync_closed_trades():
             continue
 
         # v4.5: Log every closing deal for diagnosis
-        log.info(f"[SYNC] Closing deal: {deal.symbol} deal_id={deal.deal} "
+        # NOTE: TradeDeal has .ticket (not .deal) for deal ticket ID on some builds
+        deal_ticket = getattr(deal, 'ticket', getattr(deal, 'deal', 0))
+        log.info(f"[SYNC] Closing deal: {deal.symbol} deal_id={deal_ticket} "
                  f"pos_id={position_id} order_id={order_id} "
                  f"profit={deal.profit:.2f} comment={deal.comment}")
 

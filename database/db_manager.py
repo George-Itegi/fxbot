@@ -33,7 +33,7 @@ def _get_pool():
         try:
             _pool = pooling.MySQLConnectionPool(
                 pool_name="apex_pool",
-                pool_size=5,
+                pool_size=20,
                 pool_reset_session=True,
                 host=DB_HOST,
                 port=DB_PORT,
@@ -49,8 +49,15 @@ def _get_pool():
 
 
 def get_connection():
-    """Get a connection from the pool."""
+    """Get a connection from the pool with retry on exhaustion."""
+    import time
     pool = _get_pool()
+    for attempt in range(3):
+        try:
+            return pool.get_connection()
+        except Exception:
+            time.sleep(0.1 * (attempt + 1))
+    # Last attempt — let it raise
     return pool.get_connection()
 
 
@@ -157,26 +164,30 @@ def init_db():
 
 def log_trade(data: dict):
     """Record a new trade when it opens."""
-    conn = get_connection()
-    c = conn.cursor(dictionary=True)
-    c.execute("""
-        INSERT INTO trades (
-            ticket, timestamp_open, symbol, direction, strategy, session,
-            timeframe, entry_price, sl_price, tp_price, lot_size,
-            ai_score, confluence_count, rsi_at_entry, atr_at_entry,
-            spread_at_entry, market_regime, notes
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (
-        data.get('ticket'), datetime.now().isoformat(),
-        data['symbol'], data['direction'], data['strategy'],
-        data.get('session'), data.get('timeframe'), data['entry_price'],
-        data['sl_price'], data['tp_price'], data['lot_size'],
-        data.get('ai_score'), data.get('confluence_count'),
-        data.get('rsi'), data.get('atr'), data.get('spread'),
-        data.get('market_regime'), data.get('notes')
-    ))
-    c.close()
-    conn.close()
+    try:
+        conn = get_connection()
+        c = conn.cursor(dictionary=True)
+        c.execute("""
+            INSERT INTO trades (
+                ticket, timestamp_open, symbol, direction, strategy, session,
+                timeframe, entry_price, sl_price, tp_price, lot_size,
+                ai_score, confluence_count, rsi_at_entry, atr_at_entry,
+                spread_at_entry, market_regime, notes
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            data.get('ticket'), datetime.now().isoformat(),
+            data['symbol'], data['direction'], data['strategy'],
+            data.get('session'), data.get('timeframe'), data['entry_price'],
+            data['sl_price'], data['tp_price'], data['lot_size'],
+            data.get('ai_score'), data.get('confluence_count'),
+            data.get('rsi'), data.get('atr'), data.get('spread'),
+            data.get('market_regime'), data.get('notes')
+        ))
+        c.close()
+        conn.close()
+    except Exception as e:
+        from core.logger import get_logger
+        get_logger("DB_LOG").error(f"[DB] log_trade failed for {data.get('symbol')}: {e}")
 
 
 def close_trade(ticket: int, exit_price: float,
@@ -266,37 +277,43 @@ def close_trade(ticket: int, exit_price: float,
 
 
 def log_signal(data: dict):
-    conn = get_connection()
-    c = conn.cursor(dictionary=True)
-    c.execute("""
-        INSERT INTO signals (
-            timestamp, symbol, direction, strategy, ai_score,
-            confluence_count, was_traded, skip_reason, session, market_regime
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (
-        datetime.now().isoformat(), data['symbol'], data.get('direction'),
-        data.get('strategy'), data.get('ai_score'), data.get('confluence_count'),
-        int(data.get('was_traded', False)), data.get('skip_reason'),
-        data.get('session'), data.get('market_regime')
-    ))
-    c.close()
-    conn.close()
+    try:
+        conn = get_connection()
+        c = conn.cursor(dictionary=True)
+        c.execute("""
+            INSERT INTO signals (
+                timestamp, symbol, direction, strategy, ai_score,
+                confluence_count, was_traded, skip_reason, session, market_regime
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            datetime.now().isoformat(), data['symbol'], data.get('direction'),
+            data.get('strategy'), data.get('ai_score'), data.get('confluence_count'),
+            int(data.get('was_traded', False)), data.get('skip_reason'),
+            data.get('session'), data.get('market_regime')
+        ))
+        c.close()
+        conn.close()
+    except Exception:
+        pass  # Don't crash scan if DB is busy
 
 
 def log_market_snapshot(data: dict):
-    conn = get_connection()
-    c = conn.cursor(dictionary=True)
-    c.execute("""
-        INSERT INTO market_snapshots (
-            timestamp, fear_greed, vix, dxy, gold_price,
-            oil_price, sp500, bond_yield_10y, cot_net_pos, news_sentiment
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (
-        datetime.now().isoformat(),
-        data.get('fear_greed'), data.get('vix'), data.get('dxy'),
-        data.get('gold_price'), data.get('oil_price'), data.get('sp500'),
-        data.get('bond_yield_10y'), str(data.get('cot_net_pos', {})),
-        data.get('news_sentiment')
-    ))
-    c.close()
-    conn.close()
+    try:
+        conn = get_connection()
+        c = conn.cursor(dictionary=True)
+        c.execute("""
+            INSERT INTO market_snapshots (
+                timestamp, fear_greed, vix, dxy, gold_price,
+                oil_price, sp500, bond_yield_10y, cot_net_pos, news_sentiment
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            datetime.now().isoformat(),
+            data.get('fear_greed'), data.get('vix'), data.get('dxy'),
+            data.get('gold_price'), data.get('oil_price'), data.get('sp500'),
+            data.get('bond_yield_10y'), str(data.get('cot_net_pos', {})),
+            data.get('news_sentiment')
+        ))
+        c.close()
+        conn.close()
+    except Exception:
+        pass
