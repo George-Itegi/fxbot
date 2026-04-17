@@ -703,18 +703,25 @@ class OrderFlowAlpha:
         return result
     
     def _get_pip_size(self, symbol: str, price: float) -> float:
-        """Get approximate pip size for a symbol."""
+        """Get correct pip size for any symbol."""
         sym = str(symbol).upper()
-        if 'JPY' in sym:
-            return 0.01
-        elif sym in ['XAUUSD', 'XAGUSD']:
-            return 0.01
-        elif sym in ['US30', 'US500', 'USTEC', 'DE30', 'UK100']:
+        # Indices — trade in full points
+        if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
             return 1.0
-        elif price > 100:
+        # Gold
+        if "XAU" in sym:
+            return 0.1
+        # Silver
+        if "XAG" in sym:
             return 0.01
-        else:
-            return 0.0001
+        # Oil
+        if any(x in sym for x in ["WTI", "BRN"]):
+            return 0.01
+        # JPY pairs
+        if "JPY" in sym:
+            return 0.01
+        # Standard forex
+        return 0.0001
 
 
 # Global instance

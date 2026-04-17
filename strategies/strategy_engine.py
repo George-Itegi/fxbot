@@ -19,6 +19,7 @@ from strategies.m1_momentum_scalp import evaluate as m1_scalp_evaluate
 from strategies.opening_range_breakout import evaluate as orb_evaluate
 from strategies.delta_divergence import evaluate as delta_div_evaluate
 from strategies.trend_continuation import evaluate as trend_cont_evaluate
+from strategies.smart_money_footprint import evaluate as smf_evaluate
 
 log = get_logger(__name__)
 
@@ -33,6 +34,7 @@ STRATEGY_FUNCTIONS = {
     "OPENING_RANGE_BREAKOUT": orb_evaluate,
     "DELTA_DIVERGENCE":     delta_div_evaluate,
     "TREND_CONTINUATION":  trend_cont_evaluate,
+    "SMART_MONEY_FOOTPRINT": smf_evaluate,
 }
 
 def run_strategies(symbol: str,
@@ -191,6 +193,14 @@ def _run_one_strategy(name, symbol,
             smc_report=smc_report,
             market_report=market_report,
             df_h4=df_h4,
+            master_report=master_report)
+
+    elif name == "SMART_MONEY_FOOTPRINT":
+        return smf_evaluate(
+            symbol,
+            df_m1=df_m1, df_m5=df_m5, df_m15=df_m15, df_h1=df_h1,
+            smc_report=smc_report,
+            market_report=market_report,
             master_report=master_report)
 
     return None

@@ -321,31 +321,25 @@ def evaluate(
 
 
 def _get_pip_point(symbol: str, price: float) -> float:
-    """Get accurate pip point for any symbol."""
+    """Get correct pip point for any symbol."""
     sym = str(symbol).upper()
-    
-    # JPY pairs
-    if 'JPY' in sym:
-        return 0.01
-    
-    # Metals
-    if sym in ['XAUUSD', 'XAGUSD']:
-        return 0.01
-    
-    # Indices
-    if sym in ['US30', 'US500', 'USTEC', 'DE30', 'UK100', 'JP225']:
+    # Indices — trade in full points
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
         return 1.0
-    
-    # Oil
-    if sym in ['WTIUSD', 'BRNUSD']:
+    # Gold
+    if "XAU" in sym:
+        return 0.1
+    # Silver
+    if "XAG" in sym:
         return 0.01
-    
-    # Standard forex (5 digits)
-    if price < 10:
-        return 0.00001
-    
-    # Most pairs (5 digits)
-    return 0.00001
+    # Oil
+    if any(x in sym for x in ["WTI", "BRN"]):
+        return 0.01
+    # JPY pairs
+    if "JPY" in sym:
+        return 0.01
+    # Standard forex
+    return 0.0001
 
 
 # Register strategy
