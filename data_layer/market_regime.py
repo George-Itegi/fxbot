@@ -123,9 +123,15 @@ def is_preferred_session() -> bool:
 
 def is_tradeable_session() -> bool:
     """
-    Returns True for ALL sessions — DEAD_ZONE block disabled for testing.
+    Returns True only during institutional sessions (London + NY).
+    Sydney and Tokyo blocked — thin liquidity, wide spreads, false signals.
     """
-    return True
+    return get_session() in [
+        "LONDON_OPEN",
+        "LONDON_SESSION",
+        "NY_LONDON_OVERLAP",
+        "NY_AFTERNOON",
+    ]
 
 
 def get_session_quality() -> float:
