@@ -66,8 +66,14 @@ def evaluate(
         return None
     
     # Get tick data for order flow analysis
-    from data_layer.tick_fetcher import get_ticks
-    df_ticks = get_ticks(symbol, num_ticks=500)
+    # PRIORITY: Reuse cached ticks from market_scanner (fetched once per cycle)
+    # FALLBACK: Fetch fresh if not available (shouldn't happen in normal flow)
+    df_ticks = None
+    if market_report:
+        df_ticks = market_report.get('df_ticks')
+    if df_ticks is None or not isinstance(df_ticks, pd.DataFrame) or len(df_ticks) < 200:
+        from data_layer.tick_fetcher import get_ticks
+        df_ticks = get_ticks(symbol, num_ticks=500)
     if df_ticks is None or len(df_ticks) < 200:
         return None
     
@@ -112,8 +118,20 @@ def evaluate(
         window=30
     )
     
-    # Get volume profile from market report
-    volume_profile = market_report.get('profile', {})
+    # Get volume profile — try multiple paths for resilience
+    # Path 1: Direct from market_report (market_scanner stores it)
+    # Path 2: Convenience shortcut from master_report
+    volume_profile = (market_report.get('profile', {})
+                      if market_report else {})
+    if not volume_profile and master_report:
+        volume_profile = master_report.get('volume_profile', {})
+    # Path 3: Build fresh if completely missing (shouldn't happen normally)
+    if not volume_profile or not volume_profile.get('poc'):
+        try:
+            from data_layer.volume_profile import get_full_profile
+            volume_profile = get_full_profile(symbol) or {}
+        except Exception:
+            volume_profile = {}
     
     # Signal 5: Smart Money Master Score
     smart_money_score = alpha.calculate_smart_money_score(
@@ -234,7 +252,7 @@ def evaluate(
     
     if master_report:
         session = master_report.get('session', 'UNKNOWN')
-        if session in ['LONDON_SESSION', 'NY_LONDON_OVERLAP', 'NY_SESSION']:
+        if session in ['LONDON_SESSION', 'NY_LONDON_OVERLAP', 'NY_AFTERNOON']:
             score += 10
             confluence.append(f"SESSION_{session}")
         

@@ -199,7 +199,7 @@ REGISTRY = {
         "phase":       PHASE_PAPER,
         "status":      "ACTIVE",
         "best_state":  ["TRENDING_STRONG", "BREAKOUT_REJECTED", "REVERSAL_RISK", "BALANCED"],
-        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_SESSION"],
+        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON"],
         "total_trades": 0,
         "wins":        0,
         "losses":      0,
