@@ -95,7 +95,30 @@ def place_order(symbol: str, direction: str, lot_size: float,
                 session: str, market_regime: str,
                 rsi: float = None, atr: float = None,
                 spread: float = None) -> bool:
-    """Place a market order with validated SL/TP."""
+    """Place a market order with validated SL/TP.
+    
+    SAFETY: SL is ALWAYS required. Order will be rejected if:
+    - sl_pips <= 0 or tp_pips <= 0
+    - sl_pips > MAX_SL_PIPS (prevents runaway risk)
+    - R:R < MIN_RISK_REWARD_RATIO
+    """
+    # ── HARD SAFETY: Reject orders without valid SL/TP ──
+    if sl_pips <= 0 or tp_pips <= 0:
+        log.error(f"[EXEC] REJECTED {symbol}: sl_pips={sl_pips} tp_pips={tp_pips} — "
+                  f"BOTH must be > 0. No naked positions allowed.")
+        return False
+    
+    # ── MAX SL CAP: Never risk more than 25 pips on any single trade ──
+    MAX_SL_PIPS = 25.0
+    if sl_pips > MAX_SL_PIPS:
+        log.warning(f"[EXEC] {symbol} SL capped from {sl_pips:.1f}p to {MAX_SL_PIPS}p")
+        sl_pips = MAX_SL_PIPS
+    
+    # ── MIN SL FLOOR: Never set SL tighter than 3 pips (prevents noise stopouts) ──
+    MIN_SL_PIPS = 3.0
+    if sl_pips < MIN_SL_PIPS:
+        log.warning(f"[EXEC] {symbol} SL raised from {sl_pips:.1f}p to {MIN_SL_PIPS}p")
+        sl_pips = MIN_SL_PIPS
     tick     = mt5.symbol_info_tick(symbol)
     sym_info = mt5.symbol_info(symbol)
     if tick is None or sym_info is None:

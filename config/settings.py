@@ -59,7 +59,7 @@ SCALPING = {
 
 # --- RISK MANAGEMENT ---
 RISK_PERCENT_PER_TRADE = 1.0    # % of balance risked per trade
-MAX_OPEN_TRADES        = 999    # Max simultaneous positions (999 = effectively unlimited for testing)
+MAX_OPEN_TRADES        = 5      # Max simultaneous positions (was 999 — 14 trades killed your account)
 MAX_DAILY_LOSS_PERCENT = 3.0    # Bot shuts down if this is hit
 MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
@@ -75,22 +75,33 @@ TRAILING_STOP_PIPS        = 10.0 # Wider trail distance (was 8.0)
 DYNAMIC_TP_MULTIPLIER     = 2.5  # Let winners run further
 
 # --- SPREAD LIMITS (in pips) ---
-# Temporarily setting all MAX_SPREAD values to 999.0 to bypass the check for testing.
+# Tight spreads = only enter when liquidity is good.
+# Major pairs: very tight (these are the most liquid).
+# Cross pairs: wider (naturally less liquid, but still must be reasonable).
+# Commodities/Indices: wider still but still capped.
 MAX_SPREAD = {
-    "EURUSD": 999.0, "GBPUSD": 999.0, "USDJPY": 999.0,
-    "AUDUSD": 999.0, "USDCAD": 999.0, "USDCHF": 999.0, "NZDUSD": 999.0,
-    "EURGBP": 999.0, "EURAUD": 999.0, "EURCAD": 999.0, "EURCHF": 999.0, "EURNZD": 999.0,
-    "GBPAUD": 999.0, "GBPCAD": 999.0, "GBPCHF": 999.0, "GBPNZD": 999.0,
-    "AUDCAD": 999.0, "AUDCHF": 999.0, "AUDNZD": 999.0,
-    "CADCHF": 999.0, "CADJPY": 999.0,
-    "CHFJPY": 999.0,
-    "NZDCAD": 999.0, "NZDCHF": 999.0, "NZDJPY": 999.0,
-    "GBPJPY": 999.0, "EURJPY": 999.0, "AUDJPY": 999.0,
-    "XAUUSD": 999.0, "XAGUSD": 999.0,
-    "WTIUSD": 999.0, "BRNUSD": 999.0,
-    "US30": 999.0, "US500": 999.0, "USTEC": 999.0,
-    "DE30": 999.0, "UK100": 999.0, "JP225": 999.0,
-    "DEFAULT": 999.0,
+    # Major USD pairs — tightest spreads, highest liquidity
+    "EURUSD": 1.5, "GBPUSD": 2.0, "USDJPY": 1.5,
+    "AUDUSD": 2.0, "USDCAD": 2.5, "USDCHF": 2.0, "NZDUSD": 2.5,
+    # EUR crosses — moderate spreads
+    "EURGBP": 3.0, "EURAUD": 3.5, "EURCAD": 4.0, "EURCHF": 3.5, "EURNZD": 5.0,
+    # GBP crosses
+    "GBPAUD": 4.0, "GBPCAD": 4.5, "GBPCHF": 4.0, "GBPNZD": 6.0,
+    # AUD crosses
+    "AUDCAD": 4.0, "AUDCHF": 4.0, "AUDNZD": 5.0,
+    # Minor crosses
+    "CADCHF": 4.0, "CADJPY": 3.5,
+    "CHFJPY": 4.0,
+    "NZDCAD": 5.0, "NZDCHF": 5.0, "NZDJPY": 4.0,
+    # JPY crosses — moderate
+    "GBPJPY": 4.0, "EURJPY": 3.0, "AUDJPY": 3.5,
+    # Commodities — wider spreads
+    "XAUUSD": 4.0, "XAGUSD": 5.0,
+    "WTIUSD": 5.0, "BRNUSD": 5.0,
+    # Indices — point-based spreads
+    "US30": 5.0, "US500": 3.0, "USTEC": 4.0,
+    "DE30": 5.0, "UK100": 5.0, "JP225": 5.0,
+    "DEFAULT": 4.0,
 }
 
 # --- TRADE COOLDOWN (minutes per symbol) ---
@@ -100,11 +111,11 @@ SYMBOL_COOLDOWN_MINUTES = 30     # Don't spam the same symbol (was 10)
 MIN_RISK_REWARD_RATIO = 2.0  # Must have at least 2:1 reward (was 1.5)
 
 # --- CORRELATION RISK MANAGEMENT ---
-MAX_CORRELATED_EXPOSURE = 2      # Max correlated pairs in same direction
-MAX_SAME_CURRENCY_EXPOSURE = 3  # Max net exposure per single currency
+MAX_CORRELATED_EXPOSURE = 2      # Max correlated pairs in same direction (was 2, now enforced)
+MAX_SAME_CURRENCY_EXPOSURE = 2  # Max net exposure per single currency (was 3 — reduced for safety)
 # Example: If already long EURUSD + EURGBP (EUR exposure = +2),
-# and you try to BUY EURJPY (EUR = +3), it would be blocked if
-# MAX_SAME_CURRENCY_EXPOSURE = 2.
+# and you try to BUY EURJPY (EUR = +3), it would be blocked.
+# This prevents the 6-EUR-pair disaster that lost -$600+ in one go.
 
 # --- RE-ENTRY LOGIC (v4.3 STRICT) ---
 ALLOW_REENTRY = True                  # Allow re-entering after TP
@@ -117,8 +128,8 @@ LIMIT_ORDER_PRICE_OFFSET_PIPS = 3.0  # Offset from ideal price (pips)
 LIMIT_ORDER_EXPIRE_MINUTES = 30      # Cancel if not filled within this time
 
 # --- CONSECUTIVE LOSS PROTECTION ---
-MAX_CONSECUTIVE_LOSSES = 8           # Raised for testing — was 4
-CONSECUTIVE_LOSS_PAUSE_MINUTES = 15 # Reduced for testing — was 30
+MAX_CONSECUTIVE_LOSSES = 5           # Pause after 5 consecutive losses (was 8)
+CONSECUTIVE_LOSS_PAUSE_MINUTES = 30 # Full 30-min cooldown after losing streak (was 15)
 
 # --- SESSION WINDOWS (UTC hours) ---
 # Aligned with real institutional forex session behaviors (EAT/UTC+3 reference)
