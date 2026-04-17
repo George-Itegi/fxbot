@@ -5,7 +5,7 @@ from data_layer.feature_store import store
 log = get_logger(__name__)
 
 STRATEGY_NAME = "ORDER_FLOW_EXHAUSTION"
-MIN_SCORE     = 65
+MIN_SCORE     = 75
 VERSION       = "1.0"
 
 def evaluate(symbol: str,
@@ -69,10 +69,10 @@ def evaluate(symbol: str,
                 return {
                     "direction":    "SELL",
                     "entry_price":  current_price,
-                    "sl_price":     round(current_price + atr_pips * 1.0 * pip_size, 5),
+                    "sl_price":     round(current_price + atr_pips * 1.5 * pip_size, 5),
                     "tp1_price":    round(current_price - atr_pips * 1.5 * pip_size, 5),
                     "tp2_price":    round(current_price - atr_pips * 3.0 * pip_size, 5),
-                    "sl_pips":      round(atr_pips * 1.0, 1),
+                    "sl_pips":      round(atr_pips * 1.5, 1),
                     "tp1_pips":     round(atr_pips * 1.5, 1),
                     "tp2_pips":     round(atr_pips * 3.0, 1),
                     "strategy":     STRATEGY_NAME,
@@ -97,10 +97,10 @@ def evaluate(symbol: str,
                 return {
                     "direction":    "BUY",
                     "entry_price":  current_price,
-                    "sl_price":     round(current_price - atr_pips * 1.0 * pip_size, 5),
+                    "sl_price":     round(current_price - atr_pips * 1.5 * pip_size, 5),
                     "tp1_price":    round(current_price + atr_pips * 1.5 * pip_size, 5),
                     "tp2_price":    round(current_price + atr_pips * 3.0 * pip_size, 5),
-                    "sl_pips":      round(atr_pips * 1.0, 1),
+                    "sl_pips":      round(atr_pips * 1.5, 1),
                     "tp1_pips":     round(atr_pips * 1.5, 1),
                     "tp2_pips":     round(atr_pips * 3.0, 1),
                     "strategy":     STRATEGY_NAME,

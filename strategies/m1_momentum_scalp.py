@@ -15,7 +15,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "M1_MOMENTUM_SCALP"
-MIN_SCORE     = 60
+MIN_SCORE     = 75
 VERSION       = "2.0"  # v2.0: ATR-based SL instead of fixed 5p
 
 # --- Scalping parameters ---
@@ -282,6 +282,8 @@ def evaluate(symbol: str,
                 confluence.append("HTF_H4_ALIGNED")
     
     # ── Score threshold ─────────────────────────────────────
+    if len(confluence) < 5:
+        return None
     if score < MIN_SCORE:
         return None
     

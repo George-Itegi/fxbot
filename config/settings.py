@@ -64,14 +64,15 @@ MAX_DAILY_LOSS_PERCENT = 3.0    # Bot shuts down if this is hit
 MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
 
-# --- SIGNAL QUALITY ---
-MIN_AI_SCORE           = 80     # Minimum score (0-100) to place a trade (Increased for higher quality)
-MIN_CONFLUENCE_COUNT   = 4      # Minimum factors that must agree (Increased for stricter confluence)
+# --- SIGNAL QUALITY (v4.3 STRICT MODE) ---
+MIN_AI_SCORE           = 85     # Only trade on very high quality signals
+MIN_CONFLUENCE_COUNT   = 6      # At least 6 factors must agree (was 4)
+MIN_STRATEGY_SCORE     = 70     # Minimum strategy internal score to trade (was 55-65)
 
-# --- PROFIT PROTECTION ---
-PROFIT_GUARD_TRIGGER_PIPS = 5.0  # Pips profit to activate break-even move
-TRAILING_STOP_PIPS        = 8.0  # Pips to trail SL behind current price (fallback if no ATR)
-DYNAMIC_TP_MULTIPLIER     = 2.0  # Multiplier for initial TP when trailing
+# --- PROFIT PROTECTION (v4.3) ---
+PROFIT_GUARD_TRIGGER_PIPS = 8.0  # More profit before BE — only lock in real winners
+TRAILING_STOP_PIPS        = 10.0 # Wider trail distance (was 8.0)
+DYNAMIC_TP_MULTIPLIER     = 2.5  # Let winners run further
 
 # --- SPREAD LIMITS (in pips) ---
 # Temporarily setting all MAX_SPREAD values to 999.0 to bypass the check for testing.
@@ -93,10 +94,10 @@ MAX_SPREAD = {
 }
 
 # --- TRADE COOLDOWN (minutes per symbol) ---
-SYMBOL_COOLDOWN_MINUTES = 10     # Reduced for testing — was 60
+SYMBOL_COOLDOWN_MINUTES = 30     # Don't spam the same symbol (was 10)
 
-# --- MINIMUM RISK/REWARD ---
-MIN_RISK_REWARD_RATIO = 1.5
+# --- MINIMUM RISK/REWARD (v4.3 STRICT) ---
+MIN_RISK_REWARD_RATIO = 2.0  # Must have at least 2:1 reward (was 1.5)
 
 # --- CORRELATION RISK MANAGEMENT ---
 MAX_CORRELATED_EXPOSURE = 2      # Max correlated pairs in same direction
@@ -105,10 +106,10 @@ MAX_SAME_CURRENCY_EXPOSURE = 3  # Max net exposure per single currency
 # and you try to BUY EURJPY (EUR = +3), it would be blocked if
 # MAX_SAME_CURRENCY_EXPOSURE = 2.
 
-# --- RE-ENTRY LOGIC ---
+# --- RE-ENTRY LOGIC (v4.3 STRICT) ---
 ALLOW_REENTRY = True                  # Allow re-entering after TP
-REENTRY_COOLDOWN_MINUTES = 15        # Min wait between exits and re-entry
-REENTRY_MIN_SCORE_INCREASE = 5       # Score must be this much higher on re-entry
+REENTRY_COOLDOWN_MINUTES = 30        # Longer cooldown between re-entries (was 15)
+REENTRY_MIN_SCORE_INCREASE = 10      # Must be much stronger signal (was 5)
 
 # --- LIMIT ORDER ENTRY ---
 LIMIT_ORDER_ENABLED = True           # Use limit orders for pullback entries

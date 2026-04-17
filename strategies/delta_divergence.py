@@ -20,7 +20,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "DELTA_DIVERGENCE"
-MIN_SCORE     = 55
+MIN_SCORE     = 70
 VERSION       = "1.0"
 
 # --- Delta Divergence Parameters ---
@@ -460,6 +460,8 @@ def evaluate(symbol: str,
                 confluence.append("HIGH_MOMENTUM_REVERSAL")
     
     # ── Score threshold ─────────────────────────────────────
+    if len(confluence) < 5:
+        return None
     if score < MIN_SCORE:
         return None
     

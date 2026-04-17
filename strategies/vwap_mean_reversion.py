@@ -4,7 +4,7 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 STRATEGY_NAME = "VWAP_MEAN_REVERSION"
-MIN_SCORE = 65
+MIN_SCORE = 75
 VERSION = "1.1"
 MIN_RR = 1.5
 
@@ -76,6 +76,7 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
             score += 10; confluence.append("AT_VWAP_BAND")
         if not htf_ok:
             score -= 15; confluence.append("HTF_REJECTED")
+        if len(confluence) < 5: return None
         if score >= MIN_SCORE:
             sl_price = round(close_price - atr_pips * 1.2 * pip_size, 5)
             tp1_price = round(vwap, 5)
@@ -123,6 +124,7 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
             score += 10; confluence.append("AT_VWAP_BAND")
         if not htf_ok:
             score -= 15; confluence.append("HTF_REJECTED")
+        if len(confluence) < 5: return None
         if score >= MIN_SCORE:
             sl_price = round(close_price + atr_pips * 1.2 * pip_size, 5)
             tp1_price = round(vwap, 5)

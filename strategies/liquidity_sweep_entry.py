@@ -4,7 +4,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "LIQUIDITY_SWEEP_ENTRY"
-MIN_SCORE     = 65
+MIN_SCORE     = 75
 VERSION       = "1.0"
 
 def evaluate(symbol: str,
@@ -114,6 +114,7 @@ def evaluate(symbol: str,
         if 'EXTREME_PREMIUM' in pd_zone:
             score -= 15; confluence.append("PD_PREMIUM_PENALTY")
 
+        if len(confluence) < 5: return None
         if score >= MIN_SCORE:
             sl_price  = round(swept_level - atr_pips * 0.3 * pip_size, 5)
             tp1_price = round(close_price + atr_pips * 1.5 * pip_size, 5)
@@ -179,6 +180,7 @@ def evaluate(symbol: str,
         if 'EXTREME_DISCOUNT' in pd_zone:
             score -= 15; confluence.append("PD_DISCOUNT_PENALTY")
 
+        if len(confluence) < 5: return None
         if score >= MIN_SCORE:
             sl_price  = round(swept_level + atr_pips * 0.3 * pip_size, 5)
             tp1_price = round(close_price - atr_pips * 1.5 * pip_size, 5)

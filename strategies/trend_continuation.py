@@ -27,7 +27,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "TREND_CONTINUATION"
-MIN_SCORE     = 60
+MIN_SCORE     = 75
 VERSION       = "1.0"
 
 
@@ -331,6 +331,8 @@ def evaluate(symbol: str,
             confluence.append("CHOPPY_PENALTY")
     
     # ── Score threshold ─────────────────────────────────────
+    if len(confluence) < 5:
+        return None
     if score < MIN_SCORE:
         return None
     

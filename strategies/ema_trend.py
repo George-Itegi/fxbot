@@ -16,7 +16,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "EMA_TREND_MTF"
-MIN_SCORE     = 65   # Raised from 55 — only high quality setups
+MIN_SCORE     = 75   # v4.3 STRICT — only trade the best setups (was 65)
 VERSION       = "3.0"  # Hybrid intraday + scalping
 
 
@@ -197,19 +197,23 @@ def evaluate(symbol: str,
         if momentum.get('is_choppy', False):
             score -= 10; confluence.append("CHOPPY_MARKET_PENALTY")
 
+        # v4.3 STRICT: Require minimum confluence count
+        if len(confluence) < 5:
+            return None  # Not enough factors aligned
+
         if score >= MIN_SCORE:
             # Use M1 close for entry if available, else M15
             entry = float(df_m1.iloc[-1]['close']) if df_m1 is not None and len(df_m1) > 0 else close_price
 
-            # Tighter SL for scalping (use M5 ATR if available)
+            # v4.3: Wider SL for breathing room (was 1.0x)
             if df_m5 is not None and len(df_m5) >= 10:
                 m5_atr = float(df_m5.iloc[-1]['atr']) / pip_size
-                sl_pips = round(m5_atr * 1.0, 1)
+                sl_pips = round(m5_atr * 1.5, 1)
             else:
-                sl_pips = round(atr_pips * 1.2, 1)
+                sl_pips = round(atr_pips * 1.5, 1)
 
-            tp1_pips = round(sl_pips * 1.5, 1)
-            tp2_pips = round(sl_pips * 2.5, 1)
+            tp1_pips = round(sl_pips * 2.0, 1)
+            tp2_pips = round(sl_pips * 3.5, 1)
 
             sl_price  = round(entry - sl_pips * pip_size, 5)
             tp1_price = round(entry + tp1_pips * pip_size, 5)
@@ -299,19 +303,23 @@ def evaluate(symbol: str,
         if momentum.get('is_choppy', False):
             score -= 10; confluence.append("CHOPPY_MARKET_PENALTY")
 
+        # v4.3 STRICT: Require minimum confluence count
+        if len(confluence) < 5:
+            return None  # Not enough factors aligned
+
         if score >= MIN_SCORE:
             # Use M1 close for entry if available, else M15
             entry = float(df_m1.iloc[-1]['close']) if df_m1 is not None and len(df_m1) > 0 else close_price
 
-            # Tighter SL for scalping (use M5 ATR if available)
+            # v4.3: Wider SL for breathing room (was 1.0x)
             if df_m5 is not None and len(df_m5) >= 10:
                 m5_atr = float(df_m5.iloc[-1]['atr']) / pip_size
-                sl_pips = round(m5_atr * 1.0, 1)
+                sl_pips = round(m5_atr * 1.5, 1)
             else:
-                sl_pips = round(atr_pips * 1.2, 1)
+                sl_pips = round(atr_pips * 1.5, 1)
 
-            tp1_pips = round(sl_pips * 1.5, 1)
-            tp2_pips = round(sl_pips * 2.5, 1)
+            tp1_pips = round(sl_pips * 2.0, 1)
+            tp2_pips = round(sl_pips * 3.5, 1)
 
             sl_price  = round(entry + sl_pips * pip_size, 5)
             tp1_price = round(entry - tp1_pips * pip_size, 5)

@@ -281,29 +281,21 @@ def _scan_and_trade(symbol: str,
     log.info(f"  {symbol}: Score={final_score} | {bias}"
              f" | {state} | -> {action} | Fractal: {fractal_rec}")
 
-    # ── Fractal Alignment Gate (v4.1 RELAXED) ──
+    # ── Fractal Alignment Gate (v4.3 STRICT) ──
     # setup_quality is 0-3 from fractal_alignment: in_zone + M5_confirmed + M1_aligned
     setup_quality = fractal.get('setup_quality', 0)
     factors_agreed = fractal.get('factors_agreed', 0)
     
     if not fractal_aligned:
-        # Bypass conditions (from most to least strict):
-        # 1. High score + trending + any setup confirmation
-        if final_score >= 70 and state in ("TRENDING_STRONG", "BREAKOUT_ACCEPTED") and setup_quality >= 2:
-            log.info(f"  {symbol}: M1 bypassed — high-confidence setup "
+        # v4.3 STRICT: Only bypass with much stronger conditions
+        # 1. Very high score + trending + strong setup confirmation
+        if final_score >= 80 and state in ("TRENDING_STRONG", "BREAKOUT_ACCEPTED") and setup_quality >= 3:
+            log.info(f"  {symbol}: M1 bypassed — exceptional setup "
                      f"(score={final_score}, {state}, setup_q={setup_quality})")
-        # 2. Good score + M5 confirmed + directional bias
-        elif final_score >= 60 and m5_confirmed and bias not in ("CONFLICTED", "NEUTRAL"):
+        # 2. High score + M5 confirmed + directional bias
+        elif final_score >= 75 and m5_confirmed and bias not in ("CONFLICTED", "NEUTRAL"):
             log.info(f"  {symbol}: M1 bypassed — strong setup "
                      f"(score={final_score}, bias={bias}, M5 confirmed)")
-        # 3. Very high score alone (strong institutional signal)
-        elif final_score >= 80 and bias not in ("CONFLICTED", "NEUTRAL"):
-            log.info(f"  {symbol}: M1 bypassed — very high score "
-                     f"(score={final_score}, bias={bias})")
-        # 4. In setup zone + M5 confirmed (enough structure)
-        elif setup_quality >= 2 and bias not in ("CONFLICTED", "NEUTRAL"):
-            log.info(f"  {symbol}: M1 bypassed — in setup zone with M5 confirm "
-                     f"(setup_q={setup_quality}, bias={bias})")
         else:
             log.info(f"  {symbol}: Skipping due to no fractal alignment. "
                      f"(score={final_score} q={setup_quality} factors={factors_agreed})")
@@ -349,8 +341,16 @@ def _scan_and_trade(symbol: str,
     strategy_name = signal.get('strategy', 'UNKNOWN')
     direction     = str(signal.get('direction', ''))
     score         = signal.get('score', 0)
+    confluence    = signal.get('confluence', [])
+    
+    # v4.3 STRICT: Require minimum confluence factors
+    if len(confluence) < 5:
+        log.info(f"  {symbol}: Signal REJECTED — only {len(confluence)} confluence factors "
+                 f"(need >= 5) from {strategy_name}")
+        return False
+    
     log.info(f"  {symbol}: SIGNAL {direction} from {strategy_name}"
-             f" score={score}")
+             f" score={score} conf={len(confluence)}")
 
     # ══════════════════════════════════════════════════════════
     # NEW v4.0: BIAS CROSS-VALIDATION

@@ -17,7 +17,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "OPENING_RANGE_BREAKOUT"
-MIN_SCORE     = 55
+MIN_SCORE     = 70
 VERSION       = "1.0"
 
 # --- ORB Parameters ---
@@ -328,6 +328,8 @@ def evaluate(symbol: str,
             confluence.append("PREMIUM_ZONE")
     
     # ── Score threshold ─────────────────────────────────────
+    if len(confluence) < 5:
+        return None
     if score < MIN_SCORE:
         return None
     
@@ -339,7 +341,7 @@ def evaluate(symbol: str,
     
     # Ensure minimum R:R
     if tp_pips / sl_pips < 1.5:
-        tp_pips = round(sl_pips * 1.5, 1)
+        tp_pips = round(sl_pips * 2.0, 1)
     
     if direction == "BUY":
         sl_price  = round(orb['range_low'] - sl_pips * pip_size, 5)

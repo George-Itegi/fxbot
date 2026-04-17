@@ -59,7 +59,7 @@ def run_strategies(symbol: str,
                  f"{master_report.get('block_reason')}")
         return None
 
-    if final_score < 30:
+    if final_score < 50:
         log.info(f"[ENGINE] {symbol} — score too low ({final_score})")
         return None
 
