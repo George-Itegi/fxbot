@@ -192,6 +192,24 @@ REGISTRY = {
         "promoted_to_live":  None,
         "notes":       "Expansion — rides London/NY trend after pullback to EMA (H4+H1+M15+M5)",
     },
+    "SMART_MONEY_FOOTPRINT": {
+        "name":        "Smart Money Footprint",
+        "file":        "strategies/smart_money_footprint.py",
+        "version":     "1.0",
+        "phase":       PHASE_PAPER,
+        "status":      "ACTIVE",
+        "best_state":  ["TRENDING_STRONG", "BREAKOUT_REJECTED", "REVERSAL_RISK", "BALANCED"],
+        "best_session":["LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON"],
+        "total_trades": 0,
+        "wins":        0,
+        "losses":      0,
+        "total_pnl":   0.0,
+        "win_rate":    0.0,
+        "created_at":  "2026-04-17",
+        "promoted_to_paper": "2026-04-17",
+        "promoted_to_live":  None,
+        "notes":       "Institutional Alpha — order flow divergence, absorption, stop hunts, volume nodes",
+    },
 }
 
 

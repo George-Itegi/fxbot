@@ -1,36 +1,132 @@
-# ======================================
-# .gitignore — Never commit these files
-# ======================================
+# Examples and documentation
+INSTITUTIONAL_ALPHA_UPGRADE.md
+QUICK_START_ALPHA.md
 
-# Credentials — NEVER share this
-.env
-
-# Database files (large, personal data)
-database/*.db
-
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
+*$py.class
+*.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Virtual environments
-venv/
-env/
-.conda/
-
-# Logs (can get large)
-logs/*.log
-
-# IDE files
+# IDE
 .vscode/
 .idea/
-*.swp
 
-# OS files
+# Environment
+.env
+.env.local
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+.coverage.*
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# System
 .DS_Store
 Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+iTunes_Control.db
+Thumbs.db
+ehthumbs.db
+Trashes
+.ds_store
+apns-dev.pem
+apns-prod.pem
+google-services.json
+google-services.plist
 
-# Jupyter notebooks checkpoints
-.ipynb_checkpoints/
+# Compiled and binary
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.out
+*.class
+
+# Compressed
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+
+# Temp files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Project specific
+data_layer/__pycache__/
+strategies/__pycache__/

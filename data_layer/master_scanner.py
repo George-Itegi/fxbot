@@ -152,6 +152,9 @@ def master_scan(symbol: str, session: str = None) -> dict | None:
         "volume_surge":    volume_surge,
         "momentum":        momentum,
         "scalping_signal": scalping_signal,
+        # --- Convenience shortcuts (avoid nested dict lookups in strategies) ---
+        "volume_profile":  market.get("profile", {}),
+        "vwap_context":    market.get("vwap", {}),
     }
 
 

@@ -117,6 +117,9 @@ def scan_symbol(symbol: str) -> dict | None:
         'vwap':           vwap,
         'combined_bias':  combined_bias,
         'bias_votes':     vote_sum,
+        # Raw tick DataFrame for strategies that need tick-level analysis
+        # (avoids duplicate MT5 API calls — fetched once, reused by all)
+        'df_ticks':       df_ticks,
     }
 
     # Add tradeability score and market state
