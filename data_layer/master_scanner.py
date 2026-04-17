@@ -18,7 +18,9 @@ from data_layer.smc.smc_scanner import scan_smc
 from data_layer.feature_store import store
 from data_layer.tick_aggregator import aggregator, init_aggregator
 from data_layer.fractal_alignment import check_fractal_alignment
+from core.logger import get_logger
 
+log = get_logger(__name__)
 load_dotenv()
 
 # External data is shared across all symbols — fetched once per cycle
@@ -115,6 +117,8 @@ def master_scan(symbol: str, session: str = None) -> dict | None:
     # BLOCK low-liquidity sessions (Sydney, Tokyo).
     # Only trade during institutional sessions: London + NY.
     TRADABLE_SESSIONS = ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON"]
+    day_trade_ok = True
+    block_reason = ""
     if session not in TRADABLE_SESSIONS:
         day_trade_ok = False
         block_reason = f"session_blocked - {session} (only London+NY allowed)"
