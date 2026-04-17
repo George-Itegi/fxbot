@@ -151,16 +151,24 @@ def place_order(symbol: str, direction: str, lot_size: float,
 
     result = mt5.order_send(request)
     if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
-        # v4.3 FIX: Store POSITION ID (not ORDER ticket) in database.
-        # In MT5, result.order = the order ticket (sent request)
-        #             result.position = the position ID (what MT5 tracks)
-        # These are DIFFERENT numbers! sync_closed_trades() matches
-        # by deal.position_id and _close_position() uses pos.ticket —
-        # both are position IDs. So the DB must store position ID.
-        position_id = result.position if result.position and result.position > 0 else result.order
+        # v4.4 FIX: OrderSendResult does NOT have .position attribute!
+        # It only has: .order (order ticket), .deal (deal ticket)
+        # To get the real POSITION ticket, we must query mt5.positions_get().
+        # Position ticket = pos.ticket = deal.position_id (all same number)
+        position_id = result.order  # default fallback = order ticket
+        try:
+            open_positions = mt5.positions_get(symbol=symbol)
+            if open_positions:
+                # Find our most recently opened position for this symbol
+                for p in sorted(open_positions, key=lambda x: x.time, reverse=True):
+                    if p.magic == MAGIC_NUMBER:
+                        position_id = p.ticket
+                        break
+        except Exception as e:
+            log.warning(f"[EXEC] Could not look up position ticket: {e}")
+
         log.info(f"[EXEC] 🎫 Opened {symbol}: order_ticket={result.order} "
-                 f"position_id={result.position} deal_id={result.deal} "
-                 f"→ DB ticket={position_id}")
+                 f"deal_id={result.deal} → DB ticket={position_id}")
         log.info(f"[EXEC] ✅ {direction} {symbol} | "
                  f"Position:{position_id} SL:{sl_pips}p TP:{tp_pips}p")
         log_trade({
