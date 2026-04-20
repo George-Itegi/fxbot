@@ -1,0 +1,181 @@
+# strategies/vwap_mean_reversion.py v1.1
+import pandas as pd
+from core.logger import get_logger
+
+log = get_logger(__name__)
+STRATEGY_NAME = "VWAP_MEAN_REVERSION"
+MIN_SCORE = 75
+VERSION = "1.1"
+MIN_RR = 1.5
+
+def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
+             market_report=None,
+             smc_report=None, external_data=None, master_report=None,
+             df_h4=None):
+    if df_m15 is None or df_h1 is None or market_report is None:
+        return None
+    m15 = df_m15.iloc[-1]
+    h1 = df_h1.iloc[-1]
+    close_price = float(m15['close'])
+    pip_size = 0.01 if close_price > 50 else 0.0001
+    atr_pips = float(m15['atr']) / pip_size
+    if atr_pips < 2.0:
+        return None
+    adx = float(m15.get('adx', 30))
+    if adx > 30:
+        return None
+    vwap_data = market_report.get('vwap', {})
+    vwap = float(vwap_data.get('vwap', 0))
+    vwap_pos = vwap_data.get('position', '')
+    pip_from_v = float(vwap_data.get('pip_from_vwap', 0))
+    if vwap == 0:
+        return None
+    prof = market_report.get('profile', {})
+    poc = float(prof.get('poc', 0))
+    vah = float(prof.get('vah', 0))
+    val = float(prof.get('val', 0))
+    va_pos = prof.get('price_position', '')
+    pd_zone = ''
+    htf_ok = True
+    if smc_report:
+        pd_zone = smc_report.get('premium_discount', {}).get('zone', '')
+        htf_ok = smc_report.get('htf_alignment', {}).get('approved', True)
+    vix = float(external_data.get('vix', 20)) if external_data else 20.0
+    fg_score = float(external_data.get('fear_greed', 50)) if external_data else 50.0
+    if vix > 25:
+        return None
+    master_bias = master_report.get('combined_bias', '') if master_report else ''
+
+    # BUY SETUP
+    if 'BELOW_VWAP' in vwap_pos or va_pos == 'BELOW_VAL':
+        if master_bias == 'BEARISH':
+            log.info(f"[{STRATEGY_NAME}] BUY blocked — master BEARISH")
+            return None
+        if 'PREMIUM' in pd_zone and 'DISCOUNT' not in pd_zone:
+            return None
+
+        # v4.7: INSTITUTIONAL GATE — require OB/sweep/BOS/liquidity pool
+        inst_ok = False
+        if smc_report:
+            nearest_ob = smc_report.get('nearest_ob', {})
+            if nearest_ob and nearest_ob.get('type') == 'BULLISH' and float(nearest_ob.get('pips_to_ob', 999)) < 30:
+                inst_ok = True
+            if not inst_ok:
+                last_sweep = smc_report.get('last_sweep')
+                if last_sweep and last_sweep.get('bias') == 'BULLISH':
+                    inst_ok = True
+            if not inst_ok:
+                npool = smc_report.get('nearest_pool')
+                if npool and not npool.get('swept', True):
+                    inst_ok = True
+        if not inst_ok:
+            return None  # No institutional reason to buy at VWAP
+
+        score = 0
+        confluence = []
+        score += 20; confluence.append("PRICE_BELOW_VWAP")
+        if 5 <= abs(pip_from_v) <= 30:
+            score += 15; confluence.append(f"VWAP_DIST_{abs(pip_from_v):.0f}p")
+        if poc > close_price:
+            poc_dist = (poc - close_price) / pip_size
+            if poc_dist <= 40:
+                score += 15; confluence.append(f"POC_ABOVE_{poc_dist:.0f}p")
+        if int(h1.get('supertrend_dir', 0)) == 1:
+            score += 15; confluence.append("SUPERTREND_BULL")
+        stoch_k = float(m15.get('stoch_rsi_k', 50))
+        stoch_d = float(m15.get('stoch_rsi_d', 50))
+        if stoch_k < 30 and stoch_k > stoch_d:
+            score += 20; confluence.append("STOCHRSI_CROSS_UP")
+        elif stoch_k < 40:
+            score += 10; confluence.append("STOCHRSI_OVERSOLD")
+        if fg_score <= 30:
+            score += 10; confluence.append(f"FEAR_{fg_score:.0f}")
+        if 'BAND' in vwap_pos:
+            score += 10; confluence.append("AT_VWAP_BAND")
+        if not htf_ok:
+            score -= 15; confluence.append("HTF_REJECTED")
+        if len(confluence) < 5: return None
+        if score >= MIN_SCORE:
+            sl_price = round(close_price - atr_pips * 1.2 * pip_size, 5)
+            tp1_price = round(vwap, 5)
+            tp2_price = round(poc if poc > close_price else vah, 5)
+            sl_pips = round((close_price - sl_price) / pip_size, 1)
+            tp1_pips = round((tp1_price - close_price) / pip_size, 1)
+            tp2_pips = round((tp2_price - close_price) / pip_size, 1)
+            if sl_pips <= 0 or tp1_pips < sl_pips * MIN_RR:
+                log.info(f"[{STRATEGY_NAME}] BUY rejected R:R TP:{tp1_pips}/SL:{sl_pips}")
+                return None
+            log.info(f"[{STRATEGY_NAME}] BUY {symbol} Score:{score} | {', '.join(confluence)}")
+            return {"direction": "BUY", "entry_price": close_price,
+                    "sl_price": sl_price, "tp1_price": tp1_price, "tp2_price": tp2_price,
+                    "sl_pips": sl_pips, "tp1_pips": tp1_pips, "tp2_pips": tp2_pips,
+                    "strategy": STRATEGY_NAME, "version": VERSION,
+                    "score": score, "confluence": confluence}
+
+    # SELL SETUP
+    if 'ABOVE_VWAP' in vwap_pos or va_pos == 'ABOVE_VAH':
+        if master_bias == 'BULLISH':
+            log.info(f"[{STRATEGY_NAME}] SELL blocked — master BULLISH")
+            return None
+        if 'DISCOUNT' in pd_zone and 'PREMIUM' not in pd_zone:
+            return None
+
+        # v4.7: INSTITUTIONAL GATE — require OB/sweep/BOS/liquidity pool
+        inst_ok = False
+        if smc_report:
+            nearest_ob = smc_report.get('nearest_ob', {})
+            if nearest_ob and nearest_ob.get('type') == 'BEARISH' and float(nearest_ob.get('pips_to_ob', 999)) < 30:
+                inst_ok = True
+            if not inst_ok:
+                last_sweep = smc_report.get('last_sweep')
+                if last_sweep and last_sweep.get('bias') == 'BEARISH':
+                    inst_ok = True
+            if not inst_ok:
+                npool = smc_report.get('nearest_pool')
+                if npool and not npool.get('swept', True):
+                    inst_ok = True
+        if not inst_ok:
+            return None  # No institutional reason to sell at VWAP
+
+        score = 0
+        confluence = []
+        score += 20; confluence.append("PRICE_ABOVE_VWAP")
+        if 5 <= abs(pip_from_v) <= 30:
+            score += 15; confluence.append(f"VWAP_DIST_{abs(pip_from_v):.0f}p")
+        if poc < close_price:
+            poc_dist = (close_price - poc) / pip_size
+            if poc_dist <= 40:
+                score += 15; confluence.append(f"POC_BELOW_{poc_dist:.0f}p")
+        if int(h1.get('supertrend_dir', 0)) == -1:
+            score += 15; confluence.append("SUPERTREND_BEAR")
+        stoch_k = float(m15.get('stoch_rsi_k', 50))
+        stoch_d = float(m15.get('stoch_rsi_d', 50))
+        if stoch_k > 70 and stoch_k < stoch_d:
+            score += 20; confluence.append("STOCHRSI_CROSS_DOWN")
+        elif stoch_k > 60:
+            score += 10; confluence.append("STOCHRSI_OVERBOUGHT")
+        if fg_score >= 70:
+            score += 10; confluence.append(f"GREED_{fg_score:.0f}")
+        if 'BAND' in vwap_pos:
+            score += 10; confluence.append("AT_VWAP_BAND")
+        if not htf_ok:
+            score -= 15; confluence.append("HTF_REJECTED")
+        if len(confluence) < 5: return None
+        if score >= MIN_SCORE:
+            sl_price = round(close_price + atr_pips * 1.2 * pip_size, 5)
+            tp1_price = round(vwap, 5)
+            tp2_price = round(poc if poc < close_price else val, 5)
+            sl_pips = round((sl_price - close_price) / pip_size, 1)
+            tp1_pips = round((close_price - tp1_price) / pip_size, 1)
+            tp2_pips = round((close_price - tp2_price) / pip_size, 1)
+            if sl_pips <= 0 or tp1_pips < sl_pips * MIN_RR:
+                log.info(f"[{STRATEGY_NAME}] SELL rejected R:R TP:{tp1_pips}/SL:{sl_pips}")
+                return None
+            log.info(f"[{STRATEGY_NAME}] SELL {symbol} Score:{score} | {', '.join(confluence)}")
+            return {"direction": "SELL", "entry_price": close_price,
+                    "sl_price": sl_price, "tp1_price": tp1_price, "tp2_price": tp2_price,
+                    "sl_pips": sl_pips, "tp1_pips": tp1_pips, "tp2_pips": tp2_pips,
+                    "strategy": STRATEGY_NAME, "version": VERSION,
+                    "score": score, "confluence": confluence}
+
+    return None

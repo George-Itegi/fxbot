@@ -1,33 +1,41 @@
 ---
 Task ID: 1
-Agent: Super Z (Main Agent)
-Task: Fix numpy.float64 .upper() error in APEX TRADER v4.1 parallel scan
+Agent: Main Agent
+Task: Rebuild order flow system files after user reset repo to first commit
 
 Work Log:
-- Analyzed entire fxbot codebase (~50+ Python files) to find source of `'numpy.float64' object has no attribute 'upper'` error
-- Searched all .upper() calls — found 9 instances, all on `symbol` variable (always string from WATCHLIST)
-- Searched all bias/direction field assignments in data layer (delta_calculator, volume_profile, vwap_calculator, tick_volume_surge, momentum_velocity) — all return proper strings
-- Searched all strategy files (9 strategies) — all return proper string direction values
-- Searched SMC modules (liquidity_sweeps, order_blocks, market_structure, htf_alignment) — all return proper strings
-- Conclusion: The error is likely caused by numpy float leaking through pandas DataFrame operations into a field that eventually gets .upper() called on it
-- Applied comprehensive defensive fixes:
-  1. **main.py**: Added `import traceback` + full traceback in parallel scan error handler for exact debugging
-  2. **main.py**: Added `str()` conversion for `direction` field from signal + `.upper()` sanitization
-  3. **execution/order_manager.py**: `str(symbol).upper()` at both pip size functions
-  4. **risk_management/risk_engine.py**: `str(symbol).upper()` at 3 locations
-  5. **strategies/ema_trend.py**: `str(symbol).upper()`
-  6. **strategies/strategy_engine.py**: Sanitize signal['direction'] with `str()` before appending
-  7. **strategies/m1_momentum_scalp.py**: `str(m15_bias)` when assigning to direction
-  8. **data_layer/tick_fetcher.py**: `str(symbol).upper()`
-  9. **data_layer/momentum_velocity.py**: `str(symbol).upper()`
-  10. **data_layer/market_scanner.py**: Explicit `str()` for all bias fields from dict.get() calls
-  11. **data_layer/master_scanner.py**: Explicit `str()` for market_bias, smc_bias, pd_bias
-  12. **data_layer/feature_store.py**: Complete rewrite of standardized dict with `str()`, `float()`, `int()`, `bool()` type casting for ALL fields
+- User reset local repo to `846b1e0 increase spread` (first commit), losing ALL code
+- Read all existing files from the environment's fxbot/ directory to verify implementations
+- Created 6 files in /home/z/my-project/download/fxbot-files/:
+  1. data_layer/order_flow_alpha.py (725 lines) - Institutional Order Flow Engine
+  2. strategies/smart_money_footprint.py (360 lines) - Strategy combining Order Flow + SMC
+  3. data_layer/tick_aggregator.py (196 lines) - Added get_tick_data() function
+  4. data_layer/market_scanner.py (442 lines) - Updated with df_ticks caching
+  5. strategies/strategy_engine.py (229 lines) - Wired SMART_MONEY_FOOTPRINT + hard gates
+  6. strategies/strategy_registry.py (288 lines) - SMART_MONEY_FOOTPRINT registered ACTIVE
 
 Stage Summary:
-- All `.upper()` call sites now use `str(symbol).upper()` for safety
-- All bias/direction fields are explicitly cast to `str()` when extracted from dicts
-- Feature store now enforces type safety with explicit `str()`, `float()`, `int()`, `bool()` casting
-- Strategy engine sanitizes signal['direction'] before use
-- Main.py now logs full traceback for any parallel scan errors
-- If error persists, full traceback will reveal exact location
+- All 6 files created totaling 2,240 lines of code
+- Files are in download directory for user to copy to their local project
+- User needs to manually copy files since we can't push to their GitHub repo
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Analyze trade output from project-lifecycle-overview-bdf4b branch, confirm code push, fix sync spam
+
+Work Log:
+- Confirmed: NO code was pushed from assistant environment (no git remote configured)
+- Confirmed: GitHub remote still has ALL code on the branch (force push was no-op)
+- Analyzed 54 deal lines from user's sync output
+- Identified root cause of sync spam: log fires BEFORE already-synced check (line 617 vs 661)
+- Fixed sync_closed_trades() in order_manager.py:
+  - Moved [SYNC] log AFTER the DB already-synced check (eliminates spam)
+  - Added watermark cursor: initial 7-day scan, then switches to 5-minute incremental
+  - DB check now runs first, log only fires for genuinely NEW syncs
+- Analyzed trade quality: 13 empty-comment trades (pre-bot or manual), big SL hits dominating losses
+
+Stage Summary:
+- order_manager.py patched with v4.8 fixes (sync spam elimination + incremental mode)
+- User needs to verify `git log --oneline -5` to confirm branch has all commits
+- Key remaining issue: strategies still entering on weak signals (big SL hits)
