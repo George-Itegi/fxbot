@@ -107,9 +107,10 @@ def evaluate(symbol: str,
     if last_sweep_bias == "BEARISH" and delta_bias != "BEARISH":
         return None  # Bearish sweep but delta doesn't confirm — skip
 
-    # ── MANDATORY: BOS must confirm structure shift ──
-    if bos is None:
-        return None  # No BOS = no structural confirmation
+    # ── BOS confirmation (STRONG BONUS, not mandatory) ──
+    # In backtesting, BOS detection on H1 is too coarse — it rarely
+    # aligns with sweep timing. Keep delta + sweep as core requirements.
+    bos = smc_report.get("structure", {}).get("bos")
 
     sweep_bias = last_sweep_bias
     reversal_p = last_sweep_reversal
@@ -128,11 +129,11 @@ def evaluate(symbol: str,
         # MANDATORY: Delta confirms
         score += 15; confluence.append("DELTA_BULL_MANDATORY")
 
-        # MANDATORY: BOS confirms structure shift
-        if 'BULLISH' in bos.get('type', ''):
+        # BOS is a strong bonus (not mandatory — backtest H1 BOS rarely aligns)
+        if bos and 'BULLISH' in bos.get('type', ''):
             score += 20; confluence.append("BOS_BULL_MANDATORY")
-        else:
-            return None  # BOS doesn't confirm — don't trade
+        elif bos:
+            score += 5; confluence.append("BOS_EXISTS")
 
         # Reversal strength
         if reversal_p >= 10:
@@ -217,11 +218,11 @@ def evaluate(symbol: str,
         # MANDATORY: Delta confirms
         score += 15; confluence.append("DELTA_BEAR_MANDATORY")
 
-        # MANDATORY: BOS confirms
-        if 'BEARISH' in bos.get('type', ''):
+        # BOS is a strong bonus (not mandatory)
+        if bos and 'BEARISH' in bos.get('type', ''):
             score += 20; confluence.append("BOS_BEAR_MANDATORY")
-        else:
-            return None
+        elif bos:
+            score += 5; confluence.append("BOS_EXISTS")
 
         if reversal_p >= 10:
             score += 15; confluence.append(f"STRONG_REVERSAL_{reversal_p:.0f}p")

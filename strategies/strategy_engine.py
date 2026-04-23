@@ -242,9 +242,10 @@ def _run_one_strategy(name, symbol,
     # Only fire strategies in market states where their edge exists.
     # This prevents strategies firing in wrong conditions.
     HARD_STATE_GATES = {
-        "VWAP_MEAN_REVERSION":   ["BALANCED", "REVERSAL_RISK"],
+        "VWAP_MEAN_REVERSION":   ["BALANCED", "REVERSAL_RISK",
+                                  "BREAKOUT_REJECTED"],
         "DELTA_DIVERGENCE":      ["REVERSAL_RISK", "BREAKOUT_REJECTED",
-                                  "BALANCED"],
+                                  "BALANCED", "TRENDING_EXTENDED"],
     }
 
     if name in HARD_STATE_GATES:

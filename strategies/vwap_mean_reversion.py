@@ -6,7 +6,7 @@ log = get_logger(__name__)
 STRATEGY_NAME = "VWAP_MEAN_REVERSION"
 MIN_SCORE = 60   # Lowered — intraday VWAP setups score 55-70 realistically
 VERSION = "1.1"
-MIN_RR = 1.5
+MIN_RR = 1.2
 
 def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
              market_report=None,
@@ -49,7 +49,7 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
     master_bias = master_report.get('combined_bias', '') if master_report else ''
 
     # BUY SETUP
-    if 'BELOW_VWAP' in vwap_pos or va_pos == 'BELOW_VAL':
+    if 'BELOW' in vwap_pos or va_pos == 'BELOW_VAL':
         if master_bias == 'BEARISH':
             log.info(f"[{STRATEGY_NAME}] BUY blocked — master BEARISH")
             return None
@@ -97,7 +97,7 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
                     "score": score, "confluence": confluence}
 
     # SELL SETUP
-    if 'ABOVE_VWAP' in vwap_pos or va_pos == 'ABOVE_VAH':
+    if 'ABOVE' in vwap_pos or va_pos == 'ABOVE_VAH':
         if master_bias == 'BULLISH':
             log.info(f"[{STRATEGY_NAME}] SELL blocked — master BULLISH")
             return None

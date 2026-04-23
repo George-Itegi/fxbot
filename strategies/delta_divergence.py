@@ -24,10 +24,10 @@ MIN_SCORE     = 70
 VERSION       = "1.0"
 
 # --- Delta Divergence Parameters ---
-LOOKBACK_SWINGS = 50       # Candles to look back for swing highs/lows
+LOOKBACK_SWINGS = 20       # Candles to look back for swing highs/lows (lowered from 50)
 DELTA_LOOKBACK  = 50       # Ticks for rolling delta comparison
-MIN_SWING_PIPS  = 3.0      # Minimum swing size to consider (avoid noise)
-DELTA_WEAKEN_THRESHOLD = 0.4  # Delta must weaken by this ratio to signal divergence
+MIN_SWING_PIPS  = 2.0      # Minimum swing size to consider (lowered from 3.0)
+DELTA_WEAKEN_THRESHOLD = 0.3  # Delta must weaken by this ratio (lowered from 0.4)
 
 
 def _get_pip_size(price: float) -> float:

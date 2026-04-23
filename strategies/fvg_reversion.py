@@ -29,9 +29,9 @@ MIN_SCORE     = 68
 VERSION       = "1.0"
 
 # --- FVG Reversion Parameters ---
-MIN_FVG_QUALITY   = 60      # Minimum FVG quality score to trade
-MAX_FVG_DISTANCE  = 80      # Max pips price can be from FVG to enter
-MIN_FVG_SIZE_PIPS = 3.0     # FVG must be at least this big (avoid noise)
+MIN_FVG_QUALITY   = 35      # Lowered from 60 — quality = gap_pips*3, so 35 = ~12pips FVG
+MAX_FVG_DISTANCE  = 100     # Widened from 80 — more FVGs reachable
+MIN_FVG_SIZE_PIPS = 2.5     # Lowered from 3.0 — more FVGs qualify
 PARTIAL_FILL_TP   = 0.7     # Close 50% at 70% of gap fill (book profit early)
 SL_BUFFER_PIPS    = 2.0     # Extra pips beyond FVG edge for SL
 
@@ -245,7 +245,7 @@ def evaluate(symbol: str,
             if imb > 0.15 and imb_strength in ('STRONG', 'EXTREME'):
                 score += 15
                 confluence.append(f"OF_BULL_{imb:+.2f}_{imb_strength}")
-            elif imb > 0.15:
+            elif imb > 0.1:
                 score += 8
                 confluence.append(f"OF_BULL_{imb:+.2f}")
             else:
@@ -256,7 +256,7 @@ def evaluate(symbol: str,
             if imb < -0.15 and imb_strength in ('STRONG', 'EXTREME'):
                 score += 15
                 confluence.append(f"OF_BEAR_{imb:+.2f}_{imb_strength}")
-            elif imb < -0.15:
+            elif imb < -0.1:
                 score += 8
                 confluence.append(f"OF_BEAR_{imb:+.2f}")
             else:
