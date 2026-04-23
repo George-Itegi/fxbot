@@ -173,6 +173,14 @@ def train_from_backtest() -> dict:
         from database.db_manager import get_connection
 
         conn   = get_connection()
+
+        # Ensure backtest tables exist + auto-migrate new columns
+        try:
+            from backtest.db_store import _ensure_tables
+            _ensure_tables(conn)
+        except Exception:
+            pass
+
         cursor = conn.cursor(dictionary=True)
 
         # Fetch all backtest trades with the 21 features we need
