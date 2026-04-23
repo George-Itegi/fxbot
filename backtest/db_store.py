@@ -205,6 +205,7 @@ def _auto_migrate_signals(cursor, conn):
     for table, col, col_def in migrations:
         try:
             cursor.execute(f"SELECT {col} FROM {table} LIMIT 1")
+            cursor.fetchall()  # consume result set to avoid "Unread result found"
         except Exception:
             try:
                 cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
@@ -222,6 +223,12 @@ def _get_or_create_conn():
         _ensure_tables(conn)
     except Exception as e:
         log.warning(f"[DB_STORE] Table creation check: {e}")
+    # Consume any leftover unread results from pooled connection
+    try:
+        while conn.unread_result:
+            conn.consume_results()
+    except Exception:
+        pass
     return conn
 
 
