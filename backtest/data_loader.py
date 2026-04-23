@@ -317,7 +317,7 @@ def get_candles_at_time(data: dict, current_time: datetime.datetime,
     This simulates what the live bot sees at any given moment.
     Returns dict of DataFrames, each ending before current_time.
     """
-    cutoff = pd.Timestamp(current_time, tz='UTC')
+    cutoff = pd.Timestamp(current_time)
     result = {}
     for tf, df in data.items():
         # Only include bars that closed before current_time
