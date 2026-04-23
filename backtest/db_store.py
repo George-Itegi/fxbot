@@ -155,6 +155,7 @@ def _ensure_tables(conn):
             -- Was this traded?
             was_traded          TINYINT,
             was_executed        TINYINT,
+            trade_ticket        INT DEFAULT NULL,   -- Links to backtest_trades.ticket
             skip_reason         VARCHAR(100),
 
             -- Market context
@@ -182,7 +183,8 @@ def _ensure_tables(conn):
             INDEX idx_strategy (strategy),
             INDEX idx_was_traded (was_traded),
             INDEX idx_was_executed (was_executed),
-            INDEX idx_run_id (run_id)
+            INDEX idx_run_id (run_id),
+            INDEX idx_trade_ticket (trade_ticket)
         )
     """)
 
@@ -372,10 +374,12 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
                          master_report: dict, market_report: dict,
                          smc_report: dict, flow_data: dict,
                          was_traded: bool, skip_reason: str,
-                         run_id: str = 'default'):
+                         run_id: str = 'default',
+                         trade_ticket: int = None):
     """
     Store a signal that was generated but blocked (consensus/gates/score).
     These are CRITICAL for ML — they tell the model what NOT to trade.
+    trade_ticket: if this signal became a trade, links to backtest_trades.ticket
     """
     try:
         conn = _get_or_create_conn()
@@ -406,15 +410,15 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
             INSERT INTO backtest_signals (
                 run_id, timestamp, symbol, direction, strategy, strategy_group,
                 score, confluence_count,
-                was_traded, was_executed, skip_reason,
+                was_traded, was_executed, trade_ticket, skip_reason,
                 session, market_state, combined_bias, final_score,
                 delta, rolling_delta, of_imbalance, vol_surge,
                 smc_bias, pd_zone, structure_trend
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             run_id, timestamp_str, symbol, direction, strategy, strategy_group,
             score, len(confluence) if confluence else 0,
-            1 if was_traded else 0, 1 if was_traded else 0, skip_reason[:100],
+            1 if was_traded else 0, 1 if was_traded else 0, trade_ticket, skip_reason[:100],
             (master_report or {}).get('session', 'UNKNOWN'),
             (master_report or {}).get('market_state', 'BALANCED'),
             (master_report or {}).get('combined_bias', 'NEUTRAL'),
@@ -446,13 +450,9 @@ def mark_signal_executed(trade, run_id: str = 'default'):
             UPDATE backtest_signals
             SET was_executed = 1, was_traded = 1,
                 skip_reason = 'EXECUTED'
-            WHERE symbol = %s
-              AND direction = %s
-              AND strategy = %s
+            WHERE trade_ticket = %s
               AND run_id = %s
-              AND was_executed = 0
-            ORDER BY id DESC LIMIT 1
-        """, (trade.symbol, trade.direction, trade.strategy, run_id))
+        """, (trade.ticket, run_id))
 
         conn.commit()
         c.close()
@@ -476,15 +476,9 @@ def update_signal_outcome(trade, run_id: str = 'default'):
             UPDATE backtest_signals
             SET outcome = %s,
                 profit_r = %s
-            WHERE symbol = %s
-              AND direction = %s
-              AND strategy = %s
+            WHERE trade_ticket = %s
               AND run_id = %s
-              AND was_traded = 1
-              AND outcome IS NULL
-            ORDER BY id DESC LIMIT 1
-        """, (outcome, profit_r, trade.symbol, trade.direction,
-              trade.strategy, run_id))
+        """, (outcome, profit_r, trade.ticket, run_id))
 
         conn.commit()
         c.close()

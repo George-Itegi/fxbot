@@ -478,11 +478,11 @@ def run_backtest(config: BacktestConfig) -> dict:
             'flow': flow,
         }
 
-        # ── Store signal + mark as executed in DB ──────────
+        # ── Store signal + link to trade ticket in DB ────────
         if config.store_db:
             try:
-                from backtest.db_store import store_blocked_signal, mark_signal_executed
-                # Store the executed signal
+                from backtest.db_store import store_blocked_signal
+                # Store the executed signal with trade_ticket link
                 store_blocked_signal(
                     symbol=symbol, direction=best['direction'],
                     strategy=best.get('strategy', 'UNKNOWN'),
@@ -492,6 +492,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     smc_report=smc_report, flow_data=flow,
                     was_traded=True, skip_reason='EXECUTED',
                     run_id=config.run_id,
+                    trade_ticket=tracker.ticket_counter,
                 )
             except Exception:
                 pass
