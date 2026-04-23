@@ -269,6 +269,7 @@ def store_trade(trade, master_report: dict = None,
         except Exception:
             pass
 
+        # 66 columns = 65 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -290,19 +291,13 @@ def store_trade(trade, master_report: dict = None,
                 trail_activated, tp_extended, highest_profit_pips,
                 source
             ) VALUES (
-                %s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,
-                %s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,
                 'BACKTEST'
             )
         """, (
@@ -368,7 +363,7 @@ def store_trade(trade, master_report: dict = None,
         conn.close()
 
     except Exception as e:
-        log.debug(f"[DB_STORE] store_trade error: {e}")
+        log.warning(f"[DB_STORE] store_trade error: {e}")
 
 
 def store_blocked_signal(symbol: str, direction: str, strategy: str,
@@ -432,7 +427,7 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
         conn.close()
 
     except Exception as e:
-        log.debug(f"[DB_STORE] store_blocked_signal error: {e}")
+        log.warning(f"[DB_STORE] store_blocked_signal error: {e}")
 
 
 def store_traded_signal(trade, run_id: str = 'default'):
