@@ -22,11 +22,27 @@ TF_MAP = {
 }
 
 
+# Maximum bars to request per timeframe.
+# M1 is the heaviest — brokers typically have 30-90 days.
+# Higher TFs have much more history available.
+MAX_BARS = {
+    "M1":  50000,   # ~35 days of M1
+    "M5":  50000,   # ~174 days of M5
+    "M15": 50000,   # ~521 days of M15
+    "H1":  50000,   # ~2083 days of H1
+    "H4":  10000,   # ~1667 days of H4
+    "D1":  5000,
+    "W1":  1000,
+}
+
+
 def download_candles(symbol: str, timeframe: str,
                      start_date: datetime.datetime,
                      end_date: datetime.datetime) -> pd.DataFrame:
     """
     Download historical OHLCV candles from MT5.
+    Tries copy_rates_range first, falls back to copy_rates_from_pos
+    if the broker doesn't have the full date range.
     Returns DataFrame with time, open, high, low, close, tick_volume.
     """
     tf = TF_MAP.get(timeframe)
@@ -38,20 +54,63 @@ def download_candles(symbol: str, timeframe: str,
     request_end   = end_date.replace(hour=23, minute=59, second=59,
                                       tzinfo=datetime.timezone.utc)
 
+    # ── Method 1: Try copy_rates_range (date range) ──
     rates = mt5.copy_rates_range(symbol, tf, request_start, request_end)
 
+    if rates is not None and len(rates) > 0:
+        df = _rates_to_dataframe(rates)
+        log.info(f"  Downloaded {symbol} {timeframe}: "
+                 f"{len(df)} bars via date range "
+                 f"({df['time'].iloc[0].date()} to {df['time'].iloc[-1].date()})")
+        return df
+
+    # ── Method 2: Fall back to copy_rates_from_pos (most recent N bars) ──
+    log.warning(f"  copy_rates_range returned no data for {symbol} {timeframe}. "
+                f"Falling back to copy_rates_from_pos...")
+
+    max_count = MAX_BARS.get(timeframe, 50000)
+    rates = mt5.copy_rates_from_pos(symbol, tf, 0, max_count)
+
     if rates is None or len(rates) == 0:
-        log.warning(f"No data for {symbol} {timeframe} "
-                     f"{start_date.date()} to {end_date.date()}")
+        # Check for MT5 error
+        error = mt5.last_error()
+        log.error(f"  MT5 error for {symbol} {timeframe}: {error}")
+        log.error(f"  No data for {symbol} {timeframe} — cannot backtest")
         return pd.DataFrame()
 
+    df = _rates_to_dataframe(rates)
+
+    # Filter to only include bars within the requested date range
+    mask = (df['time'] >= pd.Timestamp(request_start, tz='UTC')) & \
+           (df['time'] <= pd.Timestamp(request_end, tz='UTC'))
+    df = df[mask].reset_index(drop=True)
+
+    if len(df) == 0:
+        # If filtering removed everything, just use whatever we got
+        # but only keep bars up to end_date
+        df_all = _rates_to_dataframe(rates)
+        mask_end = df_all['time'] <= pd.Timestamp(request_end, tz='UTC')
+        df = df_all[mask_end].reset_index(drop=True)
+
+        if len(df) == 0:
+            log.error(f"  No data for {symbol} {timeframe} within range — cannot backtest")
+            return pd.DataFrame()
+
+        log.warning(f"  Using available data outside requested range: "
+                    f"{df['time'].iloc[0].date()} to {df['time'].iloc[-1].date()}")
+
+    log.info(f"  Downloaded {symbol} {timeframe}: "
+             f"{len(df)} bars via position fallback "
+             f"({df['time'].iloc[0].date()} to {df['time'].iloc[-1].date()})")
+    return df
+
+
+def _rates_to_dataframe(rates) -> pd.DataFrame:
+    """Convert MT5 rates array to cleaned DataFrame."""
     df = pd.DataFrame(rates)
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
     df = df[['time', 'open', 'high', 'low', 'close', 'tick_volume']]
     df = df.drop_duplicates(subset='time').reset_index(drop=True)
-
-    log.info(f"  Downloaded {symbol} {timeframe}: "
-             f"{len(df)} bars ({start_date.date()} to {end_date.date()})")
     return df
 
 
@@ -221,9 +280,6 @@ def load_all_data(symbol: str,
     """
     os.makedirs(cache_dir, exist_ok=True)
 
-    # M1 is the heaviest — always download fresh or use cache
-    # H4/H1/M15/M5 are much smaller and quick
-
     result = {}
     for tf in ["M1", "M5", "M15", "H1", "H4"]:
         cache_file = os.path.join(cache_dir,
@@ -243,6 +299,13 @@ def load_all_data(symbol: str,
             with open(cache_file, 'wb') as f:
                 pickle.dump(df, f)
             result[tf] = df
+
+    # ── Validate minimum data requirements ──
+    min_bars = {"M1": 5000, "M5": 500, "M15": 200, "H1": 100, "H4": 50}
+    for tf, min_count in min_bars.items():
+        if tf in result and len(result[tf]) < min_count:
+            log.warning(f"  {symbol} {tf}: only {len(result[tf])} bars "
+                        f"(minimum {min_count} recommended)")
 
     return result
 
