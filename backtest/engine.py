@@ -53,6 +53,7 @@ class BacktestConfig:
     relaxed_mode: bool = False     # Lower gates for data collection
     store_db: bool = False         # Store trades/signals in MySQL
     run_id: str = 'default'       # Run identifier for DB grouping
+    use_model: bool = False        # Use trained XGBoost model as additional gate
 
 
 def get_pip_size(symbol: str) -> float:
@@ -234,6 +235,22 @@ def run_backtest(config: BacktestConfig) -> dict:
 
     # ── Store feature snapshots per trade (for DB) ─────
     trade_reports = {}  # ticket -> {master_report, market_report, smc_report, flow}
+
+    # ── Load XGBoost model if --use-model ────────────────
+    xgb_model = None
+    model_blocked_count = 0
+    if config.use_model:
+        try:
+            from ai_engine.xgboost_classifier import is_model_trained
+            if is_model_trained():
+                import joblib
+                from ai_engine.xgboost_classifier import MODEL_PATH, extract_features
+                xgb_model = joblib.load(MODEL_PATH)
+                log.info(f"  [MODEL] XGBoost model loaded — will filter trades")
+            else:
+                log.warning(f"  [MODEL] --use-model but no trained model found")
+        except Exception as e:
+            log.warning(f"  [MODEL] Failed to load model: {e}")
 
     scan_bar = config.scan_every_n_bars
 
@@ -455,6 +472,41 @@ def run_backtest(config: BacktestConfig) -> dict:
         if len(confluence) < min_conv:
             continue
 
+        # ── Gate 6: XGBoost model filter (if --use-model) ──
+        if xgb_model is not None:
+            try:
+                from ai_engine.xgboost_classifier import extract_features
+                features = extract_features(best, market_report, smc_report)
+                if features is not None:
+                    win_prob = float(xgb_model.predict_proba(features)[0][1])
+                    if win_prob < 0.45:
+                        # Model says SKIP — block this trade
+                        model_blocked_count += 1
+                        if config.store_db:
+                            try:
+                                from backtest.db_store import store_blocked_signal
+                                store_blocked_signal(
+                                    symbol=symbol, direction=best['direction'],
+                                    strategy=best.get('strategy', 'UNKNOWN'),
+                                    score=best.get('score', 0),
+                                    confluence=best.get('confluence', []),
+                                    master_report=master_report, market_report=market_report,
+                                    smc_report=smc_report, flow_data=flow,
+                                    was_traded=False,
+                                    skip_reason=f'model_skip(prob={win_prob:.2f})',
+                                    run_id=config.run_id,
+                                )
+                            except Exception:
+                                pass
+                        if model_blocked_count <= 5 or model_blocked_count % 10 == 0:
+                            log.info(f"  [MODEL] Blocked {best.get('strategy','')} "
+                                     f"{best['direction']} win_prob={win_prob:.2f}")
+                        continue
+                    else:
+                        best['model_probability'] = win_prob
+            except Exception as e:
+                log.debug(f"  [MODEL] Prediction error: {e}")
+
         # ── Check if we can open a trade ─────────────────
         if not tracker.can_open(symbol):
             continue
@@ -568,6 +620,7 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['final_score_avg'] = final_score if trades_executed > 0 else 0
     summary['relaxed_mode'] = config.relaxed_mode
     summary['run_id'] = config.run_id
+    summary['model_blocked'] = model_blocked_count
 
     # ── Store all completed trades + update signal outcomes ─
     if config.store_db:
@@ -607,7 +660,8 @@ def run_backtest(config: BacktestConfig) -> dict:
 def run_parallel_backtest(symbols: list, start_date, end_date,
                           scan_every: int = 15, relaxed_mode: bool = False,
                           store_db: bool = False, run_id: str = 'default',
-                          max_trades_per_symbol: int = 9999) -> list:
+                          max_trades_per_symbol: int = 9999,
+                          use_model: bool = False) -> list:
     """
     Run all symbols in parallel on the same M1 timeline.
     Each symbol gets its own TradeTracker, strategies scan independently,
@@ -642,7 +696,22 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
     symbol_pip = {}       # symbol -> pip_size
     symbol_pipval = {}    # symbol -> pip_value
     symbol_spread = {}    # symbol -> total_slippage in pips
-    symbol_stats = {}     # symbol -> {signals_found, blocked_gate, blocked_consensus, blocked_score, executed}
+    symbol_stats = {}     # symbol -> {signals_found, blocked_gate, blocked_consensus, blocked_score, executed, model_blocked}
+
+    # ── Load XGBoost model if --use-model ────────────────
+    xgb_model = None
+    if use_model:
+        try:
+            from ai_engine.xgboost_classifier import is_model_trained
+            if is_model_trained():
+                import joblib
+                from ai_engine.xgboost_classifier import MODEL_PATH, extract_features
+                xgb_model = joblib.load(MODEL_PATH)
+                log.info(f"  [MODEL] XGBoost model loaded — will filter trades")
+            else:
+                log.warning(f"  [MODEL] --use-model but no trained model found")
+        except Exception as e:
+            log.warning(f"  [MODEL] Failed to load model: {e}")
 
     for sym in symbols:
         data = load_all_data(sym, start_date, end_date, CACHE_DIR)
@@ -674,7 +743,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         symbol_stats[sym] = {
             'signals_found': 0, 'blocked_gate': 0,
             'blocked_consensus': 0, 'blocked_score': 0,
-            'executed': 0,
+            'executed': 0, 'model_blocked': 0,
         }
 
         log.info(f"  Loaded {sym}: M1={len(data['M1'])} bars, H1={len(data['H1'])} bars")
@@ -906,6 +975,37 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             if len(confluence) < min_conv:
                 continue
 
+            # Gate 6: XGBoost model filter (if --use-model)
+            if xgb_model is not None:
+                try:
+                    from ai_engine.xgboost_classifier import extract_features
+                    features = extract_features(best, market_report, smc_report)
+                    if features is not None:
+                        win_prob = float(xgb_model.predict_proba(features)[0][1])
+                        if win_prob < 0.45:
+                            stats['model_blocked'] += 1
+                            if store_db:
+                                try:
+                                    from backtest.db_store import store_blocked_signal
+                                    store_blocked_signal(
+                                        symbol=sym, direction=best['direction'],
+                                        strategy=best.get('strategy', 'UNKNOWN'),
+                                        score=best.get('score', 0),
+                                        confluence=best.get('confluence', []),
+                                        master_report=master_report, market_report=market_report,
+                                        smc_report=smc_report, flow_data=flow,
+                                        was_traded=False,
+                                        skip_reason=f'model_skip(prob={win_prob:.2f})',
+                                        run_id=run_id,
+                                    )
+                                except Exception:
+                                    pass
+                            continue
+                        else:
+                            best['model_probability'] = win_prob
+                except Exception:
+                    pass
+
             # Execute trade
             entry_price = float(current_bar['close'])
             total_slip = symbol_spread[sym]
@@ -1013,6 +1113,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         summary['final_score_avg'] = 0
         summary['relaxed_mode'] = relaxed_mode
         summary['run_id'] = run_id
+        summary['model_blocked'] = stats.get('model_blocked', 0)
 
         # Store trades to DB
         if store_db:
