@@ -490,13 +490,13 @@ def _calc_smc_score(structure, nearest_ob, last_sweep,
 
 def _guess_pip_size(price: float) -> float:
     """Guess pip size from price level."""
-    if price > 500:
-        return 1.0
-    elif price > 50:
-        return 0.01
-    elif price > 1000:  # Gold
+    if price > 1000:   # Gold
         return 0.1
-    else:
+    elif price > 500:  # Indices
+        return 1.0
+    elif price > 50:   # JPY pairs
+        return 0.01
+    else:             # Standard forex
         return 0.0001
 
 

@@ -23,6 +23,10 @@ def build_market_report(df_m15: pd.DataFrame,
     if df_m15 is None or len(df_m15) < 30:
         return _empty_market(symbol)
 
+    # ── Session tag ──
+    current_time = df_m15.iloc[-1]['time']
+    session = _tag_session(current_time)
+
     # --- Combined bias (from flow data) ---
     full_bias = flow_data.get('delta', {}).get('bias', 'NEUTRAL')
     roll_bias = flow_data.get('rolling_delta', {}).get('bias', 'NEUTRAL')
@@ -81,6 +85,7 @@ def build_market_report(df_m15: pd.DataFrame,
         'trade_score': trade_score,
         'score_reasons': reasons,
         'market_state': market_state,
+        'session': session,
     }
 
     return report
@@ -338,11 +343,26 @@ def _detect_market_state(score, combined_bias, vwap, profile,
     return "BALANCED"
 
 
+def _tag_session(dt) -> str:
+    """Tag each candle with the trading session (UTC-based)."""
+    try:
+        hour = dt.hour
+        if 21 <= hour < 24: return "SYDNEY"
+        if 0  <= hour <  7:  return "TOKYO"
+        if 7  <= hour <  8:  return "LONDON_OPEN"
+        if 8  <= hour < 12:  return "LONDON_SESSION"
+        if 12 <= hour < 16:  return "NY_LONDON_OVERLAP"
+        if 16 <= hour < 21:  return "NY_AFTERNOON"
+        return "SYDNEY"
+    except Exception:
+        return "UNKNOWN"
+
+
 def _guess_pip_size(price: float) -> float:
-    if price > 500: return 1.0
-    elif price > 50: return 0.01
-    elif price > 1000: return 0.1
-    else: return 0.0001
+    if price > 1000: return 0.1   # Gold
+    elif price > 500: return 1.0   # Indices
+    elif price > 50: return 0.01    # JPY pairs
+    else: return 0.0001           # Standard forex
 
 
 def _empty_vwap(price, pip_size):

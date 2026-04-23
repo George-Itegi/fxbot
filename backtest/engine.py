@@ -1,7 +1,16 @@
 # =============================================================
-# backtest/engine.py
-# The main backtest loop. Slides time forward through historical data,
-# builds market reports, runs strategies, and tracks trades.
+# backtest/engine.py  v2.0
+# The main backtest loop — upgraded to match live system.
+#
+# Key upgrades vs v1.0:
+#  1. Builds proper master_report (matches live master_scanner.py schema)
+#  2. Updates feature_store (needed by LIQUIDITY_SWEEP_ENTRY)
+#  3. Passes master_report to all strategies
+#  4. Final score gate (≥ 45) from market + SMC scores
+#  5. Dynamic position sizing with conviction levels
+#  6. Partial TP + ATR trailing + dynamic TP extension
+#  7. Confluence minimum = 6 (matches live)
+#  8. Proper pip value per symbol (not hardcoded $1)
 # =============================================================
 
 import datetime
@@ -13,10 +22,14 @@ from backtest.tick_simulator import simulate_order_flow_from_full
 from backtest.smc_builder import build_smc_report
 from backtest.market_builder import build_market_report
 from backtest.trade_tracker import TradeTracker
-from backtest.config import (SYMBOLS, START_DATE, END_DATE, CACHE_DIR,
-                              AVG_SPREAD_PIPS, SLIPPAGE_PIPS,
-                              STARTING_BALANCE, RISK_PERCENT_PER_TRADE,
-                              SCAN_EVERY_N_BARS, STRATEGIES_FILTER)
+from backtest.config import (
+    SYMBOLS, START_DATE, END_DATE, CACHE_DIR,
+    AVG_SPREAD_PIPS, SLIPPAGE_PIPS, PIP_VALUE_PER_LOT,
+    STARTING_BALANCE, SCAN_EVERY_N_BARS, STRATEGIES_FILTER,
+    PARTIAL_TP_ENABLED, ATR_TRAIL_ENABLED, DYNAMIC_TP_EXTENSION_ENABLED,
+    DYNAMIC_SIZING_ENABLED, BASE_RISK_PERCENT, MIN_CONFLUENCE,
+    MIN_RR_RATIO, MASTER_MIN_SCORE, MAX_OPEN_TRADES, MAX_PER_SYMBOL,
+)
 
 log = get_logger(__name__)
 
@@ -32,6 +45,105 @@ class BacktestConfig:
     strategies_filter: list = None  # Empty = all
 
 
+def get_pip_size(symbol: str) -> float:
+    """Calculate pip size for a symbol."""
+    sym = symbol.upper()
+    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
+        return 1.0
+    elif "XAU" in sym:
+        return 0.1
+    elif "XAG" in sym:
+        return 0.01
+    elif any(x in sym for x in ["JPY"]):
+        return 0.01
+    else:
+        return 0.0001
+
+
+def _build_master_report(symbol: str,
+                         market_report: dict,
+                         smc_report: dict,
+                         flow_data: dict) -> dict:
+    """
+    Build a master_report dict that matches the live master_scanner.py schema.
+    This ensures all strategies receive the same data structure as in live trading.
+    """
+    market_score = market_report.get('trade_score', 0)
+    smc_score = smc_report.get('smc_score', 0)
+
+    # HTF approved?
+    htf = smc_report.get('htf_alignment', {})
+    htf_approved = htf.get('approved', True)
+    htf_penalty = 0 if htf_approved else 30
+
+    # Premium/discount penalty
+    pd = smc_report.get('premium_discount', {})
+    pd_bias = str(pd.get('bias', ''))
+    market_bias = str(market_report.get('combined_bias', 'NEUTRAL'))
+    smc_bias = str(smc_report.get('smc_bias', 'NEUTRAL'))
+    pd_penalty = 15 if (
+        (market_bias == "BULLISH" and pd_bias == "SELL") or
+        (market_bias == "BEARISH" and pd_bias == "BUY")
+    ) else 0
+
+    # Final score (same formula as live)
+    base_score = (market_score * 0.50) + (smc_score * 0.50)
+    final_score = max(0, round(base_score - htf_penalty - pd_penalty))
+
+    # Combined bias
+    if market_bias == smc_bias and market_bias != "NEUTRAL":
+        combined_bias = market_bias
+        bias_confidence = "HIGH"
+    elif market_bias == "NEUTRAL" or smc_bias == "NEUTRAL":
+        combined_bias = market_bias if market_bias != "NEUTRAL" else smc_bias
+        bias_confidence = "MODERATE"
+    else:
+        combined_bias = "CONFLICTED"
+        bias_confidence = "LOW"
+
+    # Sweep alignment
+    last_sweep = smc_report.get('last_sweep', {})
+    sweep_aligned = last_sweep.get('bias') == combined_bias if last_sweep else False
+
+    # Order flow / volume / momentum shortcuts
+    of_imb = flow_data.get('order_flow_imbalance', {})
+    volume_surge = flow_data.get('volume_surge', {})
+    momentum = flow_data.get('momentum', {})
+
+    # Session
+    session = market_report.get('session', 'UNKNOWN')
+
+    return {
+        "symbol": symbol,
+        "timestamp": "",  # filled later
+        "session": session,
+        "session_quality": 1.0,
+        "day_trade_ok": True,
+        "block_reason": "",
+        "market_report": market_report,
+        "smc_report": smc_report,
+        "fractal_alignment": {"score": 0, "passed": True},
+        "market_score": market_score,
+        "smc_score": smc_score,
+        "final_score": final_score,
+        "market_bias": market_bias,
+        "smc_bias": smc_bias,
+        "combined_bias": combined_bias,
+        "bias_confidence": bias_confidence,
+        "market_state": market_report.get('market_state', 'BALANCED'),
+        "htf_approved": htf_approved,
+        "pd_penalty": pd_penalty,
+        "sweep_aligned": sweep_aligned,
+        "recommendation": {"action": "TRADE", "reason": "backtest"},
+        "order_flow_imbalance": of_imb,
+        "volume_surge": volume_surge,
+        "momentum": momentum,
+        "scalping_signal": {"status": "INSUFFICIENT", "gates_passed": 0},
+        "volume_profile": market_report.get('profile', {}),
+        "vwap_context": market_report.get('vwap', {}),
+    }
+
+
 def run_backtest(config: BacktestConfig) -> dict:
     """
     Run a full backtest on one symbol.
@@ -40,15 +152,18 @@ def run_backtest(config: BacktestConfig) -> dict:
     symbol = config.symbol
     log.info(f"")
     log.info(f"{'='*60}")
-    log.info(f"  BACKTEST: {symbol}")
+    log.info(f"  BACKTEST v2.0: {symbol}")
     log.info(f"  Period: {config.start_date.date()} to {config.end_date.date()}")
+    log.info(f"  Features: PartialTP={PARTIAL_TP_ENABLED} "
+             f"Trail={ATR_TRAIL_ENABLED} "
+             f"ExtTP={DYNAMIC_TP_EXTENSION_ENABLED} "
+             f"DynamicSize={DYNAMIC_SIZING_ENABLED}")
     log.info(f"{'='*60}")
 
     start_time = time_mod.time()
 
     # ── Load historical data ──────────────────────────────
-    data = load_all_data(symbol, config.start_date, config.end_date,
-                         CACHE_DIR)
+    data = load_all_data(symbol, config.start_date, config.end_date, CACHE_DIR)
     if not data:
         log.error(f"No data loaded for {symbol}")
         return {}
@@ -61,30 +176,33 @@ def run_backtest(config: BacktestConfig) -> dict:
 
     log.info(f"  M1: {len(df_m1)} bars, H1: {len(df_h1)} bars, H4: {len(df_h4)} bars")
 
-    # ── Pip size ─────────────────────────────────────────
-    sym = symbol.upper()
-    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
-        pip_size = 1.0
-    elif "XAU" in sym:
-        pip_size = 0.1
-    elif "XAG" in sym:
-        pip_size = 0.01
-    elif sym_info_digits_match(symbol):
-        pip_size = 0.01
-    else:
-        pip_size = 0.0001
+    # ── Pip size and pip value ────────────────────────────
+    pip_size = get_pip_size(symbol)
+    pip_value = PIP_VALUE_PER_LOT.get(symbol, PIP_VALUE_PER_LOT['DEFAULT'])
 
     spread = AVG_SPREAD_PIPS.get(symbol, AVG_SPREAD_PIPS['DEFAULT'])
     total_slippage = spread + SLIPPAGE_PIPS  # Total cost in pips
 
+    log.info(f"  Pip size: {pip_size}, Pip value: ${pip_value}/lot/pip")
+    log.info(f"  Spread: {spread}p, Slippage: {SLIPPAGE_PIPS}p, Total cost: {total_slippage}p")
+
     # ── Initialize trade tracker ──────────────────────────
     tracker = TradeTracker(
-        starting_balance=STARTING_BALANCE
+        starting_balance=STARTING_BALANCE,
+        pip_value_per_lot=pip_value,
+        max_open=MAX_OPEN_TRADES,
+        max_per_symbol=MAX_PER_SYMBOL,
+        partial_tp_enabled=PARTIAL_TP_ENABLED,
+        atr_trail_enabled=ATR_TRAIL_ENABLED,
+        dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+        dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
+        base_risk_percent=BASE_RISK_PERCENT,
     )
 
     # ── Import strategy engine ───────────────────────────
     from strategies.strategy_engine import _run_one_strategy, _get_strategy_group
     from strategies.strategy_registry import get_active_strategies
+    from data_layer.feature_store import store
 
     # Determine which strategies to run
     if config.strategies_filter:
@@ -94,18 +212,17 @@ def run_backtest(config: BacktestConfig) -> dict:
         active_strategies = get_active_strategies()
 
     log.info(f"  Strategies: {', '.join(active_strategies)}")
-    log.info(f"  Spread: {spread}p, Slippage: {SLIPPAGE_PIPS}p")
     log.info(f"")
 
     # ── Main backtest loop ────────────────────────────────
-    # We scan at every M15 candle close (every 15 M1 bars)
     total_m1_bars = len(df_m1)
     signals_found = 0
     signals_blocked_consensus = 0
     signals_blocked_gate = 0
+    signals_blocked_score = 0
     trades_executed = 0
 
-    scan_bar = config.scan_every_n_bars  # Start scanning after enough bars for indicators
+    scan_bar = config.scan_every_n_bars
 
     for bar_idx in range(scan_bar, total_m1_bars):
         current_bar = df_m1.iloc[bar_idx]
@@ -120,7 +237,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                 float(current_bar['low']),
                 float(current_bar['close']),
                 pip_size,
-                10.0  # Approximate pip value
+                pip_value,
             )
             continue
 
@@ -147,10 +264,50 @@ def run_backtest(config: BacktestConfig) -> dict:
         smc_report = build_smc_report(s_h1, s_h4, current_time)
 
         # ── Build market report ───────────────────────────
-        market_report = build_market_report(
-            s_m15, flow, smc_report, symbol)
+        market_report = build_market_report(s_m15, flow, smc_report, symbol)
+
+        # ── Build master_report (matches live schema) ─────
+        master_report = _build_master_report(symbol, market_report, smc_report, flow)
+        master_report['timestamp'] = current_time.strftime('%H:%M:%S UTC')
+
+        # ── Update feature_store (needed by LIQUIDITY_SWEEP) ──
+        market_data_for_store = {
+            'current_price': float(current_bar['close']),
+            'atr': float(s_m15.iloc[-1].get('atr', 0)) if len(s_m15) > 0 else 0,
+            'delta': flow.get('delta', {}),
+            'rolling_delta': flow.get('rolling_delta', {}),
+            'order_flow_imbalance': flow.get('order_flow_imbalance', {}),
+            'volume_surge': flow.get('volume_surge', {}),
+            'momentum': flow.get('momentum', {}),
+            'vwap': market_report.get('vwap', {}),
+            'profile': market_report.get('profile', {}),
+        }
+        store.update_symbol_features(symbol, market_data_for_store, smc_report)
+
+        # ── Gate 0: Master score minimum (matches live) ───
+        final_score = master_report.get('final_score', 0)
+        if final_score < MASTER_MIN_SCORE:
+            continue
+
+        # ── Gate 1: Institutional confirmation ────────────
+        imb_strength = flow.get('order_flow_imbalance', {}).get('strength', 'NONE')
+        surge_active = flow.get('volume_surge', {}).get('surge_detected', False)
+        has_institutional = imb_strength in ('STRONG', 'EXTREME') or surge_active
+
+        if not has_institutional:
+            signals_blocked_gate += 1
+            continue
+
+        # ── Gate 2: Choppy market ─────────────────────────
+        is_choppy = flow.get('momentum', {}).get('is_choppy', True)
+        if is_choppy and not surge_active:
+            continue
 
         # ── Run strategies ────────────────────────────────
+        market_state = master_report.get('market_state', 'BALANCED')
+        session = master_report.get('session', 'UNKNOWN')
+        combined_bias = master_report.get('combined_bias', 'NEUTRAL')
+
         signals = []
         for strategy_name in active_strategies:
             try:
@@ -158,10 +315,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     strategy_name, symbol,
                     s_m1, s_m5, s_m15, s_h1, s_h4,
                     smc_report, market_report,
-                    market_report.get('market_state', 'BALANCED'),
-                    market_report.get('session', 'UNKNOWN'),
-                    master_report=None  # Simplified
-                )
+                    market_state, session, master_report)
 
                 if signal is None:
                     continue
@@ -169,7 +323,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                 direction = str(signal.get('direction', ''))
                 score = signal.get('score', 0)
 
-                # Apply per-strategy minimum score (from strategy_engine)
+                # Apply per-strategy minimum score
                 from strategies.strategy_engine import STRATEGY_MIN_SCORES
                 min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
                 if score < min_score:
@@ -180,7 +334,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                 signals.append(signal)
 
             except Exception as e:
-                # Silently skip strategy errors during backtest
+                # Log but don't crash the backtest
+                log.debug(f"  [{symbol}] {strategy_name} error: {e}")
                 continue
 
         if not signals:
@@ -188,8 +343,7 @@ def run_backtest(config: BacktestConfig) -> dict:
 
         signals_found += 1
 
-        # ── Bias direction filter ─────────────────────────
-        combined_bias = market_report.get('combined_bias', 'NEUTRAL')
+        # ── Gate 3: Bias direction filter ─────────────────
         if combined_bias == 'BULLISH':
             signals = [s for s in signals if s['direction'] == 'BUY']
         elif combined_bias == 'BEARISH':
@@ -197,7 +351,7 @@ def run_backtest(config: BacktestConfig) -> dict:
         if not signals:
             continue
 
-        # ── Multi-group consensus gate ────────────────────
+        # ── Gate 4: Multi-group consensus ──────────────────
         buy_groups  = set(s['group'] for s in signals if s['direction'] == 'BUY')
         sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
 
@@ -211,21 +365,12 @@ def run_backtest(config: BacktestConfig) -> dict:
             signals_blocked_consensus += 1
             continue
 
-        # ── Institutional confirmation gate ───────────────
-        imb_strength = flow.get('order_flow_imbalance', {}).get('strength', 'NONE')
-        surge_active = flow.get('volume_surge', {}).get('surge_detected', False)
-        has_institutional = imb_strength in ('STRONG', 'EXTREME') or surge_active
-
-        if not has_institutional:
-            signals_blocked_gate += 1
-            continue
-
         # ── Best signal ──────────────────────────────────
         best = max(final_signals, key=lambda s: s['score'])
 
-        # ── Confluence check ─────────────────────────────
+        # ── Gate 5: Confluence check (matches live = 6) ──
         confluence = best.get('confluence', [])
-        if len(confluence) < 4:  # Slightly relaxed for backtest (live=6)
+        if len(confluence) < MIN_CONFLUENCE:
             continue
 
         # ── Check if we can open a trade ─────────────────
@@ -241,16 +386,17 @@ def run_backtest(config: BacktestConfig) -> dict:
         else:
             entry_price -= total_slippage * pip_size
 
-        sl_price = best.get('sl_price', 0)
-        tp_price = best.get('tp_price', 0)
-        sl_pips  = best.get('sl_pips', 0)
-        tp_pips  = best.get('tp1_pips', 0)
+        sl_pips = best.get('sl_pips', 0)
+        tp1_pips = best.get('tp1_pips', 0)
+
+        # Also check tp_pips (some strategies use this field)
+        tp_pips = tp1_pips or best.get('tp_pips', 0)
 
         # Validate SL/TP
         if sl_pips <= 0 or tp_pips <= 0:
             continue
 
-        if tp_pips / sl_pips < 2.0:  # Minimum R:R
+        if tp_pips / sl_pips < MIN_RR_RATIO:
             continue
 
         # Set actual SL/TP based on entry price
@@ -260,6 +406,12 @@ def run_backtest(config: BacktestConfig) -> dict:
         else:
             sl_price = entry_price + sl_pips * pip_size
             tp_price = entry_price - tp_pips * pip_size
+
+        # Get ATR for trailing (from M15)
+        atr_value = float(s_m15.iloc[-1].get('atr', 0)) if len(s_m15) > 0 else 0.0
+
+        # Agreement groups count for dynamic sizing
+        agreement_groups = len(final_groups)
 
         tracker.open_trade(
             symbol=symbol,
@@ -274,7 +426,9 @@ def run_backtest(config: BacktestConfig) -> dict:
             score=best.get('score', 0),
             confluence=confluence,
             session=market_report.get('session', 'UNKNOWN'),
-            market_state=market_report.get('market_state', 'BALANCED'),
+            market_state=market_state,
+            agreement_groups=agreement_groups,
+            atr_value=atr_value,
         )
         trades_executed += 1
 
@@ -282,24 +436,15 @@ def run_backtest(config: BacktestConfig) -> dict:
             log.info(f"  [{symbol}] Trade #{trades_executed} | "
                      f"{best['direction']} {best.get('strategy','')} "
                      f"score={best.get('score',0)} "
-                     f"groups={final_groups} | "
-                     f"Balance: ${tracker.balance:.2f}")
+                     f"groups={final_groups} "
+                     f"conviction={tracker.determine_conviction(best.get('score',0), agreement_groups)} "
+                     f"| Balance: ${tracker.balance:.2f}")
 
     # ── Check remaining open trades at end ───────────────
     if tracker.open_trades:
         last_bar = df_m1.iloc[-1]
-        for trade in tracker.open_trades:
-            trade.exit_time = last_bar['time']
-            trade.exit_price = float(last_bar['close'])
-            if trade.direction == 'BUY':
-                trade.profit_pips = (trade.exit_price - trade.entry_price) / pip_size
-            else:
-                trade.profit_pips = (trade.entry_price - trade.exit_price) / pip_size
-            trade.profit_usd = trade.profit_pips * 10.0 * 0.01
-            trade.outcome = 'WIN' if trade.profit_pips > 0 else 'LOSS'
-            tracker.balance += trade.profit_usd
-            tracker.closed_trades.append(trade)
-        tracker.open_trades = []
+        tracker.close_remaining_at_end(
+            last_bar['time'], float(last_bar['close']), pip_size, pip_value)
 
     elapsed = time_mod.time() - start_time
     summary = tracker.get_summary()
@@ -308,13 +453,8 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['signals_found'] = signals_found
     summary['signals_blocked_consensus'] = signals_blocked_consensus
     summary['signals_blocked_gate'] = signals_blocked_gate
+    summary['signals_blocked_score'] = signals_blocked_score
     summary['trades_executed'] = trades_executed
+    summary['final_score_avg'] = final_score if trades_executed > 0 else 0
 
     return summary
-
-
-def sym_info_digits_match(symbol: str) -> bool:
-    """Check if symbol is likely a JPY pair."""
-    jpy_currencies = ['JPY', 'USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'NZDJPY', 'CADJPY', 'CHFJPY']
-    sym = symbol.upper()
-    return any(x in sym for x in jpy_currencies)
