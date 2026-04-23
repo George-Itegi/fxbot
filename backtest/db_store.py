@@ -189,10 +189,10 @@ def _ensure_tables(conn):
         )
     """)
 
-    c.close()
-
     # ── Auto-migrate: add missing columns to existing tables ──
     _auto_migrate_signals(c, conn)
+
+    c.close()
 
 
 def _auto_migrate_signals(cursor, conn):
