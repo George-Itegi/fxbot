@@ -253,20 +253,63 @@ def _run_one_strategy(name, symbol,
     # ── HARD state gates ───────────────────────────────────────
     # Only fire strategies in market states where their edge exists.
     # This prevents strategies firing in wrong conditions.
+    #
+    # Data-driven from EURUSD backtest (31% WR overall):
+    #   BALANCED:        11 trades, 18.2% WR, -$801  → trend strategies bleed
+    #   TRENDING_STRONG:  1 trade,  100% WR, +$518  → perfect for trend
+    #   BREAKOUT_ACCEPTED: 12 trades, 33.3% WR, +$329 → good
+    #   TRENDING_EXTENDED: 5 trades,  40% WR, +$351  → good
+    #   TOKYO session:   14 trades, 21.4% WR, -$619  → low vol, choppy
+    #   NY_AFTERNOON:    2 trades,   0% WR, -$323  → fading volume
     HARD_STATE_GATES = {
+        # Trend strategies — need directional markets, NOT ranges
+        "TREND_CONTINUATION":    ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
+                                  "TRENDING_EXTENDED"],
+        "EMA_CROSS_MOMENTUM":    ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
+                                  "TRENDING_EXTENDED"],
+        # Mean reversion — needs ranges, NOT trends
         "VWAP_MEAN_REVERSION":   ["BALANCED", "REVERSAL_RISK",
                                   "BREAKOUT_REJECTED"],
+        # Divergence — needs reversal/breakdown setups
         "DELTA_DIVERGENCE":      ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED", "TRENDING_EXTENDED"],
         "RSI_DIVERGENCE_SMC":    ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED"],
     }
 
+    # ── HARD session gates ──────────────────────────────────────
+    # Block strategies from sessions where they have no edge.
+    #   SYDNEY:             3 trades, 66.7% WR, +$568  → keep all
+    #   TOKYO:             14 trades, 21.4% WR, -$619  → block trend strategies
+    #   LONDON_OPEN:         0 trades                    → keep (SMC manipulation)
+    #   LONDON_SESSION:      6 trades, 33.3% WR, +$180  → keep all
+    #   NY_LONDON_OVERLAP:   4 trades, 50.0% WR, +$590  → keep all
+    #   NY_AFTERNOON:        2 trades,  0.0% WR, -$323  → block trend strategies
+    HARD_SESSION_GATES = {
+        # Trend strategies lose in low-volume sessions
+        "TREND_CONTINUATION":    ["SYDNEY", "LONDON_OPEN", "LONDON_SESSION",
+                                  "NY_LONDON_OVERLAP"],
+        "EMA_CROSS_MOMENTUM":    ["SYDNEY", "LONDON_OPEN", "LONDON_SESSION",
+                                  "NY_LONDON_OVERLAP"],
+        # Breakout needs volume — only London/NY
+        "BREAKOUT_MOMENTUM":     ["LONDON_OPEN", "LONDON_SESSION",
+                                  "NY_LONDON_OVERLAP"],
+    }
+
+    # ── Check market state gate ─────────────────────────────────
     if name in HARD_STATE_GATES:
         allowed_states = HARD_STATE_GATES[name]
         if market_state not in allowed_states:
             log.debug(f"[ENGINE] {name} blocked — state {market_state} "
                       f"not in {allowed_states}")
+            return None
+
+    # ── Check session gate ───────────────────────────────────────
+    if name in HARD_SESSION_GATES and session:
+        allowed_sessions = HARD_SESSION_GATES[name]
+        if session not in allowed_sessions:
+            log.debug(f"[ENGINE] {name} blocked — session {session} "
+                      f"not in {allowed_sessions}")
             return None
 
     # Route to strategy evaluate function
