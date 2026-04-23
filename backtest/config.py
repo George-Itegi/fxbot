@@ -7,10 +7,17 @@
 import datetime
 
 # --- Symbols to backtest ---
-# Matches the current WATCHLIST in config/settings.py
+# Matches the full WATCHLIST in config/settings.py
 SYMBOLS = [
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD",
-    "GBPJPY", "EURJPY", "XAUUSD",
+    # Major Forex pairs (7)
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF",
+    # JPY crosses (5)
+    "GBPJPY", "EURJPY", "AUDJPY", "CADJPY", "NZDJPY",
+    # Popular crosses (3)
+    "EURGBP", "GBPAUD", "GBPNZD",
+    # Commodities (2)
+    "XAUUSD",  # Gold
+    "XAGUSD",  # Silver
 ]
 
 # --- Timeframes to download ---
@@ -23,11 +30,19 @@ START_DATE = END_DATE - datetime.timedelta(days=180)  # 6 months
 # --- Realistic average spreads (pips) per symbol ---
 # Use typical ICMarkets raw spreads during London/NY session
 AVG_SPREAD_PIPS = {
+    # Major pairs
     "EURUSD": 0.3,  "GBPUSD": 0.5,  "USDJPY": 0.3,
-    "AUDUSD": 0.4,  "USDCAD": 0.6,  "GBPJPY": 1.0,
-    "EURJPY": 0.5,  "XAUUSD": 2.0,
-    "NZDUSD": 0.4,  "EURGBP": 0.6,  "EURCAD": 0.8,
-    "AUDJPY": 0.7,  "CHFJPY": 0.6,  "GBPCHF": 0.8,
+    "AUDUSD": 0.4,  "USDCAD": 0.6,  "NZDUSD": 0.4,  "USDCHF": 0.5,
+    # JPY crosses
+    "GBPJPY": 1.0,  "EURJPY": 0.5,  "AUDJPY": 0.7,
+    "CADJPY": 0.7,  "NZDJPY": 1.0,  "CHFJPY": 0.8,
+    # Popular crosses
+    "EURGBP": 0.6,  "GBPAUD": 1.2,  "GBPNZD": 2.5,
+    # Other crosses
+    "EURCAD": 0.8,  "GBPCHF": 0.9,  "AUDNZD": 1.2,
+    # Commodities
+    "XAUUSD": 2.0,  "XAGUSD": 3.0,
+    # Default
     "DEFAULT": 0.5,
 }
 
@@ -96,9 +111,10 @@ PIP_VALUE_PER_LOT = {
     "EURUSD": 10.0, "GBPUSD": 10.0, "AUDUSD": 10.0,
     "NZDUSD": 10.0, "USDCAD": 7.50, "USDCHF": 11.00,
     "USDJPY": 6.50,  "EURJPY": 6.50,  "GBPJPY": 6.50,
-    "AUDJPY": 6.50,  "CHFJPY": 6.50,  "NZDJPY": 6.50,
-    "CADJPY": 6.50,  "EURCAD": 7.50,  "EURCHF": 11.00,
-    "EURGBP": 13.00, "GBPCAD": 7.50,  "GBPCHF": 11.00,
+    "AUDJPY": 6.50, "CADJPY": 6.50, "NZDJPY": 6.50,
+    "CHFJPY": 6.50,
+    "EURGBP": 13.00, "GBPAUD": 6.50, "GBPNZD": 6.00,
+    "EURCAD": 7.50,  "GBPCHF": 11.00, "AUDNZD": 6.00,
     "XAUUSD": 1.0,   "XAGUSD": 50.0,
     "DEFAULT": 10.0,
 }
