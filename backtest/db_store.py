@@ -105,12 +105,14 @@ def _ensure_tables(conn):
             pd_zone             VARCHAR(30),
             pips_to_eq          DOUBLE,
             structure_trend     VARCHAR(15),
+            htf_score           INT DEFAULT 50,
 
             -- Price features
             atr                 DOUBLE,
             pip_from_vwap       DOUBLE,
             pip_to_poc          DOUBLE,
             va_width_pips       DOUBLE,
+            price_position      VARCHAR(20) DEFAULT 'INSIDE_VA',
 
             -- Spread info
             spread_pips         DOUBLE,
@@ -201,6 +203,8 @@ def _auto_migrate_signals(cursor, conn):
     migrations = [
         ('backtest_signals', 'trade_ticket',  'INT DEFAULT NULL'),
         ('backtest_signals', 'confluence',     'TEXT'),
+        ('backtest_trades', 'htf_score',      'INT DEFAULT 50'),
+        ('backtest_trades', 'price_position', 'VARCHAR(20) DEFAULT \'INSIDE_VA\''),
     ]
     for table, col, col_def in migrations:
         try:
@@ -301,7 +305,7 @@ def store_trade(trade, master_report: dict = None,
         except Exception:
             pass
 
-        # 66 columns = 65 %s + 1 literal 'BACKTEST'
+        # 67 columns = 66 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -316,8 +320,8 @@ def store_trade(trade, master_report: dict = None,
                 delta, rolling_delta, delta_bias, rd_bias,
                 of_imbalance, of_strength, vol_surge_detected, vol_surge_ratio,
                 momentum_velocity, momentum_direction, is_choppy,
-                smc_bias, pd_zone, pips_to_eq, structure_trend,
-                atr, pip_from_vwap, pip_to_poc, va_width_pips,
+                smc_bias, pd_zone, pips_to_eq, structure_trend, htf_score,
+                atr, pip_from_vwap, pip_to_poc, va_width_pips, price_position,
                 spread_pips, slippage_pips,
                 partial_tp_triggered, partial_tp_pips, partial_tp_usd,
                 trail_activated, tp_extended, highest_profit_pips,
@@ -329,7 +333,7 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,
                 'BACKTEST'
             )
         """, (
@@ -377,10 +381,12 @@ def store_trade(trade, master_report: dict = None,
             str(pd_d.get('zone', 'NEUTRAL')),
             _safe_float(pd_d.get('pips_to_eq', 0)),
             struct_d.get('trend', 'RANGING'),
+            _safe_int(htf_d.get('score', 50)),
             _safe_float((mr.get('atr') or 0)),  # atr from market_report
             _safe_float(vwap_d.get('pip_from_vwap', 0)),
             _safe_float(prof_d.get('pip_to_poc', 0)),
             _safe_float(prof_d.get('va_width_pips', 0)),
+            str(prof_d.get('price_position', 'INSIDE_VA')),
             _safe_float(spread_pips),
             _safe_float(slippage_pips),
             1 if trade.partial_tp_triggered else 0,
