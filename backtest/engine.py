@@ -281,7 +281,7 @@ def run_backtest(config: BacktestConfig) -> dict:
 
         # ── Build master_report (matches live schema) ─────
         master_report = _build_master_report(symbol, market_report, smc_report, flow)
-        master_report['timestamp'] = current_time.strftime('%H:%M:%S UTC')
+        master_report['timestamp'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
 
         # ── Update feature_store (needed by LIQUIDITY_SWEEP) ──
         market_data_for_store = {

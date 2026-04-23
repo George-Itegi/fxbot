@@ -397,6 +397,10 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
             pass
 
         timestamp_str = (master_report or {}).get('timestamp', '')
+        # Validate timestamp — MySQL DATETIME requires full 'YYYY-MM-DD HH:MM:SS'
+        if not timestamp_str or len(timestamp_str) < 10:
+            from datetime import datetime
+            timestamp_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         c.execute("""
             INSERT INTO backtest_signals (
