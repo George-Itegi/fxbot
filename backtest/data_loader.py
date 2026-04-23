@@ -81,15 +81,15 @@ def download_candles(symbol: str, timeframe: str,
     df = _rates_to_dataframe(rates)
 
     # Filter to only include bars within the requested date range
-    mask = (df['time'] >= pd.Timestamp(request_start, tz='UTC')) & \
-           (df['time'] <= pd.Timestamp(request_end, tz='UTC'))
+    mask = (df['time'] >= pd.Timestamp(request_start)) & \
+           (df['time'] <= pd.Timestamp(request_end))
     df = df[mask].reset_index(drop=True)
 
     if len(df) == 0:
         # If filtering removed everything, just use whatever we got
         # but only keep bars up to end_date
         df_all = _rates_to_dataframe(rates)
-        mask_end = df_all['time'] <= pd.Timestamp(request_end, tz='UTC')
+        mask_end = df_all['time'] <= pd.Timestamp(request_end)
         df = df_all[mask_end].reset_index(drop=True)
 
         if len(df) == 0:
