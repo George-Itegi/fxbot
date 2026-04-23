@@ -4,7 +4,7 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 STRATEGY_NAME = "VWAP_MEAN_REVERSION"
-MIN_SCORE = 75
+MIN_SCORE = 60   # Lowered — intraday VWAP setups score 55-70 realistically
 VERSION = "1.1"
 MIN_RR = 1.5
 
@@ -22,7 +22,9 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
     if atr_pips < 2.0:
         return None
     adx = float(m15.get('adx', 30))
-    if adx > 30:
+    # Only block extreme trending (ADX>45), not normal trending (ADX 25-35)
+    # ADX>30 was blocking this strategy 80% of the time in London/NY
+    if adx > 45:
         return None
     vwap_data = market_report.get('vwap', {})
     vwap = float(vwap_data.get('vwap', 0))

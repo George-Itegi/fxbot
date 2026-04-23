@@ -4,7 +4,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "LIQUIDITY_SWEEP_ENTRY"
-MIN_SCORE     = 75
+MIN_SCORE     = 65   # Lowered from 75 — sweep setups score 65-80 intraday
 VERSION       = "1.0"
 
 def evaluate(symbol: str,

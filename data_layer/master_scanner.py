@@ -113,16 +113,11 @@ def master_scan(symbol: str, session: str = None) -> dict | None:
     last_sweep    = smc.get("last_sweep")
     sweep_aligned = last_sweep.get("bias") == combined_bias if last_sweep else False
 
-    # --- Session-aware gating ---
-    # BLOCK low-liquidity sessions (Sydney, Tokyo).
-    # Only trade during institutional sessions: London + NY.
-    TRADABLE_SESSIONS = ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NY_AFTERNOON"]
+    # Session gating: NO blocking — trade any session.
+    # Session context is used for scoring and logging only.
     day_trade_ok = True
     block_reason = ""
-    if session not in TRADABLE_SESSIONS:
-        day_trade_ok = False
-        block_reason = f"session_blocked - {session} (only London+NY allowed)"
-        log.info(f"[MASTER] {symbol}: {block_reason}")
+    log.debug(f"[MASTER] {symbol}: session={session} (all sessions allowed)")
 
     recommendation = _get_recommendation(
         final_score, bias_confidence,

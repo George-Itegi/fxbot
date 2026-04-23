@@ -13,7 +13,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "SMC_OB_REVERSAL"
-MIN_SCORE     = 75
+MIN_SCORE     = 65   # Lowered from 75 — OB setups score 65-80 intraday
 VERSION       = "1.0"
 
 
