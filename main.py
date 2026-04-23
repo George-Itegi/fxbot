@@ -93,7 +93,7 @@ def run():
     from risk_management.risk_engine import (
         can_trade, calculate_lot_size, count_open_positions,
         is_daily_loss_limit_hit, register_trade, check_risk_reward,
-        update_consecutive_losses
+        update_consecutive_losses, calculate_dynamic_risk_pct
     )
     from execution.order_manager import place_order, manage_positions
     from execution.order_manager import sync_closed_trades
@@ -422,7 +422,13 @@ def _scan_and_trade(symbol: str,
         log.warning(f"🚫  {symbol}: R:R too low — TP:{tp1_pips}p / SL:{sl_pips}p")
         return False
 
-    lot_size = calculate_lot_size(symbol, sl_pips)
+    # v4.4: Dynamic position sizing based on conviction
+    conviction_score = float(score + ai_score) / 2
+    agreement_groups = signal.get('agreement_groups', 2)
+    lot_size = calculate_lot_size(
+        symbol, sl_pips,
+        conviction_score=conviction_score,
+        agreement_groups=agreement_groups)
     if lot_size <= 0:
         log.warning(f"🚫  {symbol}: Lot size calculation failed")
         return False

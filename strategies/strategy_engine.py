@@ -210,6 +210,8 @@ def run_strategies(symbol: str,
         return None
 
     best = max(final_signals, key=lambda s: s['score'])
+    # v4.4: Include agreement group count for dynamic position sizing
+    best['agreement_groups'] = len(final_groups)
     log.info(f"[ENGINE] {symbol} CONFIRMED: {best['strategy']} "
              f"{best['direction']} score={best['score']} "
              f"groups={final_groups} ({len(final_signals)} signals)")

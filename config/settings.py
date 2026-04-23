@@ -53,6 +53,29 @@ PROFIT_GUARD_TRIGGER_PIPS = 8.0  # More profit before BE — only lock in real w
 TRAILING_STOP_PIPS        = 10.0 # Wider trail distance (was 8.0)
 DYNAMIC_TP_MULTIPLIER     = 2.5  # Let winners run further
 
+# --- PARTIAL TP (v4.4) ---
+# Close 50% at 1R profit, move SL to breakeven, trail remainder with ATR.
+# This transforms a 50% win rate with 2:1 R:R into a much more consistent
+# equity curve. Even losing trades that hit partial TP before reversing
+# cost you nothing (the 50% closed at profit covers the remaining SL).
+PARTIAL_TP_ENABLED          = True
+PARTIAL_TP_RATIO            = 0.50   # Close 50% of position at 1R
+PARTIAL_TP_AT_R_MULTIPLE    = 1.0    # Trigger at 1x SL distance (1R profit)
+
+# --- DYNAMIC POSITION SIZING (v4.4) ---
+# Scale risk by conviction: AI score + number of agreeing strategy groups.
+# Low conviction signals risk less, high conviction signals risk more.
+# After consecutive losses, all sizes are halved until a win resets.
+DYNAMIC_SIZING_ENABLED      = True
+SIZING_LOW_RISK_PCT         = 0.50   # Low conviction: 0.5% risk
+SIZING_MED_RISK_PCT         = 1.00   # Medium conviction: 1.0% risk (default)
+SIZING_HIGH_RISK_PCT        = 1.50   # High conviction: 1.5% risk
+SIZING_LOW_SCORE_MIN        = 65     # Low conviction score range start
+SIZING_LOW_SCORE_MAX        = 75     # Low conviction score range end
+SIZING_HIGH_SCORE_MIN       = 85     # High conviction: score >= this
+SIZING_HIGH_MIN_GROUPS      = 3      # High conviction: 3+ groups must agree
+SIZING_CONSEC_LOSS_HALVE    = 3      # Halve all sizes after N consecutive losses
+
 # --- SPREAD LIMITS (in pips) ---
 # Tight spreads = only enter when liquidity is good.
 # Major pairs: very tight (these are the most liquid).

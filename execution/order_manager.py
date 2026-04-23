@@ -1,6 +1,10 @@
 import MetaTrader5 as mt5
 from core.logger import get_logger
-from config.settings import MAGIC_NUMBER, PROFIT_GUARD_TRIGGER_PIPS, TRAILING_STOP_PIPS, DYNAMIC_TP_MULTIPLIER
+from config.settings import (
+    MAGIC_NUMBER, PROFIT_GUARD_TRIGGER_PIPS, TRAILING_STOP_PIPS,
+    DYNAMIC_TP_MULTIPLIER, PARTIAL_TP_ENABLED, PARTIAL_TP_RATIO,
+    PARTIAL_TP_AT_R_MULTIPLE, MAX_SPREAD,
+)
 from database.db_manager import log_trade, close_trade
 
 log = get_logger(__name__)
@@ -126,6 +130,17 @@ def place_order(symbol: str, direction: str, lot_size: float,
         return False
 
     point = _get_pip_point(symbol, sym_info)
+
+    # ── v4.4: SPREAD RE-CHECK RIGHT BEFORE EXECUTION ──
+    # Spread can widen between can_trade() check (50ms ago) and actual
+    # order placement. Reject if spread has blown out at the last moment.
+    spread_points = tick.ask - tick.bid
+    spread_pips = spread_points / point
+    max_sp = MAX_SPREAD.get(symbol, MAX_SPREAD.get("DEFAULT", 4.0))
+    if spread_pips > max_sp:
+        log.warning(f"[EXEC] REJECTED {symbol}: spread re-check {spread_pips:.1f}p "
+                    f"> max {max_sp}p — spread widened between check and execution")
+        return False
 
     if direction == "BUY":
         price    = tick.ask
@@ -261,6 +276,10 @@ def place_order(symbol: str, direction: str, lot_size: float,
 _atr_cache: dict = {}  # {symbol: (atr_pips, timestamp)}
 _ATR_CACHE_SECONDS = 30  # Refresh ATR every 30 seconds
 
+# v4.4: Partial TP state tracker per position
+# {ticket: {"original_sl_pips": float, "partial_done": bool}}
+_partial_tp_state: dict = {}
+
 
 def _get_cached_atr(symbol: str) -> float:
     """Get ATR with 30-second cache to avoid expensive MT5 calls every loop."""
@@ -330,6 +349,12 @@ def manage_positions():
             _close_position(pos, "SL_HIT", sym_info)
             continue
 
+        # ── Clean up stale partial TP state for closed positions ──
+        # If position volume dropped to 0 or near 0, remove state
+        if pos.volume <= sym_info.volume_min:
+            _partial_tp_state.pop(pos.ticket, None)
+            continue
+
         # ── Calculate profit in pips ──────────────────────
         profit_pips = 0
         if pos.type == mt5.ORDER_TYPE_BUY:
@@ -342,6 +367,60 @@ def manage_positions():
 
         # ── Broker minimum stop level (for logging) ──
         min_stop_level = sym_info.trade_stops_level * point if sym_info.trade_stops_level > 0 else point
+
+        # ════════════════════════════════════════════════════════
+        # STEP 0: PARTIAL TP — Close 50% at 1R (v4.4)
+        # This is the BIGGEST profitability improvement.
+        # At 1R profit: close 50%, move SL to breakeven, trail rest.
+        # Even if the remaining 50% gets stopped at BE, you still
+        # pocketed the first 50% at 1R. Net result: risk-free trade.
+        # ════════════════════════════════════════════════════════
+        if PARTIAL_TP_ENABLED:
+            ticket = pos.ticket
+            state = _partial_tp_state.get(ticket)
+
+            if state is None:
+                # First time seeing this position — record original SL distance
+                original_sl_dist = abs(pos.price_open - pos.sl) / point
+                if original_sl_dist > 1.0:
+                    # SL hasn't been moved yet — store original distance
+                    _partial_tp_state[ticket] = {
+                        "original_sl_pips": original_sl_dist,
+                        "partial_done": False,
+                    }
+                    state = _partial_tp_state[ticket]
+
+            if state and not state.get("partial_done", False):
+                orig_sl = state["original_sl_pips"]
+                trigger_pips = orig_sl * PARTIAL_TP_AT_R_MULTIPLE
+
+                if trigger_pips > 0 and profit_pips >= trigger_pips:
+                    log.info(f"[EXEC] 🎯 PARTIAL TP TRIGGER {pos.symbol} #{pos.ticket} "
+                             f"profit={profit_pips:.1f}p >= 1R={trigger_pips:.1f}p "
+                             f"(SL was {orig_sl:.1f}p)")
+
+                    # Close 50% of position
+                    closed = _partial_close_position(
+                        pos, sym_info, point,
+                        f"1R_{profit_pips:.0f}p")
+
+                    if closed:
+                        # Move SL to breakeven immediately
+                        if pos.type == mt5.ORDER_TYPE_BUY:
+                            be_sl = round(pos.price_open + point * 0.5, sym_info.digits)
+                        else:
+                            be_sl = round(pos.price_open - point * 0.5, sym_info.digits)
+                        _modify_sl(pos, be_sl, sym_info, "PARTIAL_BE")
+
+                        # Mark as done — trailing takes over for remainder
+                        _partial_tp_state[ticket]["partial_done"] = True
+                        log.info(f"[EXEC] 📊 {pos.symbol} #{pos.ticket} "
+                                 f"PARTIAL TP DONE — 50% banked at 1R, SL at BE, "
+                                 f"remainder trailing with ATR")
+
+                        # Skip rest of management this cycle —
+                        # position state changed, re-evaluate next second
+                        continue
 
         # ── STEP 1: Break-Even Move ───────────────────────
         # Move SL to entry + tiny buffer after PROFIT_GUARD_TRIGGER_PIPS profit.
@@ -431,6 +510,63 @@ def manage_positions():
                         log.info(f"[EXEC] 🎯 {pos.symbol} #{pos.ticket} "
                                  f"TP EXTENDED: {pos.tp:.5f} -> {new_tp:.5f} "
                                  f"(+{profit_pips:.1f}p, ext={extension:.1f}p)")
+
+def _partial_close_position(pos, sym_info, point: float, reason: str) -> bool:
+    """Close a portion of the position (e.g., 50% at 1R profit).
+    
+    v4.4: Partial TP — close PARTIAL_TP_RATIO of volume,
+    move SL to breakeven, let remainder trail with ATR.
+    Returns True if partial close succeeded.
+    """
+    close_volume = pos.volume * PARTIAL_TP_RATIO
+    # Round to broker's volume step
+    close_volume = round(close_volume / sym_info.volume_step) * sym_info.volume_step
+
+    # Safety: can't close less than broker minimum
+    if close_volume < sym_info.volume_min:
+        log.debug(f"[EXEC] Partial close skipped: {close_volume:.2f} lots "
+                  f"below broker min {sym_info.volume_min} for {pos.symbol} #{pos.ticket}")
+        return False
+
+    tick = mt5.symbol_info_tick(pos.symbol)
+    if tick is None:
+        return False
+
+    order_type = (mt5.ORDER_TYPE_SELL
+                  if pos.type == mt5.ORDER_TYPE_BUY
+                  else mt5.ORDER_TYPE_BUY)
+    price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
+
+    fill = mt5.ORDER_FILLING_IOC
+    if sym_info.filling_mode & 1:
+        fill = mt5.ORDER_FILLING_FOK
+
+    request = {
+        "action":       mt5.TRADE_ACTION_DEAL,
+        "symbol":       pos.symbol,
+        "volume":       close_volume,
+        "type":         order_type,
+        "position":     pos.ticket,
+        "price":        price,
+        "deviation":    20,
+        "magic":        MAGIC_NUMBER,
+        "comment":      f"PTP|{reason}",  # Partial TP comment
+        "type_time":    mt5.ORDER_TIME_GTC,
+        "type_filling": fill,
+    }
+
+    result = mt5.order_send(request)
+    if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+        log.info(f"[EXEC] ✅ PARTIAL CLOSE {pos.symbol} #{pos.ticket} "
+                 f"{close_volume:.2f}/{pos.volume:.2f} lots @ {price} "
+                 f"({reason}) — banked ~{PARTIAL_TP_RATIO*100:.0f}% at 1R")
+        return True
+
+    retcode = result.retcode if result else "None"
+    log.warning(f"[EXEC] ⚠️ Partial close FAILED {pos.symbol} #{pos.ticket} "
+                f"code:{retcode} {mt5.last_error()}")
+    return False
+
 
 def _close_position(pos, reason: str, sym_info=None):
     """Close a position with market order.
@@ -698,3 +834,12 @@ def sync_closed_trades():
     
     if synced > 0:
         log.info(f"[SYNC] Synced {synced} closed trade(s) to database")
+
+    # Clean up partial TP state for fully closed positions
+    open_tickets = set()
+    live_positions = mt5.positions_get()
+    if live_positions:
+        open_tickets = {p.ticket for p in live_positions if p.magic == MAGIC_NUMBER}
+    stale = [t for t in _partial_tp_state if t not in open_tickets]
+    for t in stale:
+        _partial_tp_state.pop(t, None)

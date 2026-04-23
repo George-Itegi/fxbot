@@ -11,7 +11,10 @@ from config.settings import (
     RISK_PERCENT_PER_TRADE, MAX_OPEN_TRADES,
     MAX_DAILY_LOSS_PERCENT, MAGIC_NUMBER, MAX_SPREAD,
     SYMBOL_COOLDOWN_MINUTES, MIN_RISK_REWARD_RATIO,
-    MAX_CONSECUTIVE_LOSSES, CONSECUTIVE_LOSS_PAUSE_MINUTES
+    MAX_CONSECUTIVE_LOSSES, CONSECUTIVE_LOSS_PAUSE_MINUTES,
+    DYNAMIC_SIZING_ENABLED, SIZING_LOW_RISK_PCT, SIZING_MED_RISK_PCT,
+    SIZING_HIGH_RISK_PCT, SIZING_LOW_SCORE_MIN, SIZING_LOW_SCORE_MAX,
+    SIZING_HIGH_SCORE_MIN, SIZING_HIGH_MIN_GROUPS, SIZING_CONSEC_LOSS_HALVE,
 )
 
 log = get_logger(__name__)
@@ -24,17 +27,80 @@ _consecutive_losses: int = 0
 _consecutive_loss_pause_until: datetime = None
 
 
-def calculate_lot_size(symbol: str, sl_pips: float) -> float:
+def calculate_dynamic_risk_pct(conviction_score: float = None,
+                                   agreement_groups: int = None) -> float:
+    """
+    v4.4: Kelly Criterion-inspired dynamic risk sizing.
+    
+    Scales risk based on signal conviction:
+    - Low conviction  (score 65-75, 2 groups):   0.5% risk
+    - Medium conviction (score 75-85, 2+ groups):  1.0% risk (default)
+    - High conviction (score 85+, 3+ groups):    1.5% risk
+    
+    After SIZING_CONSEC_LOSS_HALVE consecutive losses: halve all sizes.
+    """
+    global _consecutive_losses
+
+    if not DYNAMIC_SIZING_ENABLED:
+        return RISK_PERCENT_PER_TRADE
+
+    # Default to medium if conviction data missing
+    if conviction_score is None or agreement_groups is None:
+        return SIZING_MED_RISK_PCT
+
+    # HIGH conviction: score >= 85 AND 3+ strategy groups agreeing
+    if (conviction_score >= SIZING_HIGH_SCORE_MIN
+            and agreement_groups >= SIZING_HIGH_MIN_GROUPS):
+        risk_pct = SIZING_HIGH_RISK_PCT
+        conviction_level = "HIGH"
+
+    # LOW conviction: score in 65-75 range (regardless of groups)
+    elif (SIZING_LOW_SCORE_MIN <= conviction_score <= SIZING_LOW_SCORE_MAX):
+        risk_pct = SIZING_LOW_RISK_PCT
+        conviction_level = "LOW"
+
+    # MEDIUM conviction: everything else
+    else:
+        risk_pct = SIZING_MED_RISK_PCT
+        conviction_level = "MEDIUM"
+
+    # Halve after consecutive losses — the most important safety rule
+    if _consecutive_losses >= SIZING_CONSEC_LOSS_HALVE:
+        risk_pct = risk_pct / 2
+        log.info(f"[RISK] ⚠️ Size halved: {_consecutive_losses} consecutive losses "
+                 f"→ {conviction_level} {risk_pct:.2f}% (was {conviction_level} {risk_pct*2:.2f}%)")
+    else:
+        log.info(f"[RISK] Dynamic sizing: {conviction_level} conviction "
+                 f"(score={conviction_score:.0f}, groups={agreement_groups}) "
+                 f"→ {risk_pct:.2f}% risk")
+
+    return risk_pct
+
+
+def get_consecutive_loss_count() -> int:
+    """Return the current consecutive loss count."""
+    return _consecutive_losses
+
+
+def calculate_lot_size(symbol: str, sl_pips: float,
+                       conviction_score: float = None,
+                       agreement_groups: int = None) -> float:
     """
     Risk-based position sizing with correct JPY/Gold pip values.
-    Never risk more than RISK_PERCENT_PER_TRADE of balance per trade.
+    Never risk more than the calculated risk percent of balance per trade.
+    
+    v4.4: Supports dynamic sizing based on conviction.
+    If conviction params provided, uses calculate_dynamic_risk_pct().
+    Otherwise falls back to flat RISK_PERCENT_PER_TRADE.
     """
     account  = mt5.account_info()
     sym_info = mt5.symbol_info(symbol)
     if account is None or sym_info is None:
         return 0.01
 
-    risk_amount = account.balance * (RISK_PERCENT_PER_TRADE / 100)
+    # v4.4: Dynamic risk percent based on conviction
+    risk_pct = calculate_dynamic_risk_pct(conviction_score, agreement_groups)
+    risk_amount = account.balance * (risk_pct / 100)
 
     # Correct pip size per symbol type
     # Indices: 1 pip = 1 point
