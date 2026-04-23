@@ -432,13 +432,12 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
         log.warning(f"[DB_STORE] store_blocked_signal error: {e}")
 
 
-def store_traded_signal(trade, run_id: str = 'default'):
-    """Update a blocked signal to mark it as executed after trade opens."""
+def mark_signal_executed(trade, run_id: str = 'default'):
+    """Update a signal to mark it as executed when trade opens."""
     try:
         conn = _get_or_create_conn()
         c = conn.cursor(dictionary=True)
 
-        # Mark the closest matching signal as executed
         c.execute("""
             UPDATE backtest_signals
             SET was_executed = 1, was_traded = 1,
@@ -455,7 +454,39 @@ def store_traded_signal(trade, run_id: str = 'default'):
         c.close()
         conn.close()
     except Exception as e:
-        log.debug(f"[DB_STORE] store_traded_signal error: {e}")
+        log.debug(f"[DB_STORE] mark_signal_executed error: {e}")
+
+
+def update_signal_outcome(trade, run_id: str = 'default'):
+    """Update a signal row with the trade outcome after it closes.
+    This fills in the outcome + profit_r columns so backtest_signals
+    becomes a complete ML training set (positive + negative examples)."""
+    try:
+        conn = _get_or_create_conn()
+        c = conn.cursor(dictionary=True)
+
+        outcome = trade.outcome or 'UNKNOWN'
+        profit_r = round(float(trade.profit_r), 3) if trade.profit_r else 0.0
+
+        c.execute("""
+            UPDATE backtest_signals
+            SET outcome = %s,
+                profit_r = %s
+            WHERE symbol = %s
+              AND direction = %s
+              AND strategy = %s
+              AND run_id = %s
+              AND was_executed = 1
+              AND outcome IS NULL
+            ORDER BY id DESC LIMIT 1
+        """, (outcome, profit_r, trade.symbol, trade.direction,
+              trade.strategy, run_id))
+
+        conn.commit()
+        c.close()
+        conn.close()
+    except Exception as e:
+        log.debug(f"[DB_STORE] update_signal_outcome error: {e}")
 
 
 def get_training_data(min_trades: int = 50) -> list:

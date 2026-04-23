@@ -478,10 +478,10 @@ def run_backtest(config: BacktestConfig) -> dict:
             'flow': flow,
         }
 
-        # ── Store signal + trade in DB ────────────────────
+        # ── Store signal + mark as executed in DB ──────────
         if config.store_db:
             try:
-                from backtest.db_store import store_blocked_signal, store_traded_signal
+                from backtest.db_store import store_blocked_signal, mark_signal_executed
                 # Store the executed signal
                 store_blocked_signal(
                     symbol=symbol, direction=best['direction'],
@@ -523,10 +523,10 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['relaxed_mode'] = config.relaxed_mode
     summary['run_id'] = config.run_id
 
-    # ── Store all completed trades in MySQL ───────────────
+    # ── Store all completed trades + update signal outcomes ─
     if config.store_db:
         try:
-            from backtest.db_store import store_trade
+            from backtest.db_store import store_trade, update_signal_outcome
             spread = AVG_SPREAD_PIPS.get(symbol, AVG_SPREAD_PIPS['DEFAULT'])
             stored = 0
             for trade in tracker.closed_trades:
@@ -542,8 +542,10 @@ def run_backtest(config: BacktestConfig) -> dict:
                     spread_pips=spread,
                     slippage_pips=SLIPPAGE_PIPS,
                 )
+                # Also backfill outcome + profit_r into backtest_signals
+                update_signal_outcome(trade, run_id=config.run_id)
                 stored += 1
-            log.info(f"  [DB] Stored {stored} trades in MySQL")
+            log.info(f"  [DB] Stored {stored} trades in MySQL + updated signal outcomes")
         except Exception as e:
             log.warning(f"  [DB] Could not store trades: {e}")
 
