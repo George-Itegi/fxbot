@@ -151,6 +151,7 @@ def _ensure_tables(conn):
             -- Signal quality
             score               INT,
             confluence_count    INT,
+            confluence          TEXT,              -- Full confluence list (comma-separated)
 
             -- Was this traded?
             was_traded          TINYINT,
@@ -189,6 +190,28 @@ def _ensure_tables(conn):
     """)
 
     c.close()
+
+    # ── Auto-migrate: add missing columns to existing tables ──
+    _auto_migrate_signals(c, conn)
+
+
+def _auto_migrate_signals(cursor, conn):
+    """Add missing columns to backtest_signals if they don't exist.
+    This avoids needing to DROP + recreate tables after schema changes."""
+    migrations = [
+        ('backtest_signals', 'trade_ticket',  'INT DEFAULT NULL'),
+        ('backtest_signals', 'confluence',     'TEXT'),
+    ]
+    for table, col, col_def in migrations:
+        try:
+            cursor.execute(f"SELECT {col} FROM {table} LIMIT 1")
+        except Exception:
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+                conn.commit()
+                log.info(f"[DB_STORE] Auto-migrated: added {table}.{col}")
+            except Exception as e:
+                log.warning(f"[DB_STORE] Migration failed for {table}.{col}: {e}")
 
 
 def _get_or_create_conn():
@@ -409,15 +432,16 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
         c.execute("""
             INSERT INTO backtest_signals (
                 run_id, timestamp, symbol, direction, strategy, strategy_group,
-                score, confluence_count,
+                score, confluence_count, confluence,
                 was_traded, was_executed, trade_ticket, skip_reason,
                 session, market_state, combined_bias, final_score,
                 delta, rolling_delta, of_imbalance, vol_surge,
                 smc_bias, pd_zone, structure_trend
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             run_id, timestamp_str, symbol, direction, strategy, strategy_group,
             score, len(confluence) if confluence else 0,
+            ','.join(confluence) if confluence else '',
             1 if was_traded else 0, 1 if was_traded else 0, trade_ticket, skip_reason[:100],
             (master_report or {}).get('session', 'UNKNOWN'),
             (master_report or {}).get('market_state', 'BALANCED'),
