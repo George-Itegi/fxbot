@@ -805,7 +805,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 sliced['H1'], sliced['H4']
             )
 
-            if len(s_m15) < 30 or len(s_h1) < 30 or len(s_h4) < 10:
+            if len(s_m1) < 5 or len(s_m15) < 30 or len(s_h1) < 30 or len(s_h4) < 10:
                 continue
 
             current_bar = s_m1.iloc[-1]
