@@ -22,6 +22,10 @@ from strategies.vwap_mean_reversion import evaluate as vwap_evaluate
 from strategies.delta_divergence import evaluate as delta_div_evaluate
 from strategies.trend_continuation import evaluate as trend_cont_evaluate
 from strategies.fvg_reversion import evaluate as fvg_evaluate
+from strategies.ema_cross_momentum import evaluate as ema_cross_evaluate
+from strategies.rsi_divergence_smc import evaluate as rsi_div_smc_evaluate
+from strategies.breakout_momentum import evaluate as breakout_evaluate
+from strategies.structure_alignment import evaluate as struct_align_evaluate
 
 log = get_logger(__name__)
 
@@ -35,6 +39,10 @@ STRATEGY_MIN_SCORES = {
     "DELTA_DIVERGENCE":      70,   # Price vs delta divergence
     "TREND_CONTINUATION":    72,   # Multi-TF trend + pullback
     "FVG_REVERSION":         68,   # FVG gap fill entry
+    "EMA_CROSS_MOMENTUM":    70,   # EMA crossover + RSI momentum + delta
+    "RSI_DIVERGENCE_SMC":    68,   # RSI divergence + BOS/CHoCH
+    "BREAKOUT_MOMENTUM":     70,   # Consolidation breakout + retest
+    "STRUCTURE_ALIGNMENT":   70,   # BOS + H1 structure + delta agreement
 }
 
 # ── Strategies grouped by what they fundamentally measure ────
@@ -42,20 +50,24 @@ STRATEGY_MIN_SCORES = {
 # Consensus gate requires 2+ DIFFERENT groups to agree — this
 # prevents correlated strategies from echoing the same signal.
 #
-# Independence: 4 groups, 4 genuinely different data sources
-#   SMC_STRUCTURE:    Market structure (BOS, CHoCH, OB, sweep levels)
-#   TREND_FOLLOWING:  Multi-timeframe trend + pullback to EMA21
+# Independence: 5 groups, 5 genuinely different data sources
+#   SMC_STRUCTURE:    Market structure (BOS, CHoCH, OB, sweep levels, breakouts)
+#   TREND_FOLLOWING:  Multi-timeframe trend + EMA crossover / pullback to EMA21
 #   MEAN_REVERSION:   Volume-weighted price (VWAP, POC, Value Area)
-#   ORDER_FLOW:       Cumulative delta divergence (tick direction flow)
+#   ORDER_FLOW:       Cumulative delta divergence / agreement (tick direction flow)
+#   OSCILLATOR:       RSI divergence + SMC confirmation (oscillator-based)
 STRATEGY_GROUPS = {
     "SMC_STRUCTURE": [
-        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY", "FVG_REVERSION"],
+        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY", "FVG_REVERSION",
+        "BREAKOUT_MOMENTUM"],
     "TREND_FOLLOWING": [
-        "TREND_CONTINUATION"],
+        "TREND_CONTINUATION", "EMA_CROSS_MOMENTUM"],
     "MEAN_REVERSION": [
         "VWAP_MEAN_REVERSION"],
     "ORDER_FLOW": [
-        "DELTA_DIVERGENCE"],
+        "DELTA_DIVERGENCE", "STRUCTURE_ALIGNMENT"],
+    "OSCILLATOR": [
+        "RSI_DIVERGENCE_SMC"],
 }
 
 
@@ -246,6 +258,8 @@ def _run_one_strategy(name, symbol,
                                   "BREAKOUT_REJECTED"],
         "DELTA_DIVERGENCE":      ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED", "TRENDING_EXTENDED"],
+        "RSI_DIVERGENCE_SMC":    ["REVERSAL_RISK", "BREAKOUT_REJECTED",
+                                  "BALANCED"],
     }
 
     if name in HARD_STATE_GATES:
@@ -293,6 +307,34 @@ def _run_one_strategy(name, symbol,
                 smc_report=smc_report,
                 market_report=market_report,
                 master_report=master_report)
+
+        elif name == "EMA_CROSS_MOMENTUM":
+            return ema_cross_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report)
+
+        elif name == "RSI_DIVERGENCE_SMC":
+            return rsi_div_smc_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report)
+
+        elif name == "BREAKOUT_MOMENTUM":
+            return breakout_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report)
+
+        elif name == "STRUCTURE_ALIGNMENT":
+            return struct_align_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report)
 
         else:
             log.debug(f"[ENGINE] {name} is retired or unknown, skip")
