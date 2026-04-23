@@ -1,8 +1,14 @@
 # =============================================================
-# strategies/strategy_engine.py
-# Coordinates all strategies. Called every scan cycle.
-# Runs all active strategies, returns highest-scoring signal.
-# Logs every signal (traded or not) to database.
+# strategies/strategy_engine.py  v5.0
+# MERGED FIX: Combines both AI audit findings.
+#
+# Key changes:
+#  1. Hard state gates — wrong market state = SKIP (not just log)
+#  2. Mandatory institutional gate — order flow OR volume surge
+#     must confirm BEFORE any strategy score is trusted
+#  3. Minimum 2-strategy consensus required for execution
+#  4. No session blocking (trade any session per user preference)
+#  5. Correlated strategies penalized to reduce false consensus
 # =============================================================
 
 import MetaTrader5 as mt5
@@ -23,27 +29,51 @@ from strategies.smart_money_footprint import evaluate as smf_evaluate
 
 log = get_logger(__name__)
 
-# Map strategy names to their evaluate functions
-STRATEGY_FUNCTIONS = {
-    "EMA_TREND_MTF":        ema_evaluate,
-    "SMC_OB_REVERSAL":      ob_evaluate,
-    "LIQUIDITY_SWEEP_ENTRY":sweep_evaluate,
-    "VWAP_MEAN_REVERSION":  vwap_evaluate,
-    "ORDER_FLOW_EXHAUSTION":exhaustion_evaluate,
-    "M1_MOMENTUM_SCALP":    m1_scalp_evaluate,
-    "OPENING_RANGE_BREAKOUT": orb_evaluate,
-    "DELTA_DIVERGENCE":     delta_div_evaluate,
-    "TREND_CONTINUATION":  trend_cont_evaluate,
-    "SMART_MONEY_FOOTPRINT": smf_evaluate,
+# ── Minimum score each strategy must hit to be considered ────
+# Raised because scoring is inflated — lagging indicators score
+# too easily. These minimums require real institutional confluence.
+STRATEGY_MIN_SCORES = {
+    "EMA_TREND_MTF":         75,   # Needs strong HTF + SMC alignment
+    "SMC_OB_REVERSAL":       70,   # OB + delta + sweep confirmation
+    "LIQUIDITY_SWEEP_ENTRY": 70,   # Sweep + BOS + delta
+    "VWAP_MEAN_REVERSION":   65,   # VWAP distance + structure
+    "ORDER_FLOW_EXHAUSTION": 75,   # Delta divergence is high-conviction
+    "M1_MOMENTUM_SCALP":     75,   # Must have volume spike + engulf
+    "OPENING_RANGE_BREAKOUT":70,   # ORB needs clean range + breakout
+    "DELTA_DIVERGENCE":      70,   # Price vs delta divergence
+    "TREND_CONTINUATION":    72,   # Multi-TF trend + pullback
+    "SMART_MONEY_FOOTPRINT": 80,   # Highest bar — institutional alpha
 }
+
+# ── Strategies grouped by what they fundamentally measure ────
+# Used to detect false consensus (same-source signals)
+STRATEGY_GROUPS = {
+    "TREND_FOLLOWING": [
+        "EMA_TREND_MTF", "TREND_CONTINUATION"],
+    "SMC_STRUCTURE": [
+        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY"],
+    "ORDER_FLOW": [
+        "ORDER_FLOW_EXHAUSTION", "DELTA_DIVERGENCE",
+        "SMART_MONEY_FOOTPRINT"],
+    "MOMENTUM": [
+        "M1_MOMENTUM_SCALP", "OPENING_RANGE_BREAKOUT"],
+    "MEAN_REVERSION": [
+        "VWAP_MEAN_REVERSION"],
+}
+
 
 def run_strategies(symbol: str,
                    master_report: dict,
                    external_data: dict = None) -> dict | None:
     """
-    Run all active strategies on one symbol.
-    Returns the highest-scoring signal or None.
-    external_data used only for context — NOT for signal scoring.
+    Run strategies on one symbol and return the best confirmed signal.
+
+    Signal is only returned when:
+      1. Master score >= 45 (market conditions acceptable)
+      2. At least one INSTITUTIONAL gate passes (OF imbalance or volume surge)
+      3. At least 2 strategies from DIFFERENT groups agree on direction
+      4. Best signal score >= its own strategy minimum threshold
+      5. Direction matches master combined_bias (if bias is clear)
     """
     if master_report is None:
         return None
@@ -53,19 +83,47 @@ def run_strategies(symbol: str,
     market_state  = master_report.get('market_state', 'BALANCED')
     session       = master_report.get('session', 'UNKNOWN')
     final_score   = master_report.get('final_score', 0)
-    day_trade_ok  = master_report.get('day_trade_ok', True)
+    combined_bias = master_report.get('combined_bias', 'NEUTRAL')
 
-    # Hard gate — session/news blocked
-    if not day_trade_ok:
-        log.info(f"[ENGINE] {symbol} — blocked: "
-                 f"{master_report.get('block_reason')}")
+    # Gate 1: Market score minimum
+    if final_score < 45:
+        log.debug(f"[ENGINE] {symbol} — final_score {final_score} < 45, skip")
         return None
 
-    if final_score < 50:
-        log.info(f"[ENGINE] {symbol} — score too low ({final_score})")
+    # Gate 2: Institutional confirmation check (STRICT)
+    # FIX: Momentum alone (is_scalpable) does NOT confirm institutional activity.
+    # We need ORDER FLOW or VOLUME SURGE — these prove institutions are moving.
+    # Momentum can happen on retail noise. This was the #1 false signal source.
+    of_imb    = master_report.get('order_flow_imbalance', {})
+    surge     = master_report.get('volume_surge', {})
+    momentum  = master_report.get('momentum', {})
+
+    imb_value    = of_imb.get('imbalance', 0)
+    imb_strength = of_imb.get('strength', 'NONE')
+    surge_active = surge.get('surge_detected', False)
+    is_scalpable = momentum.get('is_scalpable', False)
+    is_choppy    = momentum.get('is_choppy', True)
+
+    # FIXED: Require order flow OR volume surge (not just momentum)
+    has_order_flow = imb_strength in ('STRONG', 'EXTREME')
+    has_volume = surge_active
+
+    institutional_confirmed = has_order_flow or has_volume
+
+    # Momentum is a BONUS confirm, not a standalone gate.
+    # But if both OF and volume are present, that's the strongest setup.
+    if not institutional_confirmed:
+        log.debug(f"[ENGINE] {symbol} — no institutional activity "
+                  f"(imb={imb_value:+.2f}/{imb_strength}, surge={has_volume}, "
+                  f"scalpable={is_scalpable}) — need OF or volume")
         return None
 
-    # Fetch candle data (M1 + M5 + M15 + H1 + H4 for hybrid intraday + scalping)
+    # Hard gate: never trade choppy markets
+    if is_choppy and not surge_active:
+        log.debug(f"[ENGINE] {symbol} — choppy + no surge, skip")
+        return None
+
+    # Fetch candles
     df_m1  = get_candles(symbol, 'M1',  100)
     df_m5  = get_candles(symbol, 'M5',  200)
     df_m15 = get_candles(symbol, 'M15', 200)
@@ -73,7 +131,7 @@ def run_strategies(symbol: str,
     df_h4  = get_candles(symbol, 'H4',  100)
 
     if df_m15 is None or df_h1 is None:
-        log.warning(f"[ENGINE] {symbol} — Missing candle data")
+        log.warning(f"[ENGINE] {symbol} — missing candle data")
         return None
 
     active  = get_active_strategies()
@@ -87,120 +145,186 @@ def run_strategies(symbol: str,
                 smc_report, market_report,
                 market_state, session, master_report)
 
-            if signal:
-                signal['symbol']       = symbol
-                signal['market_state'] = market_state
-                signal['session']      = session
-                signal['timestamp']    = datetime.now(
-                    timezone.utc).strftime('%H:%M:%S UTC')
-                # Sanitize direction to prevent numpy float leaking
-                if 'direction' in signal:
-                    signal['direction'] = str(signal['direction'])
-                signals.append(signal)
-                log.info(f"[ENGINE] {symbol} signal: {strategy_name}"
-                         f" {signal['direction']} score={signal['score']}")
+            if signal is None:
+                continue
+
+            direction = str(signal.get('direction', ''))
+            score     = signal.get('score', 0)
+
+            # Apply per-strategy minimum score
+            min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
+            if score < min_score:
+                log.debug(f"[ENGINE] {symbol} {strategy_name} "
+                          f"score {score} < {min_score}, skip")
+                continue
+
+            signal['symbol']       = symbol
+            signal['market_state'] = market_state
+            signal['session']      = session
+            signal['timestamp']    = datetime.now(
+                timezone.utc).strftime('%H:%M:%S UTC')
+            signal['direction']    = direction
+            signal['group']        = _get_strategy_group(strategy_name)
+            signals.append(signal)
+
+            log.info(f"[ENGINE] {symbol} {strategy_name} "
+                     f"{direction} score={score} "
+                     f"[{signal['group']}]")
+
         except Exception as e:
             log.error(f"[ENGINE] Error in {strategy_name}: {e}")
 
     if not signals:
         return None
 
-    best = max(signals, key=lambda s: s['score'])
-    log.info(f"[ENGINE] {symbol} BEST: {best['strategy']}"
-             f" {best['direction']} score={best['score']}")
+    # Gate 3: Bias direction filter
+    if combined_bias == 'BULLISH':
+        signals = [s for s in signals if s['direction'] == 'BUY']
+    elif combined_bias == 'BEARISH':
+        signals = [s for s in signals if s['direction'] == 'SELL']
+
+    if not signals:
+        log.debug(f"[ENGINE] {symbol} — all signals filtered by bias")
+        return None
+
+    # Gate 4: Multi-group consensus
+    # Need signals from at least 2 DIFFERENT strategy groups
+    # to avoid false consensus from correlated strategies
+    buy_groups  = set(s['group'] for s in signals if s['direction'] == 'BUY')
+    sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
+
+    buy_signals  = [s for s in signals if s['direction'] == 'BUY']
+    sell_signals = [s for s in signals if s['direction'] == 'SELL']
+
+    # FIXED: STRICT multi-group consensus — no fallback.
+    # The old code allowed 3+ signals from the SAME group to bypass
+    # the cross-validation rule. This defeated the purpose — 3 correlated
+    # strategies (EMA_TREND + TREND_CONTINUATION) echoing each other
+    # is NOT real consensus. Require 2+ DIFFERENT groups always.
+    if len(buy_groups) >= 2 and len(buy_groups) >= len(sell_groups):
+        final_signals = buy_signals
+        final_groups  = buy_groups
+    elif len(sell_groups) >= 2:
+        final_signals = sell_signals
+        final_groups  = sell_groups
+    else:
+        log.info(f"[ENGINE] {symbol} — insufficient multi-group consensus "
+                 f"(BUY groups:{buy_groups}, SELL groups:{sell_groups})")
+        return None
+
+    best = max(final_signals, key=lambda s: s['score'])
+    log.info(f"[ENGINE] {symbol} CONFIRMED: {best['strategy']} "
+             f"{best['direction']} score={best['score']} "
+             f"groups={final_groups} ({len(final_signals)} signals)")
     return best
+
+
+def _get_strategy_group(name: str) -> str:
+    """Return the group category for a strategy."""
+    for group, members in STRATEGY_GROUPS.items():
+        if name in members:
+            return group
+    return "OTHER"
+
 
 def _run_one_strategy(name, symbol,
                       df_m1, df_m5, df_m15, df_h1, df_h4,
                       smc_report, market_report,
                       market_state, session,
                       master_report=None) -> dict | None:
-    """Route to the correct strategy evaluate function."""
-
-    info = REGISTRY.get(name, {})
+    """
+    Route to the correct strategy evaluate function.
+    FIXED: hard state gates now actually block execution.
+    """
+    info          = REGISTRY.get(name, {})
     best_states   = info.get('best_state', [])
-    best_sessions = info.get('best_session', [])
 
-    # Soft filter — warn but still run if outside best conditions
-    # Soft filter for market state
-    if best_states and market_state not in best_states:
-        log.info(f"[ENGINE] {name} — state {market_state}"
-                 f" not ideal (best: {best_states})")
+    # ── HARD state gate (was soft/useless before) ─────────────
+    # VWAP reversion only makes sense in BALANCED/ranging markets.
+    # EMA trend only makes sense when trending.
+    # This prevents strategies firing in wrong market conditions.
+    HARD_STATE_GATES = {
+        "VWAP_MEAN_REVERSION":   ["BALANCED", "REVERSAL_RISK"],
+        "OPENING_RANGE_BREAKOUT":["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
+                                  "BALANCED"],
+        "DELTA_DIVERGENCE":      ["REVERSAL_RISK", "BREAKOUT_REJECTED",
+                                  "BALANCED"],
+        "ORDER_FLOW_EXHAUSTION": ["REVERSAL_RISK", "BREAKOUT_REJECTED"],
+    }
 
-    # Prioritize NY sessions: if current session is a preferred NY session, don't soft-filter based on strategy's best_sessions
-    from config.settings import PREFERRED_SESSIONS
-    is_preferred_session = session in PREFERRED_SESSIONS
+    if name in HARD_STATE_GATES:
+        allowed_states = HARD_STATE_GATES[name]
+        if market_state not in allowed_states:
+            log.debug(f"[ENGINE] {name} blocked — state {market_state} "
+                      f"not in {allowed_states}")
+            return None
 
-    if best_sessions and session not in best_sessions and not is_preferred_session:
-        log.info(f"[ENGINE] {name} - session {session}"
-                 f" not ideal (best: {best_sessions})")
+    # Route to strategy evaluate function
+    try:
+        if name == "EMA_TREND_MTF":
+            return ema_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1, df_h4,
+                smc_report=smc_report, master_report=market_report)
 
-    if name == "EMA_TREND_MTF":
-        return ema_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1, df_h4,
-            smc_report=smc_report,
-            master_report=market_report)
+        elif name == "SMC_OB_REVERSAL":
+            return ob_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report, market_report=market_report)
 
-    elif name == "SMC_OB_REVERSAL":
-        return ob_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            smc_report=smc_report,
-            market_report=market_report)
+        elif name == "LIQUIDITY_SWEEP_ENTRY":
+            return sweep_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report, market_report=market_report)
 
-    elif name == "LIQUIDITY_SWEEP_ENTRY":
-        return sweep_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            smc_report=smc_report,
-            market_report=market_report)
+        elif name == "VWAP_MEAN_REVERSION":
+            return vwap_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                market_report=market_report,
+                smc_report=smc_report, master_report=master_report)
 
-    elif name == "VWAP_MEAN_REVERSION":
-        return vwap_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            market_report=market_report,
-            smc_report=smc_report,
-            master_report=master_report)
+        elif name == "ORDER_FLOW_EXHAUSTION":
+            return exhaustion_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report, market_report=market_report)
 
-    elif name == "ORDER_FLOW_EXHAUSTION":
-        return exhaustion_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            smc_report=smc_report,
-            market_report=market_report)
+        elif name == "M1_MOMENTUM_SCALP":
+            return m1_scalp_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                master_report=master_report)
 
-    elif name == "M1_MOMENTUM_SCALP":
-        return m1_scalp_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            smc_report=smc_report,
-            market_report=market_report,
-            master_report=master_report)
+        elif name == "OPENING_RANGE_BREAKOUT":
+            return orb_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                master_report=master_report)
 
-    elif name == "OPENING_RANGE_BREAKOUT":
-        return orb_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            smc_report=smc_report,
-            market_report=market_report,
-            master_report=master_report)
+        elif name == "DELTA_DIVERGENCE":
+            return delta_div_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                master_report=master_report)
 
-    elif name == "DELTA_DIVERGENCE":
-        return delta_div_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            smc_report=smc_report,
-            market_report=market_report,
-            master_report=master_report)
+        elif name == "TREND_CONTINUATION":
+            return trend_cont_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report)
 
-    elif name == "TREND_CONTINUATION":
-        return trend_cont_evaluate(
-            symbol, df_m1, df_m5, df_m15, df_h1,
-            smc_report=smc_report,
-            market_report=market_report,
-            df_h4=df_h4,
-            master_report=master_report)
+        elif name == "SMART_MONEY_FOOTPRINT":
+            return smf_evaluate(
+                symbol,
+                df_m1=df_m1, df_m5=df_m5,
+                df_m15=df_m15, df_h1=df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                master_report=master_report)
 
-    elif name == "SMART_MONEY_FOOTPRINT":
-        return smf_evaluate(
-            symbol,
-            df_m1=df_m1, df_m5=df_m5, df_m15=df_m15, df_h1=df_h1,
-            smc_report=smc_report,
-            market_report=market_report,
-            master_report=master_report)
+    except Exception as e:
+        log.error(f"[ENGINE] {name} on {symbol}: {e}")
 
     return None

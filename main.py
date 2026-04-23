@@ -38,7 +38,8 @@ from core.logger import get_logger
 from database.db_manager import init_db, log_trade, log_signal
 from config.settings import (
     WATCHLIST, MAGIC_NUMBER,
-    ALLOW_REENTRY, REENTRY_COOLDOWN_MINUTES, REENTRY_MIN_SCORE_INCREASE
+    ALLOW_REENTRY, REENTRY_COOLDOWN_MINUTES, REENTRY_MIN_SCORE_INCREASE,
+    MIN_CONFLUENCE_COUNT,
 )
 
 load_dotenv()
@@ -139,9 +140,10 @@ def run():
             from data_layer.market_regime import get_session
             session = get_session()
 
-            log.info(f"\n{'='*52}")
-            log.info(f"  SCAN | {cycle_t} | {session}")
-            log.info(f"{'='*52}")
+            log.info(f"")
+            log.info(f"{'━'*52}")
+            log.info(f"🔍  SCAN CYCLE  {cycle_t} UTC  |  {session}")
+            log.info(f"{'━'*52}")
 
             # ── Scan each symbol in parallel ──────────────────────────────
             from concurrent.futures import ThreadPoolExecutor
@@ -174,8 +176,7 @@ def run():
                 except Exception as e:
                     log.error(f"[CYCLE] Retraining failed: {e}")
 
-            log.info(f"[CYCLE] Complete. Trades today: {trade_count}"
-                     f" | Next in {SCAN_INTERVAL}s\n")
+            log.info(f"🏁  Cycle done — trades today: {trade_count} | next scan in {SCAN_INTERVAL}s\n")
             time.sleep(SCAN_INTERVAL)
 
     except KeyboardInterrupt:
@@ -259,13 +260,13 @@ def _scan_and_trade(symbol: str,
     # Initial check without direction (for cooldown, daily limit, etc.)
     tradeable, reason = can_trade(symbol, [])
     if not tradeable:
-        log.info(f"  {symbol}: Risk blocked — {reason}")
+        log.debug(f"  {symbol}: Risk blocked — {reason}")
         return False
 
     # ── Run master scanner (pass session) ─────────────────
     master = master_scan(symbol, session=session)
     if master is None:
-        log.info(f"  {symbol}: Master scan failed")
+        log.debug(f"  {symbol}: Master scan failed")
         return False
 
     final_score = master.get("final_score", 0)
@@ -278,34 +279,30 @@ def _scan_and_trade(symbol: str,
     m5_confirmed = fractal.get("m5_structure", {}).get("confirmed", False)
     m1_aligned   = fractal.get("trigger", {}).get("trigger_aligned", False)
 
-    log.info(f"  {symbol}: Score={final_score} | {bias}"
-             f" | {state} | -> {action} | Fractal: {fractal_rec}")
+    bias_icon = "📈" if bias == "BULLISH" else "📉" if bias == "BEARISH" else "↔️"
+    log.info(f"🧭  {symbol:<10} Score:{final_score:>3}/100  {bias:<9}{bias_icon}  {state}")
 
-    # ── Fractal Alignment Gate (v4.3 STRICT) ──
-    # setup_quality is 0-3 from fractal_alignment: in_zone + M5_confirmed + M1_aligned
-    setup_quality = fractal.get('setup_quality', 0)
+    # ── Fractal Alignment Gate — RELAXED for intraday ─────────
+    # Fractal needs H4+H1+M15 all aligned — too strict for intraday.
+    # We now only hard-block if score is very low AND bias is neutral.
+    # Individual strategies already check their own timeframe alignment.
+    setup_quality  = fractal.get('setup_quality', 0)
     factors_agreed = fractal.get('factors_agreed', 0)
-    
+
     if not fractal_aligned:
-        # v4.3 STRICT: Only bypass with much stronger conditions
-        # 1. Very high score + trending + strong setup confirmation
-        if final_score >= 80 and state in ("TRENDING_STRONG", "BREAKOUT_ACCEPTED") and setup_quality >= 3:
-            log.info(f"  {symbol}: M1 bypassed — exceptional setup "
-                     f"(score={final_score}, {state}, setup_q={setup_quality})")
-        # 2. High score + M5 confirmed + directional bias
-        elif final_score >= 75 and m5_confirmed and bias not in ("CONFLICTED", "NEUTRAL"):
-            log.info(f"  {symbol}: M1 bypassed — strong setup "
-                     f"(score={final_score}, bias={bias}, M5 confirmed)")
+        # Allow if score is reasonable and bias is clear
+        if final_score >= 55 and bias not in ("CONFLICTED", "NEUTRAL"):
+            log.debug(f"  {symbol}: Fractal gate bypassed (score={final_score}, bias={bias})")
+        elif state in ("TRENDING_STRONG", "BREAKOUT_ACCEPTED") and final_score >= 50:
+            log.debug(f"  {symbol}: Trending — fractal gate bypassed ({state})")
         else:
-            log.info(f"  {symbol}: Skipping due to no fractal alignment. "
-                     f"(score={final_score} q={setup_quality} factors={factors_agreed})")
+            log.debug(f"  {symbol}: Skip — low score + no fractal (score={final_score})")
             return False
 
     # ── Check scalping signal — skip if market is too choppy ──
     scalping = master.get("scalping_signal", {})
     if scalping.get("status") == "CHOPPY_SKIP":
-        log.info(f"  {symbol}: Skipping — choppy market "
-                 f"(velocity: {scalping.get('velocity_pips_min', 0)} pips/min)")
+        log.debug(f"  {symbol}: Choppy market — skip")
         return False
 
     # ── Order Flow Direction Gate ─────────────────────────────
@@ -314,27 +311,22 @@ def _scan_and_trade(symbol: str,
     imb_strength = of_imb.get("strength", "NONE")
     if imb_strength in ("EXTREME", "STRONG"):
         if bias == "BULLISH" and imb_value < -0.3:
-            log.info(f"  {symbol}: Skipping — order flow opposes BUY "
-                     f"(imbalance={imb_value:+.2f})")
+            log.debug(f"  {symbol}: Order flow opposes BUY — skip")
             return False
         elif bias == "BEARISH" and imb_value > 0.3:
-            log.info(f"  {symbol}: Skipping — order flow opposes SELL "
-                     f"(imbalance={imb_value:+.2f})")
+            log.debug(f"  {symbol}: Order flow opposes SELL — skip")
             return False
 
     # ── Run strategy engine ───────────────────────────────
     signal = run_strategies(symbol, master)
 
     if signal is None:
+        log.debug(f"  {symbol}: No strategy fired ({action})")
         log_signal({
-            'symbol':       symbol,
-            'direction':    None,
-            'strategy':     'NONE',
-            'ai_score':     final_score,
-            'was_traded':   False,
-            'skip_reason':  f"No strategy fired | {action}",
-            'session':      session,
-            'market_regime':state,
+            'symbol': symbol, 'direction': None, 'strategy': 'NONE',
+            'ai_score': final_score, 'was_traded': False,
+            'skip_reason': f"No strategy fired | {action}",
+            'session': session, 'market_regime': state,
         })
         return False
 
@@ -342,15 +334,17 @@ def _scan_and_trade(symbol: str,
     direction     = str(signal.get('direction', ''))
     score         = signal.get('score', 0)
     confluence    = signal.get('confluence', [])
-    
-    # v4.3 STRICT: Require minimum confluence factors
-    if len(confluence) < 5:
-        log.info(f"  {symbol}: Signal REJECTED — only {len(confluence)} confluence factors "
-                 f"(need >= 5) from {strategy_name}")
+
+    # FIXED: Use MIN_CONFLUENCE_COUNT from settings (not hardcoded)
+    if len(confluence) < MIN_CONFLUENCE_COUNT:
+        log.debug(f"  {symbol}: Signal rejected — only {len(confluence)} confluence factors (need {MIN_CONFLUENCE_COUNT}) from {strategy_name}")
         return False
-    
-    log.info(f"  {symbol}: SIGNAL {direction} from {strategy_name}"
-             f" score={score} conf={len(confluence)}")
+
+    dir_icon = "📈" if direction == "BUY" else "📉"
+    log.info(f"")
+    log.info(f"📶  SIGNAL  {symbol}  {dir_icon} {direction}  [{strategy_name}]"
+             f"  score={score}  conf={len(confluence)}"
+             f"  SL={signal.get('sl_pips')}p  TP={signal.get('tp1_pips')}p")
 
     # ══════════════════════════════════════════════════════════
     # NEW v4.0: BIAS CROSS-VALIDATION
@@ -363,34 +357,28 @@ def _scan_and_trade(symbol: str,
     
     if bias not in ("NEUTRAL", "CONFLICTED"):
         if bias == "BULLISH" and direction == "SELL":
-            log.warning(f"  {symbol}: ❌ BIAS CONFLICT — Master says {bias} "
-                        f"but {strategy_name} says {direction}. BLOCKED.")
-            log_signal({
-                'symbol': symbol, 'direction': direction,
-                'strategy': strategy_name, 'ai_score': score,
-                'was_traded': False, 'skip_reason': f"BIAS_CONFLICT(master={bias},signal={direction})",
-                'session': session, 'market_regime': state,
-            })
+            log.warning(f"🚫  {symbol}: BIAS CONFLICT — master={bias} signal={direction} [{strategy_name}] BLOCKED")
+            log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
+                        'ai_score': score, 'was_traded': False,
+                        'skip_reason': f"BIAS_CONFLICT({bias} vs {direction})",
+                        'session': session, 'market_regime': state})
             return False
         elif bias == "BEARISH" and direction == "BUY":
-            log.warning(f"  {symbol}: ❌ BIAS CONFLICT — Master says {bias} "
-                        f"but {strategy_name} says {direction}. BLOCKED.")
-            log_signal({
-                'symbol': symbol, 'direction': direction,
-                'strategy': strategy_name, 'ai_score': score,
-                'was_traded': False, 'skip_reason': f"BIAS_CONFLICT(master={bias},signal={direction})",
-                'session': session, 'market_regime': state,
-            })
+            log.warning(f"🚫  {symbol}: BIAS CONFLICT — master={bias} signal={direction} [{strategy_name}] BLOCKED")
+            log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
+                        'ai_score': score, 'was_traded': False,
+                        'skip_reason': f"BIAS_CONFLICT({bias} vs {direction})",
+                        'session': session, 'market_regime': state})
             return False
         else:
-            log.info(f"  {symbol}: ✅ Bias validated — {bias} aligned with {direction}")
+            log.info(f"✅  {symbol}: Bias aligned — {bias} matches {direction}")
 
     # ══════════════════════════════════════════════════════════
     # NEW v4.0: CORRELATION RISK CHECK (with direction)
     # ══════════════════════════════════════════════════════════
     tradeable, reason = can_trade(symbol, [], direction=direction)
     if not tradeable:
-        log.info(f"  {symbol}: Risk blocked after signal — {reason}")
+        log.info(f"🚫  {symbol}: Risk gate blocked after signal — {reason}")
         return False
 
     # ══════════════════════════════════════════════════════════
@@ -399,10 +387,10 @@ def _scan_and_trade(symbol: str,
     reentry_ok, is_reentry, reentry_reason = _check_reentry(
         symbol, direction, score)
     if not reentry_ok:
-        log.info(f"  {symbol}: Re-entry blocked — {reentry_reason}")
+        log.info(f"🚫  {symbol}: Re-entry blocked — {reentry_reason}")
         return False
     if is_reentry:
-        log.info(f"  {symbol}: Re-entry allowed — {reentry_reason}")
+        log.info(f"♻️   {symbol}: Re-entry allowed — {reentry_reason}")
 
     # ── AI model scoring ──────────────────────────────────
     from ai_engine.model_trainer import get_ai_score
@@ -419,13 +407,10 @@ def _scan_and_trade(symbol: str,
     ai_trained = ai_result.get('xgb_trained', False)
 
     if ai_trained and ai_rec == 'SKIP':
-        log.info(f"  {symbol}: AI rejected — {ai_result.get('note')}")
-        log_signal({
-            'symbol': symbol, 'direction': direction,
-            'strategy': strategy_name, 'ai_score': ai_score,
-            'was_traded': False, 'skip_reason': f"AI:{ai_rec}",
-            'session': session, 'market_regime': state,
-        })
+        log.info(f"🚫  {symbol}: AI model rejected signal — {ai_result.get('note')}")
+        log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
+                    'ai_score': ai_score, 'was_traded': False,
+                    'skip_reason': f"AI:{ai_rec}", 'session': session, 'market_regime': state})
         return False
 
     # ── Calculate position size ───────────────────────────
@@ -434,13 +419,12 @@ def _scan_and_trade(symbol: str,
 
     # Enforce minimum R:R
     if not check_risk_reward(sl_pips, tp1_pips):
-        log.warning(f"  {symbol}: Rejected — R:R too low "
-                    f"(TP:{tp1_pips}p / SL:{sl_pips}p)")
+        log.warning(f"🚫  {symbol}: R:R too low — TP:{tp1_pips}p / SL:{sl_pips}p")
         return False
 
     lot_size = calculate_lot_size(symbol, sl_pips)
     if lot_size <= 0:
-        log.warning(f"  {symbol}: Lot size calculation failed")
+        log.warning(f"🚫  {symbol}: Lot size calculation failed")
         return False
 
     # ── Place order ───────────────────────────────────────
@@ -462,9 +446,10 @@ def _scan_and_trade(symbol: str,
 
     if placed:
         register_trade(symbol)
-        log.info(f"  {symbol}: {direction} placed | "
-                 f"SL:{sl_pips}p | TP:{signal.get('tp1_pips')}p"
-                 f" | Lot:{lot_size}")
+        dir_icon = "📈" if direction == "BUY" else "📉"
+        log.info(f"💰  ORDER PLACED  {symbol}  {dir_icon} {direction}"
+                 f"  SL:{sl_pips}p  TP:{signal.get('tp1_pips')}p"
+                 f"  Lot:{lot_size}  [{strategy_name}]")
         log_signal({
             'symbol': symbol, 'direction': direction,
             'strategy': strategy_name,
@@ -472,6 +457,8 @@ def _scan_and_trade(symbol: str,
             'was_traded': True, 'skip_reason': None,
             'session': session, 'market_regime': state,
         })
+    else:
+        log.warning(f"⚠️  {symbol}: Order rejected by MT5 — check terminal")
 
     return placed
 

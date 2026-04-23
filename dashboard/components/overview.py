@@ -11,12 +11,18 @@ def render():
     st.title("📊 Live Overview")
     st.caption(f"Last updated: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}")
 
-    # ── Account metrics ───────────────────────────────────────
     _show_account_metrics()
-
     st.markdown("---")
 
-    # ── Open positions ────────────────────────────────────────
+    # ── Signal quality banner ─────────────────────────────────
+    st.subheader("🧠 Signal Engine Status")
+    sq1, sq2, sq3, sq4 = st.columns(4)
+    sq1.info("**Gate 1:** Score ≥ 45/100")
+    sq2.info("**Gate 2:** OF or Volume surge")
+    sq3.info("**Gate 3:** Bias alignment")
+    sq4.info("**Gate 4:** 2+ groups consensus")
+    st.markdown("---")
+
     st.subheader("🔴 Open Positions")
     open_pos = get_open_positions()
     if open_pos.empty:

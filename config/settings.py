@@ -60,7 +60,7 @@ SCALPING = {
 # --- RISK MANAGEMENT ---
 RISK_PERCENT_PER_TRADE = 1.0    # % of balance risked per trade
 MAX_OPEN_TRADES        = 5      # Max simultaneous positions (was 999 — 14 trades killed your account)
-MAX_DAILY_LOSS_PERCENT = 3.0    # Bot shuts down if this is hit
+MAX_DAILY_LOSS_PERCENT = 8.0    # Bot shuts down if this is hit
 MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
 
@@ -159,5 +159,4 @@ PREFERRED_SESSIONS = [
     "LONDON_SESSION",
     "NY_LONDON_OVERLAP",
     "NY_AFTERNOON",
-    "TOKYO",
 ]
