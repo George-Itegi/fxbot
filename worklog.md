@@ -65,3 +65,19 @@ Stage Summary:
 - Model gate: Gate 6 in backtest pipeline, blocks low-probability trades
 - Model persistence: saved to ai_engine/models/xgb_model.pkl, survives restarts
 
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix NameError: name 'store' is not defined in backtest/engine.py
+
+Work Log:
+- Analyzed the traceback: `NameError: name 'store' is not defined` at line 831 in `run_parallel_backtest`
+- Found that `run_backtest()` has `from data_layer.feature_store import store` at line 216, but `run_parallel_backtest()` was missing it
+- Added `from data_layer.feature_store import store` after line 679 in `run_parallel_backtest`
+- Verified both `store.update_symbol_features` calls (lines 315 and 832) are now covered by their respective function imports
+
+Stage Summary:
+- Fixed: Missing `store` import in `run_parallel_backtest()` — added at line 680
+- Root cause: The parallel backtest function was a copy of the single-symbol function but the `feature_store` import was omitted
+- No other undefined references found
