@@ -232,6 +232,9 @@ def run_backtest(config: BacktestConfig) -> dict:
     signals_blocked_score = 0
     trades_executed = 0
 
+    # ── Store feature snapshots per trade (for DB) ─────
+    trade_reports = {}  # ticket -> {master_report, market_report, smc_report, flow}
+
     scan_bar = config.scan_every_n_bars
 
     for bar_idx in range(scan_bar, total_m1_bars):
@@ -467,6 +470,14 @@ def run_backtest(config: BacktestConfig) -> dict:
         )
         trades_executed += 1
 
+        # ── Save feature snapshot at trade entry (for DB storage) ─
+        trade_reports[tracker.ticket_counter] = {
+            'master_report': master_report,
+            'market_report': market_report,
+            'smc_report': smc_report,
+            'flow': flow,
+        }
+
         # ── Store signal + trade in DB ────────────────────
         if config.store_db:
             try:
@@ -517,18 +528,22 @@ def run_backtest(config: BacktestConfig) -> dict:
         try:
             from backtest.db_store import store_trade
             spread = AVG_SPREAD_PIPS.get(symbol, AVG_SPREAD_PIPS['DEFAULT'])
+            stored = 0
             for trade in tracker.closed_trades:
+                # Use per-trade feature snapshot (captured at entry time)
+                reports = trade_reports.get(trade.ticket, {})
                 store_trade(
                     trade=trade,
-                    master_report=master_report,
-                    market_report=market_report,
-                    smc_report=smc_report,
-                    flow_data=flow,
+                    master_report=reports.get('master_report'),
+                    market_report=reports.get('market_report'),
+                    smc_report=reports.get('smc_report'),
+                    flow_data=reports.get('flow'),
                     run_id=config.run_id,
                     spread_pips=spread,
                     slippage_pips=SLIPPAGE_PIPS,
                 )
-            log.info(f"  [DB] Stored {len(tracker.closed_trades)} trades in MySQL")
+                stored += 1
+            log.info(f"  [DB] Stored {stored} trades in MySQL")
         except Exception as e:
             log.warning(f"  [DB] Could not store trades: {e}")
 

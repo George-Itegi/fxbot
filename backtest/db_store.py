@@ -359,6 +359,7 @@ def store_trade(trade, master_report: dict = None,
             _safe_float(trade.highest_profit_pips),
         ))
 
+        conn.commit()
         c.close()
         conn.close()
 
@@ -405,7 +406,7 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
                 session, market_state, combined_bias, final_score,
                 delta, rolling_delta, of_imbalance, vol_surge,
                 smc_bias, pd_zone, structure_trend
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             run_id, timestamp_str, symbol, direction, strategy, strategy_group,
             score, len(confluence) if confluence else 0,
@@ -423,6 +424,7 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
             (sr.get('structure', {})).get('trend', 'RANGING'),
         ))
 
+        conn.commit()
         c.close()
         conn.close()
 
@@ -449,6 +451,7 @@ def store_traded_signal(trade, run_id: str = 'default'):
             ORDER BY id DESC LIMIT 1
         """, (trade.symbol, trade.direction, trade.strategy, run_id))
 
+        conn.commit()
         c.close()
         conn.close()
     except Exception as e:

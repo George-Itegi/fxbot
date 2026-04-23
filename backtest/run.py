@@ -85,17 +85,22 @@ def main():
     args = parse_args()
 
     # Apply CLI overrides to config
+    from backtest import config as bt_config
+
+    # Relaxed mode: auto-disable partial TP, trailing, and dynamic TP extension
+    # to test with full trades running to completion
+    if args.relaxed:
+        bt_config.PARTIAL_TP_ENABLED = False
+        bt_config.ATR_TRAIL_ENABLED = False
+        bt_config.DYNAMIC_TP_EXTENSION_ENABLED = False
+
     if args.no_partial_tp:
-        from backtest import config as bt_config
         bt_config.PARTIAL_TP_ENABLED = False
     if args.no_trailing:
-        from backtest import config as bt_config
         bt_config.ATR_TRAIL_ENABLED = False
     if args.no_dynamic_sizing:
-        from backtest import config as bt_config
         bt_config.DYNAMIC_SIZING_ENABLED = False
     if args.no_dynamic_tp:
-        from backtest import config as bt_config
         bt_config.DYNAMIC_TP_EXTENSION_ENABLED = False
 
     # Clear cache if requested
@@ -125,10 +130,17 @@ def main():
     print(f"  Scan frequency: every {scan_every} M1 bars")
     print(f"  Balance: ${args.balance:,.2f}")
     mode_label = "RELAXED" if args.relaxed else "STRICT"
-    print(f"  Features: PartialTP={not args.no_partial_tp} "
-          f"Trail={not args.no_trailing} "
-          f"DynamicSize={not args.no_dynamic_sizing} "
-          f"ExtTP={not args.no_dynamic_tp}")
+    # In relaxed mode, partial TP/trail/ext TP are auto-disabled
+    show_partial = not args.relaxed and not args.no_partial_tp
+    show_trail = not args.relaxed and not args.no_trailing
+    show_dynsize = not args.no_dynamic_sizing
+    show_exttp = not args.relaxed and not args.no_dynamic_tp
+    print(f"  Features: PartialTP={show_partial} "
+          f"Trail={show_trail} "
+          f"DynamicSize={show_dynsize} "
+          f"ExtTP={show_exttp}")
+    if args.relaxed:
+        print(f"  (Relaxed mode: PartialTP/Trail/ExtTP auto-disabled for full trade testing)")
     print(f"  Mode: {mode_label} | Store DB: {args.store_db}")
     print("="*65 + "\n")
 
