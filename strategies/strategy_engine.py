@@ -21,6 +21,7 @@ from strategies.liquidity_sweep_entry import evaluate as sweep_evaluate
 from strategies.vwap_mean_reversion import evaluate as vwap_evaluate
 from strategies.delta_divergence import evaluate as delta_div_evaluate
 from strategies.trend_continuation import evaluate as trend_cont_evaluate
+from strategies.fvg_reversion import evaluate as fvg_evaluate
 
 log = get_logger(__name__)
 
@@ -33,6 +34,7 @@ STRATEGY_MIN_SCORES = {
     "VWAP_MEAN_REVERSION":   65,   # VWAP distance + structure
     "DELTA_DIVERGENCE":      70,   # Price vs delta divergence
     "TREND_CONTINUATION":    72,   # Multi-TF trend + pullback
+    "FVG_REVERSION":         68,   # FVG gap fill entry
 }
 
 # ── Strategies grouped by what they fundamentally measure ────
@@ -47,7 +49,7 @@ STRATEGY_MIN_SCORES = {
 #   ORDER_FLOW:       Cumulative delta divergence (tick direction flow)
 STRATEGY_GROUPS = {
     "SMC_STRUCTURE": [
-        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY"],
+        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY", "FVG_REVERSION"],
     "TREND_FOLLOWING": [
         "TREND_CONTINUATION"],
     "MEAN_REVERSION": [
@@ -277,6 +279,13 @@ def _run_one_strategy(name, symbol,
 
         elif name == "DELTA_DIVERGENCE":
             return delta_div_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                master_report=master_report)
+
+        elif name == "FVG_REVERSION":
+            return fvg_evaluate(
                 symbol, df_m1, df_m5, df_m15, df_h1,
                 smc_report=smc_report,
                 market_report=market_report,
