@@ -76,6 +76,10 @@ Examples:
     parser.add_argument(
         '--store-db', action='store_true',
         help='Store every trade and blocked signal into MySQL for ML training.')
+    parser.add_argument(
+        '--parallel', action='store_true',
+        help='Run all symbols in parallel on the same M1 timeline (like live trading). '
+             'Much faster and more realistic than sequential execution.')
 
     return parser.parse_args()
 
@@ -155,25 +159,41 @@ def main():
     try:
         all_results = []
 
-        for i, symbol in enumerate(symbols):
-            print(f"\n  [{i+1}/{len(symbols)}] Processing {symbol}...")
-
-            config = BacktestConfig(
-                symbol=symbol,
+        if args.parallel:
+            # ── Parallel mode: all symbols on same M1 timeline ──
+            from backtest.engine import run_parallel_backtest
+            log.info(f"\n  Running PARALLEL backtest ({len(symbols)} symbols on same timeline)...\n")
+            all_results = run_parallel_backtest(
+                symbols=symbols,
                 start_date=start_date,
                 end_date=end_date,
-                scan_every_n_bars=scan_every,
-                max_trades=args.max_trades,
-                strategies_filter=strategies,
+                scan_every=scan_every,
                 relaxed_mode=args.relaxed,
                 store_db=args.store_db,
                 run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
+                max_trades_per_symbol=args.max_trades if args.max_trades > 0 else 9999,
             )
+        else:
+            # ── Sequential mode: one symbol at a time (original) ──
+            for i, symbol in enumerate(symbols):
+                print(f"\n  [{i+1}/{len(symbols)}] Processing {symbol}...")
 
-            result = run_backtest(config)
-            if result:
-                print_summary(result)
-                all_results.append(result)
+                config = BacktestConfig(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    scan_every_n_bars=scan_every,
+                    max_trades=args.max_trades,
+                    strategies_filter=strategies,
+                    relaxed_mode=args.relaxed,
+                    store_db=args.store_db,
+                    run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
+                )
+
+                result = run_backtest(config)
+                if result:
+                    print_summary(result)
+                    all_results.append(result)
 
         # Print full cross-symbol summary
         if all_results:

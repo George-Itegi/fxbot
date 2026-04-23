@@ -301,6 +301,22 @@ def run_backtest(config: BacktestConfig) -> dict:
         final_score = master_report.get('final_score', 0)
         score_gate = RELAXED_MIN_SCORE if config.relaxed_mode else MASTER_MIN_SCORE
         if final_score < score_gate:
+            if config.store_db:
+                signals_blocked_score += 1
+                if signals_blocked_score % 50 == 1:  # Store every ~50th to avoid flooding DB
+                    try:
+                        from backtest.db_store import store_blocked_signal
+                        store_blocked_signal(
+                            symbol=symbol, direction='NONE',
+                            strategy='PRE_GATE', score=final_score,
+                            confluence=[], master_report=master_report,
+                            market_report=market_report, smc_report=smc_report,
+                            flow_data=flow, was_traded=False,
+                            skip_reason=f'score_below_{score_gate}',
+                            run_id=config.run_id,
+                        )
+                    except Exception:
+                        pass
             continue
 
         # ── Gate 1: Institutional confirmation ────────────
@@ -310,11 +326,40 @@ def run_backtest(config: BacktestConfig) -> dict:
 
         if not has_institutional:
             signals_blocked_gate += 1
+            # Store gate-blocked signals for ML (every ~50th to manage volume)
+            if config.store_db and signals_blocked_gate % 50 == 1:
+                try:
+                    from backtest.db_store import store_blocked_signal
+                    store_blocked_signal(
+                        symbol=symbol, direction='NONE',
+                        strategy='PRE_GATE', score=final_score,
+                        confluence=[], master_report=master_report,
+                        market_report=market_report, smc_report=smc_report,
+                        flow_data=flow, was_traded=False,
+                        skip_reason='no_institutional_flow',
+                        run_id=config.run_id,
+                    )
+                except Exception:
+                    pass
             continue
 
         # ── Gate 2: Choppy market ─────────────────────────
         is_choppy = flow.get('momentum', {}).get('is_choppy', True)
         if is_choppy and not surge_active:
+            if config.store_db:
+                try:
+                    from backtest.db_store import store_blocked_signal
+                    store_blocked_signal(
+                        symbol=symbol, direction='NONE',
+                        strategy='PRE_GATE', score=final_score,
+                        confluence=[], master_report=master_report,
+                        market_report=market_report, smc_report=smc_report,
+                        flow_data=flow, was_traded=False,
+                        skip_reason='choppy_market',
+                        run_id=config.run_id,
+                    )
+                except Exception:
+                    pass
             continue
 
         # ── Run strategies ────────────────────────────────
@@ -551,3 +596,449 @@ def run_backtest(config: BacktestConfig) -> dict:
             log.warning(f"  [DB] Could not store trades: {e}")
 
     return summary
+
+
+# =============================================================
+# PARALLEL MULTI-SYMBOL BACKTEST — processes all pairs on the
+# same M1 timeline, exactly like live trading where all pairs
+# are scanned simultaneously every M15 bar.
+# =============================================================
+
+def run_parallel_backtest(symbols: list, start_date, end_date,
+                          scan_every: int = 15, relaxed_mode: bool = False,
+                          store_db: bool = False, run_id: str = 'default',
+                          max_trades_per_symbol: int = 9999) -> list:
+    """
+    Run all symbols in parallel on the same M1 timeline.
+    Each symbol gets its own TradeTracker, strategies scan independently,
+    but all pairs share the same clock — like live trading.
+    
+    Returns list of per-symbol summary dicts.
+    """
+    import time as time_mod
+    from backtest.data_loader import load_all_data, get_candles_at_time
+    from backtest.tick_simulator import simulate_order_flow_from_full
+    from backtest.smc_builder import build_smc_report
+    from backtest.market_builder import build_market_report
+    from backtest.trade_tracker import TradeTracker
+    from strategies.strategy_engine import _run_one_strategy, _get_strategy_group
+    from strategies.strategy_registry import get_active_strategies
+
+    start_time = time_mod.time()
+
+    active_strategies = get_active_strategies()
+    log.info(f"")
+    log.info(f"{'='*65}")
+    log.info(f"  PARALLEL BACKTEST v3.0 — {len(symbols)} symbols")
+    log.info(f"  Period: {start_date.date()} to {end_date.date()}")
+    log.info(f"  Strategies: {', '.join(active_strategies)}")
+    log.info(f"  Mode: {'RELAXED' if relaxed_mode else 'STRICT'}")
+    log.info(f"{'='*65}")
+
+    # ── Load data for all symbols ──────────────────────────
+    symbol_data = {}   # symbol -> {M1, M5, M15, H1, H4}
+    symbol_trackers = {}  # symbol -> TradeTracker
+    symbol_reports = {}   # symbol -> {ticket -> snapshot}
+    symbol_pip = {}       # symbol -> pip_size
+    symbol_pipval = {}    # symbol -> pip_value
+    symbol_spread = {}    # symbol -> total_slippage in pips
+    symbol_stats = {}     # symbol -> {signals_found, blocked_gate, blocked_consensus, blocked_score, executed}
+
+    for sym in symbols:
+        data = load_all_data(sym, start_date, end_date, CACHE_DIR)
+        if not data:
+            log.warning(f"  No data for {sym}, skipping")
+            continue
+
+        symbol_data[sym] = data
+        pip_size = get_pip_size(sym)
+        pip_value = PIP_VALUE_PER_LOT.get(sym, PIP_VALUE_PER_LOT['DEFAULT'])
+        spread = AVG_SPREAD_PIPS.get(sym, AVG_SPREAD_PIPS['DEFAULT'])
+
+        symbol_pip[sym] = pip_size
+        symbol_pipval[sym] = pip_value
+        symbol_spread[sym] = spread + SLIPPAGE_PIPS
+
+        symbol_trackers[sym] = TradeTracker(
+            starting_balance=STARTING_BALANCE,
+            pip_value_per_lot=pip_value,
+            max_open=MAX_OPEN_TRADES,
+            max_per_symbol=MAX_PER_SYMBOL,
+            partial_tp_enabled=False if relaxed_mode else PARTIAL_TP_ENABLED,
+            atr_trail_enabled=False if relaxed_mode else ATR_TRAIL_ENABLED,
+            dynamic_tp_enabled=False if relaxed_mode else DYNAMIC_TP_EXTENSION_ENABLED,
+            dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
+            base_risk_percent=BASE_RISK_PERCENT,
+        )
+        symbol_reports[sym] = {}
+        symbol_stats[sym] = {
+            'signals_found': 0, 'blocked_gate': 0,
+            'blocked_consensus': 0, 'blocked_score': 0,
+            'executed': 0,
+        }
+
+        log.info(f"  Loaded {sym}: M1={len(data['M1'])} bars, H1={len(data['H1'])} bars")
+
+    if not symbol_data:
+        return []
+
+    # ── Find the shortest M1 series (determines loop length) ─
+    min_len = min(len(d['M1']) for d in symbol_data.values())
+    log.info(f"  Timeline: {min_len} M1 bars (~{min_len // 1440} days)")
+
+    # ── Main parallel loop ──────────────────────────────────
+    for bar_idx in range(scan_every, min_len):
+        # Get the current time from the first symbol (all share same UTC clock)
+        ref_sym = list(symbol_data.keys())[0]
+        current_time = symbol_data[ref_sym]['M1'].iloc[bar_idx]['time']
+
+        # ── Check exits on EVERY bar for ALL symbols ───────
+        for sym in list(symbol_data.keys()):
+            data = symbol_data[sym]
+            if bar_idx >= len(data['M1']):
+                continue
+            bar = data['M1'].iloc[bar_idx]
+            symbol_trackers[sym].check_exits(
+                current_time,
+                float(bar['high']),
+                float(bar['low']),
+                float(bar['close']),
+                symbol_pip[sym],
+                symbol_pipval[sym],
+            )
+
+        # ── Only run strategy scan every N bars ────────────
+        if bar_idx % scan_every != 0:
+            continue
+
+        # ── Scan ALL symbols at this timestamp ─────────────
+        for sym in list(symbol_data.keys()):
+            stats = symbol_stats[sym]
+            tracker = symbol_trackers[sym]
+            data = symbol_data[sym]
+
+            # Skip if max trades reached
+            if max_trades_per_symbol > 0 and stats['executed'] >= max_trades_per_symbol:
+                continue
+
+            # Skip if already have open trade for this symbol
+            if not tracker.can_open(sym):
+                continue
+
+            # Get sliced data up to current time
+            if bar_idx >= len(data['M1']):
+                continue
+
+            sliced = get_candles_at_time(data, current_time, count=200)
+            s_m1, s_m5, s_m15, s_h1, s_h4 = (
+                sliced['M1'], sliced['M5'], sliced['M15'],
+                sliced['H1'], sliced['H4']
+            )
+
+            if len(s_m15) < 30 or len(s_h1) < 30 or len(s_h4) < 10:
+                continue
+
+            current_bar = s_m1.iloc[-1]
+
+            # Build reports
+            flow = simulate_order_flow_from_full(s_m1, symbol_pip[sym])
+            smc_report = build_smc_report(s_h1, s_h4, current_time)
+            market_report = build_market_report(s_m15, flow, smc_report, sym)
+            master_report = _build_master_report(sym, market_report, smc_report, flow)
+            master_report['timestamp'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+
+            # Update feature store
+            market_data_for_store = {
+                'current_price': float(current_bar['close']),
+                'atr': float(s_m15.iloc[-1].get('atr', 0)) if len(s_m15) > 0 else 0,
+                'delta': flow.get('delta', {}),
+                'rolling_delta': flow.get('rolling_delta', {}),
+                'order_flow_imbalance': flow.get('order_flow_imbalance', {}),
+                'volume_surge': flow.get('volume_surge', {}),
+                'momentum': flow.get('momentum', {}),
+                'vwap': market_report.get('vwap', {}),
+                'profile': market_report.get('profile', {}),
+            }
+            store.update_symbol_features(sym, market_data_for_store, smc_report)
+
+            # Gate 0: Score
+            final_score = master_report.get('final_score', 0)
+            score_gate = RELAXED_MIN_SCORE if relaxed_mode else MASTER_MIN_SCORE
+            if final_score < score_gate:
+                stats['blocked_score'] += 1
+                if store_db and stats['blocked_score'] % 50 == 1:
+                    try:
+                        from backtest.db_store import store_blocked_signal
+                        store_blocked_signal(
+                            symbol=sym, direction='NONE',
+                            strategy='PRE_GATE', score=final_score,
+                            confluence=[], master_report=master_report,
+                            market_report=market_report, smc_report=smc_report,
+                            flow_data=flow, was_traded=False,
+                            skip_reason=f'score_below_{score_gate}',
+                            run_id=run_id,
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            # Gate 1: Institutional
+            imb_strength = flow.get('order_flow_imbalance', {}).get('strength', 'NONE')
+            surge_active = flow.get('volume_surge', {}).get('surge_detected', False)
+            has_institutional = imb_strength in ('STRONG', 'EXTREME') or surge_active
+
+            if not has_institutional:
+                stats['blocked_gate'] += 1
+                if store_db and stats['blocked_gate'] % 50 == 1:
+                    try:
+                        from backtest.db_store import store_blocked_signal
+                        store_blocked_signal(
+                            symbol=sym, direction='NONE',
+                            strategy='PRE_GATE', score=final_score,
+                            confluence=[], master_report=master_report,
+                            market_report=market_report, smc_report=smc_report,
+                            flow_data=flow, was_traded=False,
+                            skip_reason='no_institutional_flow',
+                            run_id=run_id,
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            # Gate 2: Choppy
+            is_choppy = flow.get('momentum', {}).get('is_choppy', True)
+            if is_choppy and not surge_active:
+                if store_db:
+                    try:
+                        from backtest.db_store import store_blocked_signal
+                        store_blocked_signal(
+                            symbol=sym, direction='NONE',
+                            strategy='PRE_GATE', score=final_score,
+                            confluence=[], master_report=master_report,
+                            market_report=market_report, smc_report=smc_report,
+                            flow_data=flow, was_traded=False,
+                            skip_reason='choppy_market',
+                            run_id=run_id,
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            # Run strategies
+            market_state = master_report.get('market_state', 'BALANCED')
+            session = master_report.get('session', 'UNKNOWN')
+            combined_bias = master_report.get('combined_bias', 'NEUTRAL')
+
+            signals = []
+            for strategy_name in active_strategies:
+                try:
+                    signal = _run_one_strategy(
+                        strategy_name, sym,
+                        s_m1, s_m5, s_m15, s_h1, s_h4,
+                        smc_report, market_report,
+                        market_state, session, master_report)
+                    if signal is None:
+                        continue
+                    direction = str(signal.get('direction', ''))
+                    score = signal.get('score', 0)
+                    from strategies.strategy_engine import STRATEGY_MIN_SCORES
+                    min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
+                    if score < min_score:
+                        continue
+                    signal['symbol'] = sym
+                    signal['group'] = _get_strategy_group(strategy_name)
+                    signals.append(signal)
+                except Exception:
+                    continue
+
+            if not signals:
+                continue
+
+            stats['signals_found'] += 1
+
+            # Gate 3: Bias filter (skip in relaxed)
+            if not relaxed_mode:
+                if combined_bias == 'BULLISH':
+                    signals = [s for s in signals if s['direction'] == 'BUY']
+                elif combined_bias == 'BEARISH':
+                    signals = [s for s in signals if s['direction'] == 'SELL']
+                if not signals:
+                    continue
+
+            # Gate 4: Consensus
+            buy_groups = set(s['group'] for s in signals if s['direction'] == 'BUY')
+            sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
+            min_groups = RELAXED_CONSENSUS_GROUPS if relaxed_mode else 2
+
+            if len(buy_groups) >= min_groups and len(buy_groups) >= len(sell_groups):
+                final_signals = [s for s in signals if s['direction'] == 'BUY']
+                final_groups = buy_groups
+            elif len(sell_groups) >= min_groups:
+                final_signals = [s for s in signals if s['direction'] == 'SELL']
+                final_groups = sell_groups
+            else:
+                stats['blocked_consensus'] += 1
+                if store_db:
+                    try:
+                        from backtest.db_store import store_blocked_signal
+                        for sig in signals:
+                            store_blocked_signal(
+                                symbol=sym, direction=sig['direction'],
+                                strategy=sig.get('strategy', 'UNKNOWN'),
+                                score=sig.get('score', 0),
+                                confluence=sig.get('confluence', []),
+                                master_report=master_report, market_report=market_report,
+                                smc_report=smc_report, flow_data=flow,
+                                was_traded=False,
+                                skip_reason=f'consensus_blocked(buy={len(buy_groups)},sell={len(sell_groups)})',
+                                run_id=run_id,
+                            )
+                    except Exception:
+                        pass
+                continue
+
+            # Best signal
+            best = max(final_signals, key=lambda s: s['score'])
+
+            # Gate 5: Confluence
+            confluence = best.get('confluence', [])
+            min_conv = RELAXED_MIN_CONFLUENCE if relaxed_mode else MIN_CONFLUENCE
+            if len(confluence) < min_conv:
+                continue
+
+            # Execute trade
+            entry_price = float(current_bar['close'])
+            total_slip = symbol_spread[sym]
+            if best['direction'] == 'BUY':
+                entry_price += total_slip * symbol_pip[sym]
+            else:
+                entry_price -= total_slip * symbol_pip[sym]
+
+            sl_pips = best.get('sl_pips', 0)
+            tp_pips = best.get('tp1_pips', 0) or best.get('tp_pips', 0)
+
+            if sl_pips <= 0 or tp_pips <= 0:
+                continue
+
+            min_rr = RELAXED_MIN_RR_RATIO if relaxed_mode else MIN_RR_RATIO
+            if tp_pips / sl_pips < min_rr:
+                continue
+
+            if best['direction'] == 'BUY':
+                sl_price = entry_price - sl_pips * symbol_pip[sym]
+                tp_price = entry_price + tp_pips * symbol_pip[sym]
+            else:
+                sl_price = entry_price + sl_pips * symbol_pip[sym]
+                tp_price = entry_price - tp_pips * symbol_pip[sym]
+
+            atr_value = float(s_m15.iloc[-1].get('atr', 0)) if len(s_m15) > 0 else 0.0
+            agreement_groups = len(final_groups)
+
+            tracker.open_trade(
+                symbol=sym,
+                direction=best['direction'],
+                strategy=best.get('strategy', 'UNKNOWN'),
+                entry_time=current_time,
+                entry_price=entry_price,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                sl_pips=sl_pips,
+                tp_pips=tp_pips,
+                score=best.get('score', 0),
+                confluence=confluence,
+                session=market_report.get('session', 'UNKNOWN'),
+                market_state=market_state,
+                agreement_groups=agreement_groups,
+                atr_value=atr_value,
+            )
+            stats['executed'] += 1
+
+            # Save snapshot
+            symbol_reports[sym][tracker.ticket_counter] = {
+                'master_report': master_report,
+                'market_report': market_report,
+                'smc_report': smc_report,
+                'flow': flow,
+            }
+
+            # Store executed signal
+            if store_db:
+                try:
+                    from backtest.db_store import store_blocked_signal
+                    store_blocked_signal(
+                        symbol=sym, direction=best['direction'],
+                        strategy=best.get('strategy', 'UNKNOWN'),
+                        score=best.get('score', 0),
+                        confluence=best.get('confluence', []),
+                        master_report=master_report, market_report=market_report,
+                        smc_report=smc_report, flow_data=flow,
+                        was_traded=True, skip_reason='EXECUTED',
+                        run_id=run_id,
+                        trade_ticket=tracker.ticket_counter,
+                    )
+                except Exception:
+                    pass
+
+            log.info(f"  [{sym}] Trade #{stats['executed']} | "
+                     f"{best['direction']} {best.get('strategy','')} "
+                     f"score={best.get('score',0)} | "
+                     f"Balance: ${tracker.balance:.2f}")
+
+    # ── Close remaining open trades ────────────────────────
+    for sym in list(symbol_data.keys()):
+        tracker = symbol_trackers[sym]
+        if tracker.open_trades:
+            data = symbol_data[sym]
+            last_bar = data['M1'].iloc[-1]
+            tracker.close_remaining_at_end(
+                last_bar['time'], float(last_bar['close']),
+                symbol_pip[sym], symbol_pipval[sym])
+
+    # ── Build per-symbol summaries + store to DB ────────────
+    all_results = []
+    elapsed = time_mod.time() - start_time
+
+    for sym in list(symbol_data.keys()):
+        tracker = symbol_trackers[sym]
+        stats = symbol_stats[sym]
+
+        summary = tracker.get_summary()
+        summary['symbol'] = sym
+        summary['elapsed_seconds'] = round(elapsed, 1)
+        summary['signals_found'] = stats['signals_found']
+        summary['signals_blocked_consensus'] = stats['blocked_consensus']
+        summary['signals_blocked_gate'] = stats['blocked_gate']
+        summary['signals_blocked_score'] = stats['blocked_score']
+        summary['trades_executed'] = stats['executed']
+        summary['final_score_avg'] = 0
+        summary['relaxed_mode'] = relaxed_mode
+        summary['run_id'] = run_id
+
+        # Store trades to DB
+        if store_db:
+            try:
+                from backtest.db_store import store_trade, update_signal_outcome
+                spread = AVG_SPREAD_PIPS.get(sym, AVG_SPREAD_PIPS['DEFAULT'])
+                stored = 0
+                for trade in tracker.closed_trades:
+                    reports = symbol_reports.get(sym, {}).get(trade.ticket, {})
+                    store_trade(
+                        trade=trade,
+                        master_report=reports.get('master_report'),
+                        market_report=reports.get('market_report'),
+                        smc_report=reports.get('smc_report'),
+                        flow_data=reports.get('flow'),
+                        run_id=run_id,
+                        spread_pips=spread,
+                        slippage_pips=SLIPPAGE_PIPS,
+                    )
+                    update_signal_outcome(trade, run_id=run_id)
+                    stored += 1
+                log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
+            except Exception as e:
+                log.warning(f"  [DB] {sym}: Could not store trades: {e}")
+
+        all_results.append(summary)
+
+    log.info(f"\n  Parallel backtest completed in {elapsed:.1f}s")
+    return all_results
