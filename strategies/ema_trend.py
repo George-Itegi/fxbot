@@ -17,7 +17,7 @@ log = get_logger(__name__)
 
 STRATEGY_NAME = "EMA_TREND_MTF"
 MIN_SCORE     = 75   # v4.3 STRICT — only trade the best setups (was 65)
-VERSION       = "3.0"  # Hybrid intraday + scalping
+VERSION       = "4.0"  # EMA21 pullback entry — not M1 candle close
 
 
 def evaluate(symbol: str,
@@ -135,10 +135,18 @@ def evaluate(symbol: str,
     h4_bull = (h4['ema_9'] > h4['ema_21'] > h4['ema_50'])
     h1_bull = (h1['ema_9'] > h1['ema_21'])
     st_bull = (int(h1.get('supertrend_dir', 0)) == 1)
-    m15_pull= (float(m15.get('stoch_rsi_k', 50)) < 30)
-    m15_zone= (h1['ema_21'] * 0.9998 <= m15['close'] <= h1['ema_21'] * 1.0010)
+    m15_pull= (float(m15.get('stoch_rsi_k', 50)) < 35)   # Slightly relaxed — entry gate is now EMA21 proximity
+    m15_zone= (h1['ema_21'] * 0.9990 <= m15['close'] <= h1['ema_21'] * 1.0020)  # 20 pip window
 
     if h4_bull and h1_bull:
+        # MANDATORY: rolling delta must agree before scoring anything
+        rolling_delta = master_report.get('rolling_delta', {}) if master_report else {}
+        if not rolling_delta:
+            rolling_delta = market_report.get('rolling_delta', {}) if market_report else {}
+        delta_bias = rolling_delta.get('bias', 'NEUTRAL') if isinstance(rolling_delta, dict) else 'NEUTRAL'
+        if delta_bias != 'BULLISH':
+            return None  # Lagging indicators say bull but flow disagrees — skip
+
         score      = 0
         confluence = []
 
@@ -173,7 +181,7 @@ def evaluate(symbol: str,
         # NOTE: OF, volume, momentum are already scored in market_scanner.
         # Only add a small bonus here for alignment, don't double-count.
         scalp_bonus = 0
-        if order_flow_imb.get('can_buy', False):
+        if order_flow_imb.get('imbalance', 0) > 0.2:
             scalp_bonus += 3; confluence.append("OF_IMBALANCE_BUY")
         if volume_surge.get('surge_detected', False):
             scalp_bonus += 3; confluence.append("VOLUME_SURGE")
@@ -202,25 +210,61 @@ def evaluate(symbol: str,
             return None  # Not enough factors aligned
 
         if score >= MIN_SCORE:
-            # Use M1 close for entry if available, else M15
-            entry = float(df_m1.iloc[-1]['close']) if df_m1 is not None and len(df_m1) > 0 else close_price
+            # ── ENTRY AT EMA21 PULLBACK LEVEL (not M1 candle close) ──
+            #
+            # The EMA21 on H1 is the institutional mean for intraday trend.
+            # In a bullish trend, price pulls back TO this level then bounces.
+            # Entering at the EMA21 level (not wherever M1 happened to close)
+            # gives a far better R:R because SL is below EMA50 and entry is
+            # at the actual institutional support zone.
+            #
+            # Logic:
+            #   1. Ideal entry = H1 EMA21 (the pullback target)
+            #   2. If price is already ABOVE EMA21 (bounced), use M1 close
+            #      but only if within 5 pips of EMA21 (still near the zone)
+            #   3. If price is BELOW EMA21 (hasn't touched yet), skip —
+            #      wait for the touch (don't chase)
 
-            # v4.3: Wider SL for breathing room (was 1.0x)
-            if df_m5 is not None and len(df_m5) >= 10:
-                m5_atr = float(df_m5.iloc[-1]['atr']) / pip_size
-                sl_pips = round(m5_atr * 1.5, 1)
+            h1_ema21     = float(h1['ema_21'])
+            h1_ema50     = float(h1['ema_50'])
+            current_m1   = float(df_m1.iloc[-1]['close']) if df_m1 is not None and len(df_m1) > 0 else close_price
+            pips_above_ema21 = (current_m1 - h1_ema21) / pip_size
+
+            if pips_above_ema21 < 0:
+                # Price still below EMA21 — pullback not complete, skip
+                log.debug(f"[{STRATEGY_NAME}] BUY {symbol} skipped — "
+                          f"price {pips_above_ema21:.1f}p below EMA21, wait for touch")
+                return None
+            elif pips_above_ema21 <= 8:
+                # Price just touched/bounced from EMA21 — ideal zone
+                # Enter at the EMA21 level for best R:R
+                entry = round(h1_ema21, 5)
+                confluence.append("ENTRY_AT_EMA21_ZONE")
             else:
-                sl_pips = round(atr_pips * 1.5, 1)
+                # Price bounced hard and is now more than 8 pips above EMA21
+                # Entry here means chasing — skip this candle
+                log.debug(f"[{STRATEGY_NAME}] BUY {symbol} skipped — "
+                          f"price {pips_above_ema21:.1f}p above EMA21, too late to enter")
+                return None
 
-            tp1_pips = round(sl_pips * 2.0, 1)
-            tp2_pips = round(sl_pips * 3.5, 1)
+            # SL below EMA50 with small ATR buffer — institutional support
+            sl_price  = round(h1_ema50 - atr_pips * 0.3 * pip_size, 5)
+            sl_pips   = round((entry - sl_price) / pip_size, 1)
 
-            sl_price  = round(entry - sl_pips * pip_size, 5)
+            # Validate SL makes sense (must be below entry)
+            if sl_pips <= 0:
+                log.debug(f"[{STRATEGY_NAME}] BUY {symbol} — invalid SL (entry={entry}, sl={sl_price})")
+                return None
+
+            tp1_pips  = round(sl_pips * 2.0, 1)
+            tp2_pips  = round(sl_pips * 3.5, 1)
             tp1_price = round(entry + tp1_pips * pip_size, 5)
             tp2_price = round(entry + tp2_pips * pip_size, 5)
 
-            log.info(f"[{STRATEGY_NAME} v{VERSION}] BUY {symbol} Score:{score} | "
-                     f"{', '.join(confluence)}")
+            log.info(f"[{STRATEGY_NAME} v{VERSION}] BUY {symbol}"
+                     f" entry={entry} (EMA21={float(h1['ema_21']):.5f})"
+                     f" SL={sl_pips}p TP1={tp1_pips}p"
+                     f" Score:{score} | {', '.join(confluence)}")
             return {
                 "direction":   "BUY",
                 "entry_price": entry,
@@ -244,10 +288,18 @@ def evaluate(symbol: str,
     h4_bear = (h4['ema_9'] < h4['ema_21'] < h4['ema_50'])
     h1_bear = (h1['ema_9'] < h1['ema_21'])
     st_bear = (int(h1.get('supertrend_dir', 0)) == -1)
-    m15_pull= (float(m15.get('stoch_rsi_k', 50)) > 70)
-    m15_zone= (h1['ema_21'] * 0.9990 <= m15['close'] <= h1['ema_21'] * 1.0002)
+    m15_pull= (float(m15.get('stoch_rsi_k', 50)) > 65)   # Slightly relaxed
+    m15_zone= (h1['ema_21'] * 0.9980 <= m15['close'] <= h1['ema_21'] * 1.0010)  # 20 pip window
 
     if h4_bear and h1_bear:
+        # MANDATORY: rolling delta must agree before scoring anything
+        rolling_delta = master_report.get('rolling_delta', {}) if master_report else {}
+        if not rolling_delta:
+            rolling_delta = market_report.get('rolling_delta', {}) if market_report else {}
+        delta_bias = rolling_delta.get('bias', 'NEUTRAL') if isinstance(rolling_delta, dict) else 'NEUTRAL'
+        if delta_bias != 'BEARISH':
+            return None  # Lagging indicators say bear but flow disagrees — skip
+
         score      = 0
         confluence = []
 
@@ -280,7 +332,7 @@ def evaluate(symbol: str,
 
         # --- Layer 5: Scalping Gates (max 8 pts — deduplicated) NEW ---
         scalp_bonus = 0
-        if order_flow_imb.get('can_sell', False):
+        if order_flow_imb.get('imbalance', 0) < -0.2:
             scalp_bonus += 3; confluence.append("OF_IMBALANCE_SELL")
         if volume_surge.get('surge_detected', False):
             scalp_bonus += 3; confluence.append("VOLUME_SURGE")
@@ -308,25 +360,49 @@ def evaluate(symbol: str,
             return None  # Not enough factors aligned
 
         if score >= MIN_SCORE:
-            # Use M1 close for entry if available, else M15
-            entry = float(df_m1.iloc[-1]['close']) if df_m1 is not None and len(df_m1) > 0 else close_price
+            # ── ENTRY AT EMA21 PULLBACK LEVEL — SELL VERSION ──
+            #
+            # In a bearish trend, price pulls back UP to EMA21 then reverses.
+            # Enter at the EMA21 level (resistance), SL above EMA50 (above
+            # the structure that should hold if trend is valid).
 
-            # v4.3: Wider SL for breathing room (was 1.0x)
-            if df_m5 is not None and len(df_m5) >= 10:
-                m5_atr = float(df_m5.iloc[-1]['atr']) / pip_size
-                sl_pips = round(m5_atr * 1.5, 1)
+            h1_ema21     = float(h1['ema_21'])
+            h1_ema50     = float(h1['ema_50'])
+            current_m1   = float(df_m1.iloc[-1]['close']) if df_m1 is not None and len(df_m1) > 0 else close_price
+            pips_below_ema21 = (h1_ema21 - current_m1) / pip_size
+
+            if pips_below_ema21 < 0:
+                # Price still above EMA21 — pullback not complete, skip
+                log.debug(f"[{STRATEGY_NAME}] SELL {symbol} skipped — "
+                          f"price {abs(pips_below_ema21):.1f}p above EMA21, wait for touch")
+                return None
+            elif pips_below_ema21 <= 8:
+                # Price just touched/rejected from EMA21 — ideal zone
+                entry = round(h1_ema21, 5)
+                confluence.append("ENTRY_AT_EMA21_ZONE")
             else:
-                sl_pips = round(atr_pips * 1.5, 1)
+                # Price already more than 8 pips below EMA21 — chasing
+                log.debug(f"[{STRATEGY_NAME}] SELL {symbol} skipped — "
+                          f"price {pips_below_ema21:.1f}p below EMA21, too late to enter")
+                return None
 
-            tp1_pips = round(sl_pips * 2.0, 1)
-            tp2_pips = round(sl_pips * 3.5, 1)
+            # SL above EMA50 with small ATR buffer — institutional resistance
+            sl_price  = round(h1_ema50 + atr_pips * 0.3 * pip_size, 5)
+            sl_pips   = round((sl_price - entry) / pip_size, 1)
 
-            sl_price  = round(entry + sl_pips * pip_size, 5)
+            if sl_pips <= 0:
+                log.debug(f"[{STRATEGY_NAME}] SELL {symbol} — invalid SL (entry={entry}, sl={sl_price})")
+                return None
+
+            tp1_pips  = round(sl_pips * 2.0, 1)
+            tp2_pips  = round(sl_pips * 3.5, 1)
             tp1_price = round(entry - tp1_pips * pip_size, 5)
             tp2_price = round(entry - tp2_pips * pip_size, 5)
 
-            log.info(f"[{STRATEGY_NAME} v{VERSION}] SELL {symbol} Score:{score} | "
-                     f"{', '.join(confluence)}")
+            log.info(f"[{STRATEGY_NAME} v{VERSION}] SELL {symbol}"
+                     f" entry={entry} (EMA21={float(h1['ema_21']):.5f})"
+                     f" SL={sl_pips}p TP1={tp1_pips}p"
+                     f" Score:{score} | {', '.join(confluence)}")
             return {
                 "direction":   "SELL",
                 "entry_price": entry,
