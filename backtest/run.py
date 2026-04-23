@@ -69,6 +69,13 @@ Examples:
     parser.add_argument(
         '--balance', type=float, default=20000.0,
         help='Starting balance (default: 20000)')
+    parser.add_argument(
+        '--relaxed', action='store_true',
+        help='Relaxed mode: majority consensus (1 group), lower final_score gate (35), '
+             'lower confluence min (4). Use for data collection / model training.')
+    parser.add_argument(
+        '--store-db', action='store_true',
+        help='Store every trade and blocked signal into MySQL for ML training.')
 
     return parser.parse_args()
 
@@ -117,10 +124,12 @@ def main():
     print(f"  Symbols: {', '.join(symbols)}")
     print(f"  Scan frequency: every {scan_every} M1 bars")
     print(f"  Balance: ${args.balance:,.2f}")
+    mode_label = "RELAXED" if args.relaxed else "STRICT"
     print(f"  Features: PartialTP={not args.no_partial_tp} "
           f"Trail={not args.no_trailing} "
           f"DynamicSize={not args.no_dynamic_sizing} "
           f"ExtTP={not args.no_dynamic_tp}")
+    print(f"  Mode: {mode_label} | Store DB: {args.store_db}")
     print("="*65 + "\n")
 
     # Connect to MT5 for historical data
@@ -144,6 +153,9 @@ def main():
                 scan_every_n_bars=scan_every,
                 max_trades=args.max_trades,
                 strategies_filter=strategies,
+                relaxed_mode=args.relaxed,
+                store_db=args.store_db,
+                run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
             )
 
             result = run_backtest(config)
@@ -154,6 +166,28 @@ def main():
         # Print full cross-symbol summary
         if all_results:
             print_full_report(all_results)
+
+            # Print DB stats if --store-db was used
+            if args.store_db:
+                try:
+                    from backtest.db_store import get_stats
+                    stats = get_stats()
+                    print(f"\n{'='*65}")
+                    print(f"  DATABASE STORAGE SUMMARY")
+                    print(f"{'='*65}")
+                    print(f"  Total trades stored:  {stats.get('total_trades', 0)}")
+                    print(f"  Total wins:          {stats.get('total_wins', 0)}")
+                    print(f"  Blocked signals:     {stats.get('total_blocked_signals', 0)}")
+                    print(f"  Executed signals:    {stats.get('total_executed_signals', 0)}")
+                    print(f"  Win rate:            {stats.get('win_rate', 0)}%")
+                    if stats.get('by_strategy'):
+                        print(f"\n  BY STRATEGY:")
+                        for s in stats['by_strategy']:
+                            wr = round(s['wins']/s['trades']*100, 1) if s['trades'] > 0 else 0
+                            print(f"    {s['strategy']:30s} {s['trades']:4d} trades | {wr:5.1f}% WR | avg R: {s['avg_r']} | avg score: {s['avg_score']}")
+                    print(f"{'='*65}")
+                except Exception as e:
+                    print(f"  [DB] Could not load stats: {e}")
 
             # Save results to file
             import json

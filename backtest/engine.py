@@ -29,7 +29,14 @@ from backtest.config import (
     PARTIAL_TP_ENABLED, ATR_TRAIL_ENABLED, DYNAMIC_TP_EXTENSION_ENABLED,
     DYNAMIC_SIZING_ENABLED, BASE_RISK_PERCENT, MIN_CONFLUENCE,
     MIN_RR_RATIO, MASTER_MIN_SCORE, MAX_OPEN_TRADES, MAX_PER_SYMBOL,
+    CONVICTION_LOW_SCORE_MAX, CONVICTION_MED_SCORE_MAX,
 )
+
+# Relaxed mode overrides
+RELAXED_MIN_SCORE = 35
+RELAXED_MIN_CONFLUENCE = 4
+RELAXED_MIN_RR_RATIO = 1.5
+RELAXED_CONSENSUS_GROUPS = 1  # Only 1 strategy group needed
 
 log = get_logger(__name__)
 
@@ -43,6 +50,9 @@ class BacktestConfig:
     scan_every_n_bars: int = 15   # Scan every 15 M1 bars = M15 close
     max_trades: int = 9999        # Max trades to execute (0 = unlimited)
     strategies_filter: list = None  # Empty = all
+    relaxed_mode: bool = False     # Lower gates for data collection
+    store_db: bool = False         # Store trades/signals in MySQL
+    run_id: str = 'default'       # Run identifier for DB grouping
 
 
 def get_pip_size(symbol: str) -> float:
@@ -284,9 +294,10 @@ def run_backtest(config: BacktestConfig) -> dict:
         }
         store.update_symbol_features(symbol, market_data_for_store, smc_report)
 
-        # ── Gate 0: Master score minimum (matches live) ───
+        # ── Gate 0: Master score minimum ─────────────────
         final_score = master_report.get('final_score', 0)
-        if final_score < MASTER_MIN_SCORE:
+        score_gate = RELAXED_MIN_SCORE if config.relaxed_mode else MASTER_MIN_SCORE
+        if final_score < score_gate:
             continue
 
         # ── Gate 1: Institutional confirmation ────────────
@@ -344,33 +355,56 @@ def run_backtest(config: BacktestConfig) -> dict:
         signals_found += 1
 
         # ── Gate 3: Bias direction filter ─────────────────
-        if combined_bias == 'BULLISH':
-            signals = [s for s in signals if s['direction'] == 'BUY']
-        elif combined_bias == 'BEARISH':
-            signals = [s for s in signals if s['direction'] == 'SELL']
-        if not signals:
-            continue
+        # In relaxed mode, skip this filter to collect more data
+        if not config.relaxed_mode:
+            if combined_bias == 'BULLISH':
+                signals = [s for s in signals if s['direction'] == 'BUY']
+            elif combined_bias == 'BEARISH':
+                signals = [s for s in signals if s['direction'] == 'SELL']
+            if not signals:
+                continue
 
         # ── Gate 4: Multi-group consensus ──────────────────
         buy_groups  = set(s['group'] for s in signals if s['direction'] == 'BUY')
         sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
 
-        if len(buy_groups) >= 2 and len(buy_groups) >= len(sell_groups):
+        min_groups = RELAXED_CONSENSUS_GROUPS if config.relaxed_mode else 2
+
+        if len(buy_groups) >= min_groups and len(buy_groups) >= len(sell_groups):
             final_signals = [s for s in signals if s['direction'] == 'BUY']
             final_groups = buy_groups
-        elif len(sell_groups) >= 2:
+        elif len(sell_groups) >= min_groups:
             final_signals = [s for s in signals if s['direction'] == 'SELL']
             final_groups = sell_groups
         else:
             signals_blocked_consensus += 1
+            # In relaxed mode, still store the blocked signal for ML
+            if config.store_db:
+                try:
+                    from backtest.db_store import store_blocked_signal
+                    for sig in signals:
+                        store_blocked_signal(
+                            symbol=symbol, direction=sig['direction'],
+                            strategy=sig.get('strategy', 'UNKNOWN'),
+                            score=sig.get('score', 0),
+                            confluence=sig.get('confluence', []),
+                            master_report=master_report, market_report=market_report,
+                            smc_report=smc_report, flow_data=flow,
+                            was_traded=False,
+                            skip_reason=f'consensus_blocked(buy={len(buy_groups)},sell={len(sell_groups)})',
+                            run_id=config.run_id,
+                        )
+                except Exception:
+                    pass
             continue
 
         # ── Best signal ──────────────────────────────────
         best = max(final_signals, key=lambda s: s['score'])
 
-        # ── Gate 5: Confluence check (matches live = 6) ──
+        # ── Gate 5: Confluence check ────────────────────
         confluence = best.get('confluence', [])
-        if len(confluence) < MIN_CONFLUENCE:
+        min_conv = RELAXED_MIN_CONFLUENCE if config.relaxed_mode else MIN_CONFLUENCE
+        if len(confluence) < min_conv:
             continue
 
         # ── Check if we can open a trade ─────────────────
@@ -396,7 +430,8 @@ def run_backtest(config: BacktestConfig) -> dict:
         if sl_pips <= 0 or tp_pips <= 0:
             continue
 
-        if tp_pips / sl_pips < MIN_RR_RATIO:
+        min_rr = RELAXED_MIN_RR_RATIO if config.relaxed_mode else MIN_RR_RATIO
+        if tp_pips / sl_pips < min_rr:
             continue
 
         # Set actual SL/TP based on entry price
@@ -432,6 +467,24 @@ def run_backtest(config: BacktestConfig) -> dict:
         )
         trades_executed += 1
 
+        # ── Store signal + trade in DB ────────────────────
+        if config.store_db:
+            try:
+                from backtest.db_store import store_blocked_signal, store_traded_signal
+                # Store the executed signal
+                store_blocked_signal(
+                    symbol=symbol, direction=best['direction'],
+                    strategy=best.get('strategy', 'UNKNOWN'),
+                    score=best.get('score', 0),
+                    confluence=best.get('confluence', []),
+                    master_report=master_report, market_report=market_report,
+                    smc_report=smc_report, flow_data=flow,
+                    was_traded=True, skip_reason='EXECUTED',
+                    run_id=config.run_id,
+                )
+            except Exception:
+                pass
+
         if trades_executed % 5 == 0:
             log.info(f"  [{symbol}] Trade #{trades_executed} | "
                      f"{best['direction']} {best.get('strategy','')} "
@@ -456,5 +509,27 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['signals_blocked_score'] = signals_blocked_score
     summary['trades_executed'] = trades_executed
     summary['final_score_avg'] = final_score if trades_executed > 0 else 0
+    summary['relaxed_mode'] = config.relaxed_mode
+    summary['run_id'] = config.run_id
+
+    # ── Store all completed trades in MySQL ───────────────
+    if config.store_db:
+        try:
+            from backtest.db_store import store_trade
+            spread = AVG_SPREAD_PIPS.get(symbol, AVG_SPREAD_PIPS['DEFAULT'])
+            for trade in tracker.closed_trades:
+                store_trade(
+                    trade=trade,
+                    master_report=master_report,
+                    market_report=market_report,
+                    smc_report=smc_report,
+                    flow_data=flow,
+                    run_id=config.run_id,
+                    spread_pips=spread,
+                    slippage_pips=SLIPPAGE_PIPS,
+                )
+            log.info(f"  [DB] Stored {len(tracker.closed_trades)} trades in MySQL")
+        except Exception as e:
+            log.warning(f"  [DB] Could not store trades: {e}")
 
     return summary
