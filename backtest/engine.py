@@ -677,6 +677,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
     from backtest.trade_tracker import TradeTracker
     from strategies.strategy_engine import _run_one_strategy, _get_strategy_group
     from strategies.strategy_registry import get_active_strategies
+    from data_layer.feature_store import store
 
     start_time = time_mod.time()
 
