@@ -4,18 +4,22 @@
 # =============================================================
 
 # --- WATCHLIST ---
-# 8 instruments: tightest spreads, deepest liquidity, most reliable patterns.
-# Reduced from 34 → 8 to concentrate edge and reduce correlation risk.
-#   5 Major USD pairs  (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD)
-#   2 JPY crosses     (GBPJPY, EURJPY)
-#   1 Commodity       (XAUUSD — Gold)
+# 17 instruments for TESTING/DEVELOPMENT phase.
+# Will narrow down based on backtesting data — keep the performers.
+#   7 Major USD pairs  (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, NZDUSD, USDCHF)
+#   5 JPY crosses      (GBPJPY, EURJPY, AUDJPY, CADJPY, NZDJPY)
+#   3 Popular crosses  (EURGBP, GBPAUD, GBPNZD)
+#   2 Commodities      (XAUUSD Gold, XAGUSD Silver)
 WATCHLIST = [
-    # Major Forex pairs
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD",
-    # JPY crosses
-    "GBPJPY", "EURJPY",
-    # Commodity
+    # Major Forex pairs (7)
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF",
+    # JPY crosses (5)
+    "GBPJPY", "EURJPY", "AUDJPY", "CADJPY", "NZDJPY",
+    # Popular crosses (3)
+    "EURGBP", "GBPAUD", "GBPNZD",
+    # Commodities (2)
     "XAUUSD",  # Gold
+    "XAGUSD",  # Silver
 ]
 
 # --- TIMEFRAMES USED BY THE SYSTEM ---
@@ -84,11 +88,14 @@ SIZING_CONSEC_LOSS_HALVE    = 3      # Halve all sizes after N consecutive losse
 MAX_SPREAD = {
     # Major USD pairs — tightest spreads, highest liquidity
     "EURUSD": 1.5, "GBPUSD": 2.0, "USDJPY": 1.5,
-    "AUDUSD": 2.0, "USDCAD": 2.5,
-    # JPY crosses — moderate spreads
-    "GBPJPY": 4.0, "EURJPY": 3.0,
+    "AUDUSD": 2.0, "USDCAD": 2.5, "NZDUSD": 2.5, "USDCHF": 2.5,
+    # JPY crosses — moderate spreads (crosses wider than USD majors)
+    "GBPJPY": 4.0, "EURJPY": 3.0, "AUDJPY": 3.5,
+    "CADJPY": 4.0, "NZDJPY": 5.0,
+    # Popular crosses — wider spreads
+    "EURGBP": 3.0, "GBPAUD": 4.0, "GBPNZD": 6.0,
     # Commodities — wider spreads
-    "XAUUSD": 4.0,
+    "XAUUSD": 4.0, "XAGUSD": 5.0,
     # Default fallback
     "DEFAULT": 4.0,
 }

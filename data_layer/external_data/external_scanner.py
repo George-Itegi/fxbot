@@ -77,7 +77,7 @@ def _calc_cross_filter(symbol: str, direction: str,
         votes.append(-15); conflicts.append(f"Intermarket {im_bias}")
 
     usd_bias   = im.get('usd_bias', 'NEUTRAL')
-    inv_pairs  = ['EURUSD','GBPUSD','AUDUSD']
+    inv_pairs  = ['EURUSD','GBPUSD','AUDUSD','NZDUSD','USDCHF']
     usd_ok = (
         (symbol in inv_pairs and 'BEAR' in usd_bias and direction=='BULLISH') or
         (symbol in inv_pairs and 'BULL' in usd_bias and direction=='BEARISH') or

@@ -23,21 +23,32 @@ CURRENCY_MAP = {
     "USDJPY": ("USD", "JPY"),
     "AUDUSD": ("AUD", "USD"),
     "USDCAD": ("USD", "CAD"),
+    "NZDUSD": ("NZD", "USD"),
+    "USDCHF": ("USD", "CHF"),
     # JPY crosses
     "EURJPY": ("EUR", "JPY"),
     "GBPJPY": ("GBP", "JPY"),
+    "AUDJPY": ("AUD", "JPY"),
+    "CADJPY": ("CAD", "JPY"),
+    "NZDJPY": ("NZD", "JPY"),
+    # Popular crosses
+    "EURGBP": ("EUR", "GBP"),
+    "GBPAUD": ("GBP", "AUD"),
+    "GBPNZD": ("GBP", "NZD"),
     # Commodities
     "XAUUSD": ("XAU", "USD"),
+    "XAGUSD": ("XAG", "USD"),
 }
 
 # ── Highly correlated pairs (trade same direction ~80%+) ────
 # If one is in a position, treat the other as correlated exposure
 CORRELATION_GROUPS = {
-    "EUR_MAJORS": ["EURUSD", "EURJPY"],
-    "GBP_MAJORS": ["GBPUSD", "GBPJPY"],
-    "JPY_MAJORS": ["USDJPY", "EURJPY", "GBPJPY"],
-    "USD_MAJORS": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"],
-    "GOLD_USD":  ["XAUUSD"],
+    "EUR_MAJORS": ["EURUSD", "EURJPY", "EURGBP"],
+    "GBP_MAJORS": ["GBPUSD", "GBPJPY", "GBPAUD", "GBPNZD"],
+    "JPY_MAJORS": ["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "NZDJPY"],
+    "USD_MAJORS": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF"],
+    "AUD_NZD":    ["AUDUSD", "NZDUSD", "AUDJPY", "NZDJPY", "GBPAUD", "GBPNZD"],
+    "GOLD_USD":   ["XAUUSD", "XAGUSD"],
 }
 
 # Currencies that share strong positive correlation

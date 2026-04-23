@@ -16,8 +16,8 @@ import os
 load_dotenv()
 
 # Symbol categories for pip/point handling
-JPY_PAIRS = {'USDJPY', 'EURJPY', 'GBPJPY'}
-COMMODITIES = {'XAUUSD'}
+JPY_PAIRS = {'USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'CADJPY', 'NZDJPY'}
+COMMODITIES = {'XAUUSD', 'XAGUSD'}
 
 
 def get_symbol_category(symbol: str) -> str:

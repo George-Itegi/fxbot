@@ -24,9 +24,18 @@ FINNHUB_SYMBOLS = {
     "USDJPY": "OANDA:USD_JPY",
     "AUDUSD": "OANDA:AUD_USD",
     "USDCAD": "OANDA:USD_CAD",
+    "NZDUSD": "OANDA:NZD_USD",
+    "USDCHF": "OANDA:USD_CHF",
     "GBPJPY": "OANDA:GBP_JPY",
     "EURJPY": "OANDA:EUR_JPY",
+    "AUDJPY": "OANDA:AUD_JPY",
+    "CADJPY": "OANDA:CAD_JPY",
+    "NZDJPY": "OANDA:NZD_JPY",
+    "EURGBP": "OANDA:EUR_GBP",
+    "GBPAUD": "OANDA:GBP_AUD",
+    "GBPNZD": "OANDA:GBP_NZD",
     "XAUUSD": "OANDA:XAU_USD",
+    "XAGUSD": "OANDA:XAG_USD",
 }
 
 # Keywords that indicate high market impact

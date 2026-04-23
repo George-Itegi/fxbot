@@ -121,11 +121,20 @@ def interpret_intermarket(data: dict) -> dict:
     signals['EURUSD'] = _usd_pair_signal('EURUSD', usd_bias, inverse=True)
     signals['GBPUSD'] = _usd_pair_signal('GBPUSD', usd_bias, inverse=True)
     signals['AUDUSD'] = _risk_pair_signal('AUDUSD', risk_env, sp500_chg)
+    signals['NZDUSD'] = _risk_pair_signal('NZDUSD', risk_env, sp500_chg)
     signals['USDJPY'] = _safe_haven_signal('USDJPY', risk_env, usd_bias)
+    signals['USDCAD'] = _oil_signal('USDCAD', oil.get('change_pct', 0))
+    signals['USDCHF'] = _chf_signal('USDCHF', risk_env, usd_bias)
     signals['GBPJPY'] = _safe_haven_signal('GBPJPY', risk_env, usd_bias)
     signals['EURJPY'] = _safe_haven_signal('EURJPY', risk_env, usd_bias)
-    signals['USDCAD'] = _oil_signal('USDCAD', oil.get('change_pct', 0))
+    signals['AUDJPY'] = _risk_jpy_signal('AUDJPY', risk_env, usd_bias)
+    signals['CADJPY'] = _cad_jpy_signal('CADJPY', risk_env, oil.get('change_pct', 0))
+    signals['NZDJPY'] = _risk_jpy_signal('NZDJPY', risk_env, usd_bias)
+    signals['EURGBP'] = _eur_gbp_signal('EURGBP', usd_bias)
+    signals['GBPAUD'] = _risk_cross_signal('GBPAUD', risk_env, sp500_chg)
+    signals['GBPNZD'] = _risk_cross_signal('GBPNZD', risk_env, sp500_chg)
     signals['XAUUSD'] = _gold_signal(gold_chg, risk_env, usd_bias)
+    signals['XAGUSD'] = _silver_signal(gold_chg, risk_env, usd_bias)
 
     return {
         'risk_environment': risk_env,
@@ -238,6 +247,64 @@ def _gold_signal(gold_chg, risk_env, usd_bias) -> dict:
     elif risk_env == 'RISK_ON' and 'BULL' in usd_bias:
         return {'bias': 'BEARISH', 'driver': 'Risk-on + strong USD = gold pressure'}
     return {'bias': 'NEUTRAL', 'driver': 'Mixed signals'}
+
+
+def _silver_signal(gold_chg, risk_env, usd_bias) -> dict:
+    """Silver follows gold but more volatile — also tracks industrial demand."""
+    if risk_env == 'RISK_OFF' or 'BEAR' in usd_bias:
+        return {'bias': 'BULLISH', 'driver': 'Risk-off or USD weakness (silver follows gold)'}
+    elif risk_env == 'RISK_ON' and 'BULL' in usd_bias:
+        return {'bias': 'BEARISH', 'driver': 'Risk-on + strong USD = silver pressure'}
+    return {'bias': 'NEUTRAL', 'driver': 'Mixed signals'}
+
+
+def _chf_signal(symbol, risk_env, usd_bias) -> dict:
+    """CHF is a safe haven — strengthens in risk-off (USDCHF falls)."""
+    if risk_env == 'RISK_OFF':
+        bias = 'BEARISH'  # USDCHF falls when CHF strengthens
+        driver = 'Risk-off — CHF safe haven demand'
+    elif 'BULL' in usd_bias:
+        bias = 'BULLISH'
+        driver = 'Strong USD dominates CHF'
+    else:
+        bias = 'NEUTRAL'
+        driver = 'No clear driver'
+    return {'bias': bias, 'driver': driver}
+
+
+def _risk_jpy_signal(symbol, risk_env, usd_bias) -> dict:
+    """JPY crosses like AUDJPY, NZDJPY — risk sentiment vs JPY safe haven."""
+    if risk_env == 'RISK_OFF':
+        return {'bias': 'BEARISH', 'driver': 'Risk-off — JPY strengthens, AUD/NZD weaken'}
+    elif risk_env == 'RISK_ON':
+        return {'bias': 'BULLISH', 'driver': 'Risk-on — AUD/NZD strengthen vs JPY'}
+    return {'bias': 'NEUTRAL', 'driver': 'Mixed risk signals'}
+
+
+def _cad_jpy_signal(symbol, risk_env, oil_chg) -> dict:
+    """CADJPY — CAD follows oil, JPY is safe haven. Complex dynamic."""
+    if risk_env == 'RISK_OFF':
+        return {'bias': 'BEARISH', 'driver': 'Risk-off — JPY strengthens, CAD weakens'}
+    elif oil_chg > 1.0 and risk_env != 'RISK_OFF':
+        return {'bias': 'BULLISH', 'driver': f'Oil +{oil_chg:.1f}% strengthens CAD vs JPY'}
+    return {'bias': 'NEUTRAL', 'driver': 'Mixed oil/risk signals'}
+
+
+def _eur_gbp_signal(symbol, usd_bias) -> dict:
+    """EURGBP — relative strength between EUR and GBP. Driven by ECB vs BOE."""
+    # Simplified: neutral by default, no direct macro driver
+    return {'bias': 'NEUTRAL', 'driver': 'Relative EUR/GBP strength — no clear macro driver'}
+
+
+def _risk_cross_signal(symbol, risk_env, sp500_chg) -> dict:
+    """GBPAUD, GBPNZD — GBP vs commodity currencies."""
+    if risk_env == 'RISK_ON' and sp500_chg > 0:
+        # In risk-on, commodity currencies (AUD, NZD) strengthen vs GBP
+        return {'bias': 'BEARISH', 'driver': 'Risk-on — commodity currencies strengthen vs GBP'}
+    elif risk_env == 'RISK_OFF':
+        # In risk-off, GBP safe-haven bid vs commodity currencies
+        return {'bias': 'BULLISH', 'driver': 'Risk-off — GBP strengthens vs commodity currencies'}
+    return {'bias': 'NEUTRAL', 'driver': 'Mixed risk signals'}
 
 
 # =============================================================
