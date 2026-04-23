@@ -38,7 +38,8 @@ from core.logger import get_logger
 from database.db_manager import init_db, log_trade, log_signal
 from config.settings import (
     WATCHLIST, MAGIC_NUMBER,
-    ALLOW_REENTRY, REENTRY_COOLDOWN_MINUTES, REENTRY_MIN_SCORE_INCREASE
+    ALLOW_REENTRY, REENTRY_COOLDOWN_MINUTES, REENTRY_MIN_SCORE_INCREASE,
+    MIN_CONFLUENCE_COUNT,
 )
 
 load_dotenv()
@@ -334,8 +335,9 @@ def _scan_and_trade(symbol: str,
     score         = signal.get('score', 0)
     confluence    = signal.get('confluence', [])
 
-    if len(confluence) < 5:
-        log.debug(f"  {symbol}: Signal rejected — only {len(confluence)} confluence factors from {strategy_name}")
+    # FIXED: Use MIN_CONFLUENCE_COUNT from settings (not hardcoded)
+    if len(confluence) < MIN_CONFLUENCE_COUNT:
+        log.debug(f"  {symbol}: Signal rejected — only {len(confluence)} confluence factors (need {MIN_CONFLUENCE_COUNT}) from {strategy_name}")
         return False
 
     dir_icon = "📈" if direction == "BUY" else "📉"

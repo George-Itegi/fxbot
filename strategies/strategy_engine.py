@@ -90,9 +90,10 @@ def run_strategies(symbol: str,
         log.debug(f"[ENGINE] {symbol} — final_score {final_score} < 45, skip")
         return None
 
-    # Gate 2: Institutional confirmation check
-    # At least ONE of: strong order flow imbalance OR volume surge
-    # must be present before we trust ANY strategy signal.
+    # Gate 2: Institutional confirmation check (STRICT)
+    # FIX: Momentum alone (is_scalpable) does NOT confirm institutional activity.
+    # We need ORDER FLOW or VOLUME SURGE — these prove institutions are moving.
+    # Momentum can happen on retail noise. This was the #1 false signal source.
     of_imb    = master_report.get('order_flow_imbalance', {})
     surge     = master_report.get('volume_surge', {})
     momentum  = master_report.get('momentum', {})
@@ -103,20 +104,22 @@ def run_strategies(symbol: str,
     is_scalpable = momentum.get('is_scalpable', False)
     is_choppy    = momentum.get('is_choppy', True)
 
-    institutional_confirmed = (
-        imb_strength in ('STRONG', 'EXTREME') or
-        surge_active or
-        is_scalpable
-    )
+    # FIXED: Require order flow OR volume surge (not just momentum)
+    has_order_flow = imb_strength in ('STRONG', 'EXTREME')
+    has_volume = surge_active
 
+    institutional_confirmed = has_order_flow or has_volume
+
+    # Momentum is a BONUS confirm, not a standalone gate.
+    # But if both OF and volume are present, that's the strongest setup.
     if not institutional_confirmed:
         log.debug(f"[ENGINE] {symbol} — no institutional activity "
-                  f"(imb={imb_value:+.2f}, surge={surge_active}, "
-                  f"scalpable={is_scalpable})")
+                  f"(imb={imb_value:+.2f}/{imb_strength}, surge={has_volume}, "
+                  f"scalpable={is_scalpable}) — need OF or volume")
         return None
 
-    # Hard gate: never trade choppy markets with no momentum
-    if is_choppy and not surge_active and abs(imb_value) < 0.25:
+    # Hard gate: never trade choppy markets
+    if is_choppy and not surge_active:
         log.debug(f"[ENGINE] {symbol} — choppy + no surge, skip")
         return None
 
@@ -193,18 +196,15 @@ def run_strategies(symbol: str,
     buy_signals  = [s for s in signals if s['direction'] == 'BUY']
     sell_signals = [s for s in signals if s['direction'] == 'SELL']
 
-    # Pick direction with most distinct group agreement
+    # FIXED: STRICT multi-group consensus — no fallback.
+    # The old code allowed 3+ signals from the SAME group to bypass
+    # the cross-validation rule. This defeated the purpose — 3 correlated
+    # strategies (EMA_TREND + TREND_CONTINUATION) echoing each other
+    # is NOT real consensus. Require 2+ DIFFERENT groups always.
     if len(buy_groups) >= 2 and len(buy_groups) >= len(sell_groups):
         final_signals = buy_signals
         final_groups  = buy_groups
     elif len(sell_groups) >= 2:
-        final_signals = sell_signals
-        final_groups  = sell_groups
-    elif len(buy_groups) == 1 and len(buy_signals) >= 3:
-        # Allow single group if 3+ strategies agree and score is very high
-        final_signals = buy_signals
-        final_groups  = buy_groups
-    elif len(sell_groups) == 1 and len(sell_signals) >= 3:
         final_signals = sell_signals
         final_groups  = sell_groups
     else:
