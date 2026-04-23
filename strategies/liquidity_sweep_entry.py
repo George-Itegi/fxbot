@@ -85,7 +85,7 @@ def evaluate(symbol: str,
     delta_strength = features.get("delta_strength", "WEAK")
 
     # BOS data — MANDATORY in v2.0
-    bos = smc_report.get("bos")
+    bos = smc_report.get("structure", {}).get("bos")
 
     # Order flow and volume from market report
     of_imb = market_report.get('order_flow_imbalance', {})

@@ -55,7 +55,7 @@ def evaluate(symbol: str,
 
     # ── BEARISH EXHAUSTION (SELL) ──────────────────────────
     # Price sweeps a high (buyside liquidity), but delta is negative (aggressive selling)
-    if last_sweep.get("type") == "BUYSIDE_LIQUIDITY":
+    if last_sweep.get("type") in ("BUYSIDE_LIQUIDITY", "HIGH_SWEEP"):
         if delta_bias == "BEARISH" and delta_rolling < -50:
             score += 40; confluence.append("BEARISH_DELTA_DIVERGENCE")
             
@@ -83,7 +83,7 @@ def evaluate(symbol: str,
 
     # ── BULLISH EXHAUSTION (BUY) ───────────────────────────
     # Price sweeps a low (sellside liquidity), but delta is positive (aggressive buying)
-    if last_sweep.get("type") == "SELLSIDE_LIQUIDITY":
+    if last_sweep.get("type") in ("SELLSIDE_LIQUIDITY", "LOW_SWEEP"):
         if delta_bias == "BULLISH" and delta_rolling > 50:
             score += 40; confluence.append("BULLISH_DELTA_DIVERGENCE")
             

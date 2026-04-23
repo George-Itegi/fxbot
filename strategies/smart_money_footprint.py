@@ -256,15 +256,16 @@ def evaluate(
             score += 10
             confluence.append(f"SESSION_{session}")
         
-        # Check spread
+        # Check spread (only enforce in live; backtest may not have this key)
         spread_info = market_report.get('spread', {})
-        spread_pips = spread_info.get('pips', 999)
-        if spread_pips < 2.0:  # Tight spread
-            score += 5
-            confluence.append(f"TIGHT_SPREAD_{spread_pips:.1f}p")
-        elif spread_pips > 5.0:
-            log.info(f"[{symbol}] {STRATEGY_NAME}: Spread too wide ({spread_pips:.1f}p)")
-            return None
+        spread_pips = spread_info.get('pips', 0)
+        if spread_pips > 0:  # Spread data available
+            if spread_pips < 2.0:  # Tight spread
+                score += 5
+                confluence.append(f"TIGHT_SPREAD_{spread_pips:.1f}p")
+            elif spread_pips > 5.0:
+                log.info(f"[{symbol}] {STRATEGY_NAME}: Spread too wide ({spread_pips:.1f}p)")
+                return None
     
     # ════════════════════════════════════════════════════════
     # STEP 6: Final Score Check

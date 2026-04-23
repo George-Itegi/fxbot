@@ -183,6 +183,7 @@ def _find_nearest_ob(df_h1: pd.DataFrame, current_price: float) -> dict:
                         'bottom': round(ob_bottom, 5),
                         'mid': round(ob_mid, 5),
                         'pips_away': round(distance, 1),
+                        'mitigated': False,
                     }
 
         # Bearish OB: big red candle, followed by bullish move up
@@ -200,6 +201,7 @@ def _find_nearest_ob(df_h1: pd.DataFrame, current_price: float) -> dict:
                         'bottom': round(ob_bottom, 5),
                         'mid': round(ob_mid, 5),
                         'pips_away': round(distance, 1),
+                        'mitigated': False,
                     }
 
     return {}
@@ -274,6 +276,7 @@ def _find_nearest_fvg(df_h1, current_price):
                         'type': 'BULLISH_FVG',
                         'bottom': round(bar1['high'], 5),
                         'top': round(bar3['low'], 5),
+                        'mid': round(mid, 5),
                         'gap_pips': round(gap_pips, 1),
                         'filled': bar2['low'] <= bar1['high'],
                     }
@@ -290,6 +293,7 @@ def _find_nearest_fvg(df_h1, current_price):
                         'type': 'BEARISH_FVG',
                         'bottom': round(bar3['high'], 5),
                         'top': round(bar1['low'], 5),
+                        'mid': round(mid, 5),
                         'gap_pips': round(gap_pips, 1),
                         'filled': bar2['high'] >= bar1['low'],
                     }
@@ -321,6 +325,7 @@ def _find_quality_fvgs(df_h1, current_price):
                         'type': 'BULLISH_FVG',
                         'bottom': round(bar1['high'], 5),
                         'top': round(bar3['low'], 5),
+                        'mid': round(mid, 5),
                         'gap_pips': round(gap_pips, 1),
                         'quality_score': quality,
                         'filled': filled,
@@ -338,6 +343,7 @@ def _find_quality_fvgs(df_h1, current_price):
                         'type': 'BEARISH_FVG',
                         'bottom': round(bar3['high'], 5),
                         'top': round(bar1['low'], 5),
+                        'mid': round(mid, 5),
                         'gap_pips': round(gap_pips, 1),
                         'quality_score': quality,
                         'filled': filled,
