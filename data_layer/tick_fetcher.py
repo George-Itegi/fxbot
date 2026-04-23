@@ -16,20 +16,13 @@ import os
 load_dotenv()
 
 # Symbol categories for pip/point handling
-JPY_PAIRS = {'USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'NZDJPY',
-             'CADJPY', 'CHFJPY'}
-COMMODITIES = {'XAUUSD', 'XAGUSD'}
-OIL = {'WTIUSD', 'BRNUSD'}
-INDICES = {'US30', 'US500', 'USTEC', 'DE30', 'UK100', 'JP225'}
+JPY_PAIRS = {'USDJPY', 'EURJPY', 'GBPJPY'}
+COMMODITIES = {'XAUUSD'}
 
 
 def get_symbol_category(symbol: str) -> str:
     """Classify symbol into category for proper tick handling."""
     sym = str(symbol).upper()
-    if sym in INDICES:
-        return 'INDEX'
-    if sym in OIL:
-        return 'OIL'
     if sym in COMMODITIES:
         return 'COMMODITY'
     if sym in JPY_PAIRS:
@@ -172,7 +165,7 @@ if __name__ == "__main__":
         exit()
     print("Connected to MT5\n")
 
-    SYMBOLS = ["EURUSD", "USDJPY", "XAUUSD", "JP225"]
+    SYMBOLS = ["EURUSD", "USDJPY", "XAUUSD"]
     NUM_TICKS = 500
 
     for SYMBOL in SYMBOLS:

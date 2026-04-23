@@ -121,9 +121,9 @@ def interpret_intermarket(data: dict) -> dict:
     signals['EURUSD'] = _usd_pair_signal('EURUSD', usd_bias, inverse=True)
     signals['GBPUSD'] = _usd_pair_signal('GBPUSD', usd_bias, inverse=True)
     signals['AUDUSD'] = _risk_pair_signal('AUDUSD', risk_env, sp500_chg)
-    signals['NZDUSD'] = _risk_pair_signal('NZDUSD', risk_env, sp500_chg)
     signals['USDJPY'] = _safe_haven_signal('USDJPY', risk_env, usd_bias)
-    signals['USDCHF'] = _safe_haven_signal('USDCHF', risk_env, usd_bias)
+    signals['GBPJPY'] = _safe_haven_signal('GBPJPY', risk_env, usd_bias)
+    signals['EURJPY'] = _safe_haven_signal('EURJPY', risk_env, usd_bias)
     signals['USDCAD'] = _oil_signal('USDCAD', oil.get('change_pct', 0))
     signals['XAUUSD'] = _gold_signal(gold_chg, risk_env, usd_bias)
 

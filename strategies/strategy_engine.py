@@ -16,16 +16,11 @@ from datetime import datetime, timezone
 from core.logger import get_logger
 from data_layer.price_feed import get_candles
 from strategies.strategy_registry import get_active_strategies, REGISTRY
-from strategies.ema_trend import evaluate as ema_evaluate
 from strategies.smc_ob_reversal import evaluate as ob_evaluate
 from strategies.liquidity_sweep_entry import evaluate as sweep_evaluate
 from strategies.vwap_mean_reversion import evaluate as vwap_evaluate
-from strategies.order_flow_exhaustion import evaluate as exhaustion_evaluate
-from strategies.m1_momentum_scalp import evaluate as m1_scalp_evaluate
-from strategies.opening_range_breakout import evaluate as orb_evaluate
 from strategies.delta_divergence import evaluate as delta_div_evaluate
 from strategies.trend_continuation import evaluate as trend_cont_evaluate
-from strategies.smart_money_footprint import evaluate as smf_evaluate
 
 log = get_logger(__name__)
 
@@ -33,32 +28,32 @@ log = get_logger(__name__)
 # Raised because scoring is inflated — lagging indicators score
 # too easily. These minimums require real institutional confluence.
 STRATEGY_MIN_SCORES = {
-    "EMA_TREND_MTF":         75,   # Needs strong HTF + SMC alignment
     "SMC_OB_REVERSAL":       70,   # OB + delta + sweep confirmation
     "LIQUIDITY_SWEEP_ENTRY": 70,   # Sweep + BOS + delta
     "VWAP_MEAN_REVERSION":   65,   # VWAP distance + structure
-    "ORDER_FLOW_EXHAUSTION": 75,   # Delta divergence is high-conviction
-    "M1_MOMENTUM_SCALP":     75,   # Must have volume spike + engulf
-    "OPENING_RANGE_BREAKOUT":70,   # ORB needs clean range + breakout
     "DELTA_DIVERGENCE":      70,   # Price vs delta divergence
     "TREND_CONTINUATION":    72,   # Multi-TF trend + pullback
-    "SMART_MONEY_FOOTPRINT": 80,   # Highest bar — institutional alpha
 }
 
 # ── Strategies grouped by what they fundamentally measure ────
-# Used to detect false consensus (same-source signals)
+# Each group represents a DIFFERENT data source / market approach.
+# Consensus gate requires 2+ DIFFERENT groups to agree — this
+# prevents correlated strategies from echoing the same signal.
+#
+# Independence: 4 groups, 4 genuinely different data sources
+#   SMC_STRUCTURE:    Market structure (BOS, CHoCH, OB, sweep levels)
+#   TREND_FOLLOWING:  Multi-timeframe trend + pullback to EMA21
+#   MEAN_REVERSION:   Volume-weighted price (VWAP, POC, Value Area)
+#   ORDER_FLOW:       Cumulative delta divergence (tick direction flow)
 STRATEGY_GROUPS = {
-    "TREND_FOLLOWING": [
-        "EMA_TREND_MTF", "TREND_CONTINUATION"],
     "SMC_STRUCTURE": [
         "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY"],
-    "ORDER_FLOW": [
-        "ORDER_FLOW_EXHAUSTION", "DELTA_DIVERGENCE",
-        "SMART_MONEY_FOOTPRINT"],
-    "MOMENTUM": [
-        "M1_MOMENTUM_SCALP", "OPENING_RANGE_BREAKOUT"],
+    "TREND_FOLLOWING": [
+        "TREND_CONTINUATION"],
     "MEAN_REVERSION": [
         "VWAP_MEAN_REVERSION"],
+    "ORDER_FLOW": [
+        "DELTA_DIVERGENCE"],
 }
 
 
@@ -198,9 +193,9 @@ def run_strategies(symbol: str,
 
     # FIXED: STRICT multi-group consensus — no fallback.
     # The old code allowed 3+ signals from the SAME group to bypass
-    # the cross-validation rule. This defeated the purpose — 3 correlated
-    # strategies (EMA_TREND + TREND_CONTINUATION) echoing each other
-    # is NOT real consensus. Require 2+ DIFFERENT groups always.
+    # the cross-validation rule. This defeated the purpose — correlated
+    # strategies echoing each other is NOT real consensus.
+    # Require 2+ DIFFERENT groups always.
     if len(buy_groups) >= 2 and len(buy_groups) >= len(sell_groups):
         final_signals = buy_signals
         final_groups  = buy_groups
@@ -239,17 +234,13 @@ def _run_one_strategy(name, symbol,
     info          = REGISTRY.get(name, {})
     best_states   = info.get('best_state', [])
 
-    # ── HARD state gate (was soft/useless before) ─────────────
-    # VWAP reversion only makes sense in BALANCED/ranging markets.
-    # EMA trend only makes sense when trending.
-    # This prevents strategies firing in wrong market conditions.
+    # ── HARD state gates ───────────────────────────────────────
+    # Only fire strategies in market states where their edge exists.
+    # This prevents strategies firing in wrong conditions.
     HARD_STATE_GATES = {
         "VWAP_MEAN_REVERSION":   ["BALANCED", "REVERSAL_RISK"],
-        "OPENING_RANGE_BREAKOUT":["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
-                                  "BALANCED"],
         "DELTA_DIVERGENCE":      ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED"],
-        "ORDER_FLOW_EXHAUSTION": ["REVERSAL_RISK", "BREAKOUT_REJECTED"],
     }
 
     if name in HARD_STATE_GATES:
@@ -261,52 +252,15 @@ def _run_one_strategy(name, symbol,
 
     # Route to strategy evaluate function
     try:
-        if name == "EMA_TREND_MTF":
-            return ema_evaluate(
-                symbol, df_m1, df_m5, df_m15, df_h1, df_h4,
-                smc_report=smc_report, master_report=market_report)
+        if name == "LIQUIDITY_SWEEP_ENTRY":
+            return sweep_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report, market_report=market_report)
 
         elif name == "SMC_OB_REVERSAL":
             return ob_evaluate(
                 symbol, df_m1, df_m5, df_m15, df_h1,
                 smc_report=smc_report, market_report=market_report)
-
-        elif name == "LIQUIDITY_SWEEP_ENTRY":
-            return sweep_evaluate(
-                symbol, df_m1, df_m5, df_m15, df_h1,
-                smc_report=smc_report, market_report=market_report)
-
-        elif name == "VWAP_MEAN_REVERSION":
-            return vwap_evaluate(
-                symbol, df_m1, df_m5, df_m15, df_h1,
-                market_report=market_report,
-                smc_report=smc_report, master_report=master_report)
-
-        elif name == "ORDER_FLOW_EXHAUSTION":
-            return exhaustion_evaluate(
-                symbol, df_m1, df_m5, df_m15, df_h1,
-                smc_report=smc_report, market_report=market_report)
-
-        elif name == "M1_MOMENTUM_SCALP":
-            return m1_scalp_evaluate(
-                symbol, df_m1, df_m5, df_m15, df_h1,
-                smc_report=smc_report,
-                market_report=market_report,
-                master_report=master_report)
-
-        elif name == "OPENING_RANGE_BREAKOUT":
-            return orb_evaluate(
-                symbol, df_m1, df_m5, df_m15, df_h1,
-                smc_report=smc_report,
-                market_report=market_report,
-                master_report=master_report)
-
-        elif name == "DELTA_DIVERGENCE":
-            return delta_div_evaluate(
-                symbol, df_m1, df_m5, df_m15, df_h1,
-                smc_report=smc_report,
-                market_report=market_report,
-                master_report=master_report)
 
         elif name == "TREND_CONTINUATION":
             return trend_cont_evaluate(
@@ -315,14 +269,22 @@ def _run_one_strategy(name, symbol,
                 market_report=market_report,
                 df_h4=df_h4, master_report=master_report)
 
-        elif name == "SMART_MONEY_FOOTPRINT":
-            return smf_evaluate(
-                symbol,
-                df_m1=df_m1, df_m5=df_m5,
-                df_m15=df_m15, df_h1=df_h1,
+        elif name == "VWAP_MEAN_REVERSION":
+            return vwap_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                market_report=market_report,
+                smc_report=smc_report, master_report=master_report)
+
+        elif name == "DELTA_DIVERGENCE":
+            return delta_div_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
                 smc_report=smc_report,
                 market_report=market_report,
                 master_report=master_report)
+
+        else:
+            log.debug(f"[ENGINE] {name} is retired or unknown, skip")
+            return None
 
     except Exception as e:
         log.error(f"[ENGINE] {name} on {symbol}: {e}")

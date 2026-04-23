@@ -4,39 +4,28 @@
 # =============================================================
 
 # --- WATCHLIST ---
+# 8 instruments: tightest spreads, deepest liquidity, most reliable patterns.
+# Reduced from 34 → 8 to concentrate edge and reduce correlation risk.
+#   5 Major USD pairs  (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD)
+#   2 JPY crosses     (GBPJPY, EURJPY)
+#   1 Commodity       (XAUUSD — Gold)
 WATCHLIST = [
     # Major Forex pairs
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
-    "USDCAD", "USDCHF", "NZDUSD",
-    "EURGBP", "EURAUD", "EURCAD", "EURCHF", "EURNZD",
-    "GBPAUD", "GBPCAD", "GBPCHF", "GBPNZD",
-    "AUDCAD", "AUDCHF", "AUDNZD",
-    "CADCHF", "CADJPY",
-    "CHFJPY",
-    "NZDCAD", "NZDCHF", "NZDJPY",
-    # Cross pairs
-    "GBPJPY", "EURJPY", "AUDJPY",
-    # Commodities
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD",
+    # JPY crosses
+    "GBPJPY", "EURJPY",
+    # Commodity
     "XAUUSD",  # Gold
-    "XAGUSD",  # Silver
-    "WTIUSD",  # Crude Oil
-    "BRNUSD",  # Brent Oil
-    # Indices
-    "US30",    # Dow Jones
-    "US500",   # S&P 500
-    "USTEC",   # Nasdaq
-    "DE30",    # DAX
-    "UK100",   # FTSE 100
-    "JP225",   # Nikkei 225
 ]
 
 # --- TIMEFRAMES USED BY THE SYSTEM ---
 # H4=trend, H1=structure, M30=context, M15=bias, M5=structure confirm, M1=entry
 TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "H4"]
 
-# --- SCALPING PARAMETERS (NEW) ---
-# These control the hybrid intraday + scalping behavior
-SCALPING = {
+# --- ORDER FLOW & VOLUME PARAMETERS ---
+# Used by institutional confirmation gate (NOT scalping-specific).
+# These determine what counts as "institutions are active".
+ORDER_FLOW = {
     # Volume Surge Detection
     "VOLUME_SURGE_MULTIPLIER": 2.0,   # 2x average = institutional entry
     "VOLUME_SURGE_MIN_TICKS": 20,     # Minimum ticks for analysis
@@ -45,16 +34,6 @@ SCALPING = {
     "OF_IMBALANCE_WINDOW": 50,         # Last N ticks for imbalance calc
     "OF_IMBALANCE_BUY_THRESHOLD": 0.3,  # Only BUY when imbalance > +0.3
     "OF_IMBALANCE_SELL_THRESHOLD": -0.3, # Only SELL when imbalance < -0.3
-
-    # Momentum Velocity
-    "VELOCITY_WINDOW_SECONDS": 60,     # Measurement window (seconds)
-    "MIN_SCALP_VELOCITY": 1.0,         # Pips/min — minimum for scalping
-    "CHOPPY_VELOCITY": 0.5,            # Pips/min — below this = skip
-
-    # M1 Entry Confirmation
-    "M1_VOLUME_MULTIPLIER": 1.5,       # M1 candle volume > 1.5x avg = confirmed
-    "M1_STOCHRSI_OVERSOLD": 40,        # M1 StochRSI below this = oversold
-    "M1_STOCHRSI_OVERBOUGHT": 60,      # M1 StochRSI above this = overbought
 }
 
 # --- RISK MANAGEMENT ---
@@ -82,25 +61,12 @@ DYNAMIC_TP_MULTIPLIER     = 2.5  # Let winners run further
 MAX_SPREAD = {
     # Major USD pairs — tightest spreads, highest liquidity
     "EURUSD": 1.5, "GBPUSD": 2.0, "USDJPY": 1.5,
-    "AUDUSD": 2.0, "USDCAD": 2.5, "USDCHF": 2.0, "NZDUSD": 2.5,
-    # EUR crosses — moderate spreads
-    "EURGBP": 3.0, "EURAUD": 3.5, "EURCAD": 4.0, "EURCHF": 3.5, "EURNZD": 5.0,
-    # GBP crosses
-    "GBPAUD": 4.0, "GBPCAD": 4.5, "GBPCHF": 4.0, "GBPNZD": 6.0,
-    # AUD crosses
-    "AUDCAD": 4.0, "AUDCHF": 4.0, "AUDNZD": 5.0,
-    # Minor crosses
-    "CADCHF": 4.0, "CADJPY": 3.5,
-    "CHFJPY": 4.0,
-    "NZDCAD": 5.0, "NZDCHF": 5.0, "NZDJPY": 4.0,
-    # JPY crosses — moderate
-    "GBPJPY": 4.0, "EURJPY": 3.0, "AUDJPY": 3.5,
+    "AUDUSD": 2.0, "USDCAD": 2.5,
+    # JPY crosses — moderate spreads
+    "GBPJPY": 4.0, "EURJPY": 3.0,
     # Commodities — wider spreads
-    "XAUUSD": 4.0, "XAGUSD": 5.0,
-    "WTIUSD": 5.0, "BRNUSD": 5.0,
-    # Indices — point-based spreads
-    "US30": 5.0, "US500": 3.0, "USTEC": 4.0,
-    "DE30": 5.0, "UK100": 5.0, "JP225": 5.0,
+    "XAUUSD": 4.0,
+    # Default fallback
     "DEFAULT": 4.0,
 }
 

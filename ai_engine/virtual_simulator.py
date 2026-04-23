@@ -185,7 +185,7 @@ def run_virtual_simulation(symbol: str,
     Replays historical data candle by candle.
     Returns performance summary per strategy.
     """
-    from strategies.ema_trend import evaluate as ema_eval
+    from strategies.trend_continuation import evaluate as trend_eval
     from strategies.vwap_mean_reversion import evaluate as vwap_eval
 
     log.info(f"[VIRTUAL] Starting simulation for {symbol}...")
@@ -198,8 +198,8 @@ def run_virtual_simulation(symbol: str,
     log.info(f"[VIRTUAL] {len(df)} candles ready for {symbol}")
 
     results = {
-        'EMA_TREND_MTF':     {'trades': [], 'wins': 0, 'losses': 0},
-        'VWAP_MEAN_REVERSION':{'trades': [], 'wins': 0, 'losses': 0},
+        'TREND_CONTINUATION':  {'trades': [], 'wins': 0, 'losses': 0},
+        'VWAP_MEAN_REVERSION':  {'trades': [], 'wins': 0, 'losses': 0},
     }
 
     pip_size = 0.01 if df['close'].iloc[0] > 50 else 0.0001
@@ -211,20 +211,22 @@ def run_virtual_simulation(symbol: str,
         df_h1     = df_window
         df_h4     = df_window
 
-        # Run EMA Trend strategy
-        sig = ema_eval(symbol, df_m15, df_h1, df_h4)
+        # Run Trend Continuation strategy
+        sig = trend_eval(symbol, df_m15, df_h1,
+                         smc_report={}, market_report=mock_market,
+                         df_h4=df_h4)
         if sig:
             result = simulate_trade(df, sig, i)
-            results['EMA_TREND_MTF']['trades'].append({
+            results['TREND_CONTINUATION']['trades'].append({
                 'time':      str(df_window.iloc[-1]['time']),
                 'direction': sig['direction'],
                 'score':     sig['score'],
                 **result,
             })
             if result['won']:
-                results['EMA_TREND_MTF']['wins'] += 1
+                results['TREND_CONTINUATION']['wins'] += 1
             else:
-                results['EMA_TREND_MTF']['losses'] += 1
+                results['TREND_CONTINUATION']['losses'] += 1
 
         # Run VWAP Mean Reversion
         mock_market = _build_mock_market_report(df_window, pip_size)

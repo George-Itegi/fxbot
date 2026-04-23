@@ -23,59 +23,21 @@ CURRENCY_MAP = {
     "USDJPY": ("USD", "JPY"),
     "AUDUSD": ("AUD", "USD"),
     "USDCAD": ("USD", "CAD"),
-    "USDCHF": ("USD", "CHF"),
-    "NZDUSD": ("NZD", "USD"),
-    # EUR crosses
-    "EURGBP": ("EUR", "GBP"),
-    "EURAUD": ("EUR", "AUD"),
-    "EURCAD": ("EUR", "CAD"),
-    "EURCHF": ("EUR", "CHF"),
-    "EURNZD": ("EUR", "NZD"),
+    # JPY crosses
     "EURJPY": ("EUR", "JPY"),
-    # GBP crosses
-    "GBPAUD": ("GBP", "AUD"),
-    "GBPCAD": ("GBP", "CAD"),
-    "GBPCHF": ("GBP", "CHF"),
-    "GBPNZD": ("GBP", "NZD"),
     "GBPJPY": ("GBP", "JPY"),
-    # AUD crosses
-    "AUDCAD": ("AUD", "CAD"),
-    "AUDCHF": ("AUD", "CHF"),
-    "AUDNZD": ("AUD", "NZD"),
-    "AUDJPY": ("AUD", "JPY"),
-    # CAD, CHF, NZD crosses
-    "CADCHF": ("CAD", "CHF"),
-    "CADJPY": ("CAD", "JPY"),
-    "CHFJPY": ("CHF", "JPY"),
-    "NZDCAD": ("NZD", "CAD"),
-    "NZDCHF": ("NZD", "CHF"),
-    "NZDJPY": ("NZD", "JPY"),
     # Commodities
     "XAUUSD": ("XAU", "USD"),
-    "XAGUSD": ("XAG", "USD"),
-    "WTIUSD": ("OIL", "USD"),
-    "BRNUSD": ("OIL", "USD"),
-    # Indices (no currency pair correlation — track as independent)
-    "US30":   ("IDX", "USD"),
-    "US500":  ("IDX", "USD"),
-    "USTEC":  ("IDX", "USD"),
-    "DE30":   ("IDX", "EUR"),
-    "UK100":  ("IDX", "GBP"),
-    "JP225":  ("IDX", "JPY"),
 }
 
 # ── Highly correlated pairs (trade same direction ~80%+) ────
 # If one is in a position, treat the other as correlated exposure
 CORRELATION_GROUPS = {
-    "EUR_MAJORS": ["EURUSD", "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD"],
-    "GBP_MAJORS": ["GBPUSD", "EURGBP", "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD"],
-    "AUD_MAJORS": ["AUDUSD", "EURAUD", "GBPAUD", "AUDJPY", "AUDCAD", "AUDCHF", "AUDNZD"],
-    "JPY_MAJORS": ["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "CHFJPY", "NZDJPY"],
-    "CAD_MAJORS": ["USDCAD", "EURCAD", "GBPCAD", "AUDCAD", "CADCHF", "CADJPY", "NZDCAD"],
-    "CHF_MAJORS": ["USDCHF", "EURCHF", "GBPCHF", "AUDCHF", "CADCHF", "CHFJPY", "NZDCHF"],
-    "NZD_MAJORS": ["NZDUSD", "EURNZD", "GBPNZD", "AUDNZD", "NZDCAD", "NZDCHF", "NZDJPY"],
-    "GOLD_USD":  ["XAUUSD", "XAGUSD"],
-    "OIL_USD":   ["WTIUSD", "BRNUSD"],
+    "EUR_MAJORS": ["EURUSD", "EURJPY"],
+    "GBP_MAJORS": ["GBPUSD", "GBPJPY"],
+    "JPY_MAJORS": ["USDJPY", "EURJPY", "GBPJPY"],
+    "USD_MAJORS": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"],
+    "GOLD_USD":  ["XAUUSD"],
 }
 
 # Currencies that share strong positive correlation
