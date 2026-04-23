@@ -410,7 +410,7 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
         """, (
             run_id, timestamp_str, symbol, direction, strategy, strategy_group,
             score, len(confluence) if confluence else 0,
-            1 if was_traded else 0, 0, skip_reason[:100],
+            1 if was_traded else 0, 1 if was_traded else 0, skip_reason[:100],
             (master_report or {}).get('session', 'UNKNOWN'),
             (master_report or {}).get('market_state', 'BALANCED'),
             (master_report or {}).get('combined_bias', 'NEUTRAL'),
@@ -476,7 +476,7 @@ def update_signal_outcome(trade, run_id: str = 'default'):
               AND direction = %s
               AND strategy = %s
               AND run_id = %s
-              AND was_executed = 1
+              AND was_traded = 1
               AND outcome IS NULL
             ORDER BY id DESC LIMIT 1
         """, (outcome, profit_r, trade.symbol, trade.direction,
