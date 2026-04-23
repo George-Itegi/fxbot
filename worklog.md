@@ -39,3 +39,29 @@ Stage Summary:
 - order_manager.py patched with v4.8 fixes (sync spam elimination + incremental mode)
 - User needs to verify `git log --oneline -5` to confirm branch has all commits
 - Key remaining issue: strategies still entering on weak signals (big SL hits)
+---
+Task ID: 1-6
+Agent: main
+Task: Fix XGBoost training bug, add --train/--use-model/--clear-data CLI flags, integrate model into backtest
+
+Work Log:
+- Fixed critical XGBoost feature mismatch: train_model() now reads from backtest_trades with 21 features matching extract_features()
+- Added train_from_backtest() with validation split, class balancing, feature importance reporting
+- Added train_from_live() as fallback (original 7-feature method)
+- Added is_model_trained(), get_model_info() utility functions
+- Updated model_trainer.py v2.0 with train_xgboost(), get_model_status()
+- Added --train CLI flag (trains model and exits)
+- Added --use-model CLI flag (runs backtest with model as Gate 6)
+- Added --clear-data CLI flag (clears backtest DB tables)
+- Added --model-status CLI flag (shows model info)
+- Added --model-source flag (backtest/live/auto)
+- Integrated XGBoost as Gate 6 in both sequential and parallel backtest engines
+- Model blocks trades with win_prob < 0.45 (SKIP recommendation)
+- Session gates and state gates already implemented in strategy_engine.py
+
+Stage Summary:
+- XGBoost v2.0: trains on backtest_trades (21 features), reports accuracy + feature importance
+- CLI v2.1: --train, --use-model, --clear-data, --model-status, --model-source
+- Model gate: Gate 6 in backtest pipeline, blocks low-probability trades
+- Model persistence: saved to ai_engine/models/xgb_model.pkl, survives restarts
+
