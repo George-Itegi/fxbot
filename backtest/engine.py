@@ -428,6 +428,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         all_strategy_scores=all_scores,
                         symbol=symbol,
                         spread_pips=spread,
+                        relaxed_mode=config.relaxed_mode,
                     )
 
                     win_prob = ml_result.get('probability', 0.5)
@@ -1079,7 +1080,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         best, master_report, market_report,
                         smc_report, flow,
                         all_strategy_scores=all_scores,
-                        symbol=sym, spread_pips=symbol_spread.get(sym, 0))
+                        symbol=sym, spread_pips=symbol_spread.get(sym, 0),
+                        relaxed_mode=relaxed_mode)
                     win_prob = ml_result.get('probability', 0.5)
                     rec = ml_result.get('recommendation', 'SKIP')
                     best['model_probability'] = win_prob
