@@ -585,6 +585,15 @@ def score_signal(signal: dict,
 # LAYER 4: SELF-IMPROVEMENT — TRAIN
 # ════════════════════════════════════════════════════════════════
 
+def _json_default(obj):
+    """Fallback serializer for numpy types that json can't handle."""
+    if hasattr(obj, 'item'):  # numpy scalars
+        return obj.item()
+    if hasattr(obj, '__float__'):
+        return float(obj)
+    return str(obj)
+
+
 def train_model(source: str = 'auto') -> dict:
     """
     Train the ML gate model from database.
@@ -760,21 +769,21 @@ def train_model(source: str = 'auto') -> dict:
             'status': 'trained',
             'version': '3.0',
             'n_features': len(FEATURE_NAMES),
-            'total_trades': len(y),
-            'wins': win_count,
-            'losses': loss_count,
-            'win_rate': round(wr, 1),
-            'train_accuracy': train_acc,
-            'val_accuracy': val_acc,
-            'scale_pos_weight': round(scale_pos, 3),
+            'total_trades': int(len(y)),
+            'wins': int(win_count),
+            'losses': int(loss_count),
+            'win_rate': float(round(wr, 1)),
+            'train_accuracy': float(train_acc),
+            'val_accuracy': float(val_acc),
+            'scale_pos_weight': float(round(scale_pos, 3)),
             'best_iteration': int(getattr(model, 'best_iteration', 200)),
-            'top_features': [(f, round(i, 4)) for f, i in top_features],
+            'top_features': [(f, float(round(i, 4))) for f, i in top_features],
             'calibration': calibration,
-            'model_size_kb': round(os.path.getsize(MODEL_PATH) / 1024, 1),
+            'model_size_kb': float(round(os.path.getsize(MODEL_PATH) / 1024, 1)),
             'trained_at': datetime.now(timezone.utc).isoformat(),
         }
         with open(META_PATH, 'w') as f:
-            json.dump(meta, f, indent=2)
+            json.dump(meta, f, indent=2, default=_json_default)
 
         log.info(f"[ML_GATE] Model trained: {len(y)} trades "
                  f"(train={train_acc}%, val={val_acc}%) "
