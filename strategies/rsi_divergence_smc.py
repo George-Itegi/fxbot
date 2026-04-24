@@ -26,7 +26,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "RSI_DIVERGENCE_SMC"
-MIN_SCORE     = 68
+MIN_SCORE     = 50
 VERSION       = "1.0"
 
 # --- Parameters ---
@@ -232,8 +232,10 @@ def evaluate(symbol: str,
     # ── SMC Confirmation: BOS/CHoCH (mandatory) ─────────
     smc_confirmed = False
     if smc_report:
-        bos_list = smc_report.get('bos', [])
-        choch_list = smc_report.get('choch', [])
+        _bos = smc_report.get('structure', {}).get('bos')
+        bos_list = [_bos] if _bos and isinstance(_bos, dict) else []
+        _choch = smc_report.get('structure', {}).get('choch')
+        choch_list = [_choch] if _choch and isinstance(_choch, dict) else []
 
         for bos in bos_list:
             bos_type = bos.get('type', '')
@@ -274,14 +276,15 @@ def evaluate(symbol: str,
                 confluence.append("SMC_BIAS_ALIGNED")
                 # Still proceed — not strictly mandatory
             else:
-                return None  # No SMC confirmation at all
+                score -= 10
+                confluence.append("NO_SMC_CONFIRM_PENALTY")
         else:
             return None
 
     # ── OB/FVG Zone proximity (bonus) ───────────────────
     if smc_report:
-        ob_list = smc_report.get('order_blocks', [])
-        fvg_list = smc_report.get('fvgs', [])
+        ob_list = [smc_report.get('nearest_ob')] if smc_report.get('nearest_ob') else []
+        fvg_list = smc_report.get('quality_fvgs', [])
 
         # Check order blocks
         for ob in ob_list:
@@ -388,7 +391,7 @@ def evaluate(symbol: str,
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
-    if len(confluence) < 5:
+    if len(confluence) < 3:
         return None
 
     # ── Score threshold ─────────────────────────────────

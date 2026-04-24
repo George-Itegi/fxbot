@@ -27,7 +27,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "BREAKOUT_MOMENTUM"
-MIN_SCORE     = 70
+MIN_SCORE     = 55
 VERSION       = "1.0"
 
 # --- Parameters ---
@@ -220,7 +220,7 @@ def evaluate(symbol: str,
         confluence.append("RETEST_CONFIRMED")
     else:
         # Not at retest yet — score lower, might be chasing
-        score -= 5
+        score -= 0
         confluence.append("NO_RETEST_CHASE")
 
     # ── Step 3: Delta confirms breakout direction ───────
@@ -251,7 +251,8 @@ def evaluate(symbol: str,
             confluence.append(f"OF_BEAR_{imb:+.2f}")
 
     if not delta_confirms:
-        return None  # Must have flow confirmation for breakout
+        score -= 12
+        confluence.append("NO_DELTA_CONFIRM_PENALTY")
 
     # ── Step 4: Volume surge confirmation ───────────────
     surge = market_report.get('volume_surge', {})
@@ -260,7 +261,7 @@ def evaluate(symbol: str,
         confluence.append(f"VOL_SURGE_{surge.get('surge_ratio', 0):.1f}x")
     else:
         # Volume is important for breakouts — penalty if missing
-        score -= 8
+        score -= 3
         confluence.append("NO_VOLUME_SURGE_PENALTY")
 
     # ── Step 5: ATR expansion check ─────────────────────
@@ -306,7 +307,8 @@ def evaluate(symbol: str,
 
     # ── Step 8: SMC structure confirmation (bonus) ──────
     if smc_report:
-        bos_list = smc_report.get('bos', [])
+        _bos = smc_report.get('structure', {}).get('bos')
+        bos_list = [_bos] if _bos and isinstance(_bos, dict) else []
         for bos in bos_list:
             bos_type = bos.get('type', '').upper()
             if direction == "BUY" and 'BULL' in bos_type:
@@ -325,7 +327,7 @@ def evaluate(symbol: str,
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
-    if len(confluence) < 5:
+    if len(confluence) < 3:
         return None
 
     # ── Score threshold ─────────────────────────────────

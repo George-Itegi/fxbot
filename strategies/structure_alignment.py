@@ -27,7 +27,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "STRUCTURE_ALIGNMENT"
-MIN_SCORE     = 70
+MIN_SCORE     = 55
 VERSION       = "1.0"
 
 # --- Parameters ---
@@ -138,8 +138,9 @@ def evaluate(symbol: str,
     if smc_report is None:
         return None
 
-    bos_list = smc_report.get('bos', [])
-    fvg_list = smc_report.get('fvgs', [])
+    _bos = smc_report.get('structure', {}).get('bos')
+    bos_list = [_bos] if _bos and isinstance(_bos, dict) else []
+    fvg_list = smc_report.get('quality_fvgs', [])
 
     if not bos_list:
         return None  # No BOS = no structure break = no signal
@@ -201,7 +202,8 @@ def evaluate(symbol: str,
             confluence.append("H1_FULL_BEAR_ALIGN")
 
     if not h1_confirms:
-        return None  # Cross-TF structure must agree
+        score -= 12
+        confluence.append("NO_H1_CONFIRM_PENALTY")
 
     # H1 Supertrend bonus
     if (direction == "BUY" and h1_st == 1) or \
@@ -235,7 +237,8 @@ def evaluate(symbol: str,
             confluence.append(f"DELTA_NEGATIVE_{delta_value:+.0f}")
 
     if not delta_agrees:
-        return None  # Delta must agree (this is ORDER_FLOW group)
+        score -= 15
+        confluence.append("NO_DELTA_AGREE_PENALTY")
 
     # ── Step 4: OF imbalance STRONG/EXTREME ─────────────
     of_imb = market_report.get('order_flow_imbalance', {})
@@ -321,7 +324,7 @@ def evaluate(symbol: str,
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
-    if len(confluence) < 5:
+    if len(confluence) < 3:
         return None
 
     # ── Score threshold ─────────────────────────────────

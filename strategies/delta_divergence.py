@@ -20,7 +20,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "DELTA_DIVERGENCE"
-MIN_SCORE     = 70
+MIN_SCORE     = 50
 VERSION       = "1.0"
 
 # --- Delta Divergence Parameters ---
@@ -289,22 +289,30 @@ def evaluate(symbol: str,
     # ── Find Swing Highs/Lows on M15 ────────────────────────
     swings = _find_swing_highs_lows(df_m15, lookback=5)
     
-    # Simplified delta-at-swings: use current delta and delta_strength
-    # In a full implementation, we'd store delta values at each swing point
-    # For now, we detect divergence using current delta state + swing patterns
-    delta_values = [
-        current_delta,
-        full_delta.get('delta', 0),
-    ]
+    # Build delta_at_swings using rolling delta from recent bars
+    # Use M5 delta history if available for more granular delta at swing points
+    delta_at_swings = []
+    if df_m5 is not None and 'delta' in df_m5.columns and len(df_m5) > 20:
+        # Get M5 delta at approximate M15 bar indices
+        m15_count = len(df_m15)
+        m5_count = len(df_m5)
+        bars_per_m15 = max(1, m5_count // m15_count)
+        for sw in swings.get('swing_highs', []) + swings.get('swing_lows', []):
+            m5_idx = min(sw.get('index', 0) * bars_per_m15, m5_count - 1)
+            if m5_idx >= 0:
+                delta_at_swings.append(float(df_m5.iloc[m5_idx].get('delta', 0)))
+    if not delta_at_swings:
+        # Fallback: use rolling vs full delta as approximate divergence
+        delta_at_swings = [current_delta, full_delta.get('delta', 0)]
     
     score = 0
     confluence = []
     
     # ── Detect Bearish Divergence (SELL) ────────────────────
-    bear_div = _detect_bearish_divergence(df_m15, swings, delta_values, current_delta)
+    bear_div = _detect_bearish_divergence(df_m15, swings, delta_at_swings, current_delta)
     
     # ── Detect Bullish Divergence (BUY) ─────────────────────
-    bull_div = _detect_bullish_divergence(df_m15, swings, delta_values, current_delta)
+    bull_div = _detect_bullish_divergence(df_m15, swings, delta_at_swings, current_delta)
     
     # Pick the strongest divergence
     divergence = None
@@ -460,7 +468,7 @@ def evaluate(symbol: str,
                 confluence.append("HIGH_MOMENTUM_REVERSAL")
     
     # ── Score threshold ─────────────────────────────────────
-    if len(confluence) < 5:
+    if len(confluence) < 3:
         return None
     if score < MIN_SCORE:
         return None
