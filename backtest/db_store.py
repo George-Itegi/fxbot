@@ -126,6 +126,18 @@ def _ensure_tables(conn):
             tp_extended            TINYINT,
             highest_profit_pips    DOUBLE,
 
+            -- Strategy scores (all 10, for ML Gate v3.0 training)
+            ss_smc_ob           INT DEFAULT 0,
+            ss_liquidity_sweep  INT DEFAULT 0,
+            ss_vwap_reversion   INT DEFAULT 0,
+            ss_delta_divergence INT DEFAULT 0,
+            ss_trend_continuation INT DEFAULT 0,
+            ss_fvg_reversion    INT DEFAULT 0,
+            ss_ema_cross        INT DEFAULT 0,
+            ss_rsi_divergence   INT DEFAULT 0,
+            ss_breakout_momentum INT DEFAULT 0,
+            ss_structure_align  INT DEFAULT 0,
+
             -- Flag: is this a backtest trade?
             source              VARCHAR(20) DEFAULT 'BACKTEST',
 
@@ -347,7 +359,7 @@ def store_trade(trade, master_report: dict = None,
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
             return
 
-        # 77 columns = 76 %s + 1 literal 'BACKTEST'
+        # 78 columns = 77 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -380,8 +392,7 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,
                 'BACKTEST'
             )
         """, (
