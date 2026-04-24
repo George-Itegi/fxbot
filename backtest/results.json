@@ -1,143 +1,99 @@
 [
   {
-    "total_trades": 11,
-    "wins": 5,
-    "losses": 6,
-    "win_rate": 45.5,
-    "total_pnl": 1356.77,
-    "avg_win_pips": 25.4,
-    "avg_loss_pips": -12.6,
-    "avg_win_r": 2.45,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": 0.567,
-    "profit_factor": 2.18,
-    "max_drawdown": 433.49,
-    "max_drawdown_pct": 2.0,
-    "max_dd_duration": 2,
-    "sharpe_ratio": 1.55,
-    "gross_profit": 2503.73,
-    "gross_loss": 1146.96,
-    "final_balance": 21356.77,
-    "return_pct": 6.78,
+    "total_trades": 4,
+    "wins": 4,
+    "losses": 0,
+    "win_rate": 100.0,
+    "total_pnl": 2074.26,
+    "avg_win_pips": 28.3,
+    "avg_loss_pips": 0,
+    "avg_win_r": 2.5,
+    "avg_loss_r": 0,
+    "ev_per_trade": 2.498,
+    "profit_factor": 999.0,
+    "max_drawdown": 0.0,
+    "max_drawdown_pct": 0.0,
+    "max_dd_duration": 0,
+    "sharpe_ratio": 3357.32,
+    "gross_profit": 2074.26,
+    "gross_loss": 0,
+    "final_balance": 22074.26,
+    "return_pct": 10.37,
     "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 6,
-        "wins": 2,
-        "losses": 4,
-        "pnl": 185.520000000008,
-        "pips": 6.200000000000646,
-        "scores": [
-          123,
-          80,
-          113,
-          123,
-          123,
-          118
-        ],
-        "avg_r": 0.17,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
       "EMA_CROSS_MOMENTUM": {
-        "trades": 3,
+        "trades": 2,
         "wins": 2,
-        "losses": 1,
-        "pnl": 831.5199999999736,
-        "pips": 37.99999999999803,
+        "losses": 0,
+        "pnl": 1037.7599999999807,
+        "pips": 62.19999999999892,
         "scores": [
-          115,
           82,
           118
         ],
-        "avg_r": 1.33,
+        "avg_r": 2.5,
         "partial_tp_count": 0,
         "partial_tp_profit": 0.0,
         "trail_count": 0
       },
-      "SMC_OB_REVERSAL": {
+      "TREND_CONTINUATION": {
         "trades": 2,
-        "wins": 1,
-        "losses": 1,
-        "pnl": 339.73000000003003,
-        "pips": 7.600000000000939,
+        "wins": 2,
+        "losses": 0,
+        "pnl": 1036.5000000000023,
+        "pips": 51.20000000000013,
         "scores": [
-          75,
-          70
+          80,
+          113
         ],
-        "avg_r": 0.62,
+        "avg_r": 2.5,
         "partial_tp_count": 0,
         "partial_tp_profit": 0.0,
         "trail_count": 0
       }
     },
     "session_stats": {
-      "NY_LONDON_OVERLAP": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -415.9499999999863,
-        "pips": -26.299999999999102
-      },
       "SYDNEY": {
-        "trades": 5,
+        "trades": 3,
         "wins": 3,
-        "pnl": 1241.4799999999627,
-        "pips": 56.899999999997505
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 439.77000000002994,
-        "pips": 13.700000000000934
+        "pnl": 1550.2599999999695,
+        "pips": 87.19999999999838
       },
       "LONDON_SESSION": {
-        "trades": 3,
+        "trades": 1,
         "wins": 1,
-        "pnl": 91.4700000000052,
-        "pips": 7.500000000000284
+        "pnl": 524.0000000000133,
+        "pips": 26.200000000000667
       }
     },
     "state_stats": {
       "TRENDING_STRONG": {
-        "trades": 3,
-        "wins": 1,
-        "pnl": 199.5700000000017,
-        "pips": 14.600000000000165
-      },
-      "TRENDING_EXTENDED": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -99.08000000003051,
-        "pips": -18.600000000001945
-      },
-      "BALANCED": {
         "trades": 1,
         "wins": 1,
-        "pnl": 439.77000000002994,
-        "pips": 13.700000000000934
+        "pnl": 499.5599999999939,
+        "pips": 36.19999999999956
       },
       "BREAKOUT_ACCEPTED": {
-        "trades": 3,
+        "trades": 2,
         "wins": 2,
-        "pnl": 816.5100000000102,
-        "pips": 42.10000000000046
+        "pnl": 1036.5000000000023,
+        "pips": 51.20000000000013
+      },
+      "TRENDING_EXTENDED": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 538.1999999999866,
+        "pips": 25.999999999999357
       }
     },
     "conviction_stats": {
       "MEDIUM": {
-        "trades": 10,
-        "wins": 5,
-        "pnl": 1456.8100000000113
-      },
-      "LOW": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -100.0399999999999
+        "trades": 4,
+        "wins": 4,
+        "pnl": 2074.259999999983
       }
     },
     "outcome_counts": {
-      "LOSS_SL": 6,
-      "WIN_TP": 5
+      "WIN_TP": 4
     },
     "partial_tp_stats": {
       "trades_triggered": 0,
@@ -147,67 +103,48 @@
     },
     "mfe_pips": 37.2,
     "symbol": "EURUSD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 11,
+    "elapsed_seconds": 348.6,
+    "signals_found": 16,
     "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2221,
-    "signals_blocked_score": 819,
-    "trades_executed": 11,
-    "final_score_avg": 0,
+    "signals_blocked_gate": 3054,
+    "signals_blocked_score": 134,
+    "trades_executed": 4,
+    "final_score_avg": 44,
     "relaxed_mode": true,
     "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
+    "model_blocked": 12
   },
   {
-    "total_trades": 10,
-    "wins": 4,
-    "losses": 6,
-    "win_rate": 40.0,
-    "total_pnl": 577.68,
-    "avg_win_pips": 29.2,
-    "avg_loss_pips": -17.2,
-    "avg_win_r": 2.43,
+    "total_trades": 4,
+    "wins": 2,
+    "losses": 2,
+    "win_rate": 50.0,
+    "total_pnl": 538.7,
+    "avg_win_pips": 15.7,
+    "avg_loss_pips": -9.3,
+    "avg_win_r": 2.36,
     "avg_loss_r": -1.0,
-    "ev_per_trade": 0.372,
-    "profit_factor": 1.53,
-    "max_drawdown": 691.11,
-    "max_drawdown_pct": 3.5,
-    "max_dd_duration": 7,
-    "sharpe_ratio": 0.99,
-    "gross_profit": 1667.95,
-    "gross_loss": 1090.27,
-    "final_balance": 20577.68,
-    "return_pct": 2.89,
+    "ev_per_trade": 0.679,
+    "profit_factor": 2.34,
+    "max_drawdown": 202.72,
+    "max_drawdown_pct": 1.0,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 1.14,
+    "gross_profit": 941.22,
+    "gross_loss": 402.52,
+    "final_balance": 20538.7,
+    "return_pct": 2.69,
     "strategy_stats": {
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 6,
-        "wins": 2,
-        "losses": 4,
-        "pnl": 36.539999999989675,
-        "pips": 11.400000000001402,
-        "scores": [
-          92,
-          123,
-          105,
-          82,
-          95,
-          110
-        ],
-        "avg_r": 0.17,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
       "TREND_CONTINUATION": {
         "trades": 3,
         "wins": 1,
         "losses": 2,
-        "pnl": 94.78999999997339,
-        "pips": -9.100000000001884,
+        "pnl": 93.48000000000857,
+        "pips": 1.40000000000029,
         "scores": [
-          116,
-          128,
-          123
+          118,
+          118,
+          118
         ],
         "avg_r": 0.17,
         "partial_tp_count": 0,
@@ -218,10 +155,10 @@
         "trades": 1,
         "wins": 1,
         "losses": 0,
-        "pnl": 446.35000000002975,
+        "pnl": 445.22000000002964,
         "pips": 11.300000000000754,
         "scores": [
-          75
+          83
         ],
         "avg_r": 2.22,
         "partial_tp_count": 0,
@@ -230,1996 +167,44 @@
       }
     },
     "session_stats": {
-      "SYDNEY": {
-        "trades": 5,
-        "wins": 2,
-        "pnl": 133.13999999998526,
-        "pips": 25.200000000000774
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -402.01000000001994,
-        "pips": -32.10000000000157
-      },
       "LONDON_SESSION": {
         "trades": 2,
         "wins": 1,
-        "pnl": 400.1999999999977,
-        "pips": 9.200000000000319
+        "pnl": 296.2000000000104,
+        "pips": 12.600000000000389
+      },
+      "SYDNEY": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -202.72000000000182,
+        "pips": -11.200000000000099
       },
       "NY_AFTERNOON": {
         "trades": 1,
         "wins": 1,
-        "pnl": 446.35000000002975,
+        "pnl": 445.22000000002964,
         "pips": 11.300000000000754
       }
     },
     "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 5,
-        "wins": 1,
-        "pnl": -210.56000000000247,
-        "pips": -46.69999999999953
-      },
-      "TRENDING_STRONG": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -198.73000000000715,
-        "pips": -16.700000000000603
-      },
       "BREAKOUT_ACCEPTED": {
-        "trades": 4,
-        "wins": 3,
-        "pnl": 986.9700000000023,
-        "pips": 77.0000000000004
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 10,
-        "wins": 4,
-        "pnl": 577.6799999999929
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 6,
-      "WIN_TP": 4
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 51.2,
-    "symbol": "GBPUSD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 12,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2066,
-    "signals_blocked_score": 1027,
-    "trades_executed": 10,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 13,
-    "wins": 3,
-    "losses": 10,
-    "win_rate": 23.1,
-    "total_pnl": -641.49,
-    "avg_win_pips": 27.2,
-    "avg_loss_pips": -13.6,
-    "avg_win_r": 2.2,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.262,
-    "profit_factor": 0.62,
-    "max_drawdown": 883.87,
-    "max_drawdown_pct": 4.4,
-    "max_dd_duration": 13,
-    "sharpe_ratio": -0.98,
-    "gross_profit": 1026.92,
-    "gross_loss": 1668.41,
-    "final_balance": 19358.51,
-    "return_pct": -3.21,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 7,
-        "wins": 0,
-        "losses": 7,
-        "pnl": -1076.7185000000122,
-        "pips": -95.90000000000032,
-        "scores": [
-          90,
-          93,
-          108,
-          96,
-          118,
-          90,
-          118
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 5,
+        "trades": 3,
         "wins": 2,
-        "losses": 3,
-        "pnl": 128.59599999999475,
-        "pips": 31.200000000001182,
-        "scores": [
-          98,
-          96,
-          133,
-          85,
-          92
-        ],
-        "avg_r": 0.4,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "SMC_OB_REVERSAL": {
-        "trades": 1,
-        "wins": 1,
-        "losses": 0,
-        "pnl": 306.6310000000257,
-        "pips": 10.300000000000864,
-        "scores": [
-          83
-        ],
-        "avg_r": 1.58,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "SYDNEY": {
-        "trades": 4,
-        "wins": 0,
-        "pnl": -590.7654999999926,
-        "pips": -61.599999999998545
-      },
-      "LONDON_SESSION": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -587.5935000000067,
-        "pips": -38.700000000000045
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 5,
-        "wins": 2,
-        "pnl": 230.23649999998176,
-        "pips": 35.599999999999454
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 306.6310000000257,
-        "pips": 10.300000000000864
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 3,
-        "wins": 1,
-        "pnl": 82.27700000002966,
-        "pips": 1.2000000000028876
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 5,
-        "wins": 0,
-        "pnl": -882.2580000000386,
-        "pips": -62.20000000000141
-      },
-      "TRENDING_STRONG": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -148.14150000000868,
-        "pips": -3.700000000000614
-      },
-      "BALANCED": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 306.6310000000257,
-        "pips": 10.300000000000864
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 13,
-        "wins": 3,
-        "pnl": -641.491499999992
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 10,
-      "WIN_TP": 3
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 41.7,
-    "symbol": "USDJPY",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 15,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2282,
-    "signals_blocked_score": 848,
-    "trades_executed": 13,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 7,
-    "wins": 1,
-    "losses": 6,
-    "win_rate": 14.3,
-    "total_pnl": -1095.08,
-    "avg_win_pips": 13.4,
-    "avg_loss_pips": -12.1,
-    "avg_win_r": 1.6,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.629,
-    "profit_factor": 0.07,
-    "max_drawdown": 1095.08,
-    "max_drawdown_pct": 5.5,
-    "max_dd_duration": 7,
-    "sharpe_ratio": -2.59,
-    "gross_profit": 77.72,
-    "gross_loss": 1172.8,
-    "final_balance": 18904.92,
-    "return_pct": -5.48,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 3,
-        "wins": 0,
-        "losses": 3,
-        "pnl": -587.1500000000035,
-        "pips": -38.5000000000002,
-        "scores": [
-          98,
-          100,
-          123
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 3,
-        "wins": 0,
-        "losses": 3,
-        "pnl": -585.6499999999802,
-        "pips": -33.89999999999893,
-        "scores": [
-          100,
-          92,
-          95
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "SMC_OB_REVERSAL": {
-        "trades": 1,
-        "wins": 1,
-        "losses": 0,
-        "pnl": 77.72000000000045,
-        "pips": 13.400000000000079,
-        "scores": [
-          70
-        ],
-        "avg_r": 1.6,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "SYDNEY": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -588.3299999999795,
-        "pips": -39.29999999999878
-      },
-      "LONDON_SESSION": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -197.95999999999614,
-        "pips": -9.799999999999809
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -386.510000000008,
-        "pips": -23.300000000000544
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 77.72000000000045,
-        "pips": 13.400000000000079
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 4,
-        "wins": 0,
-        "pnl": -779.3299999999796,
-        "pips": -49.29999999999879
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": -120.23999999999569,
-        "pips": 3.6000000000002697
+        "pnl": 741.4200000000401,
+        "pips": 23.900000000001143
       },
       "TRENDING_STRONG": {
         "trades": 1,
         "wins": 0,
-        "pnl": -195.51000000000786,
-        "pips": -13.300000000000534
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 6,
-        "wins": 0,
-        "pnl": -1172.7999999999836
-      },
-      "LOW": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 77.72000000000045
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 6,
-      "WIN_TP": 1
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 24.2,
-    "symbol": "AUDUSD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 9,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2311,
-    "signals_blocked_score": 874,
-    "trades_executed": 7,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 14,
-    "wins": 3,
-    "losses": 11,
-    "win_rate": 21.4,
-    "total_pnl": -1199.29,
-    "avg_win_pips": 14.1,
-    "avg_loss_pips": -9.5,
-    "avg_win_r": 2.19,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.317,
-    "profit_factor": 0.38,
-    "max_drawdown": 1283.75,
-    "max_drawdown_pct": 6.4,
-    "max_dd_duration": 14,
-    "sharpe_ratio": -1.27,
-    "gross_profit": 735.99,
-    "gross_loss": 1935.28,
-    "final_balance": 18800.71,
-    "return_pct": -6.0,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 10,
-        "wins": 2,
-        "losses": 8,
-        "pnl": -868.4549999999737,
-        "pips": -47.999999999999154,
-        "scores": [
-          123,
-          118,
-          93,
-          88,
-          93,
-          93,
-          73,
-          113,
-          108,
-          115
-        ],
-        "avg_r": -0.3,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 2,
-        "wins": 0,
-        "losses": 2,
-        "pnl": -387.6374999999879,
-        "pips": -16.899999999999693,
-        "scores": [
-          118,
-          98
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "VWAP_MEAN_REVERSION": {
-        "trades": 1,
-        "wins": 1,
-        "losses": 0,
-        "pnl": 151.19999999999132,
-        "pips": 8.399999999999519,
-        "scores": [
-          75
-        ],
-        "avg_r": 1.56,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "SMC_OB_REVERSAL": {
-        "trades": 1,
-        "wins": 0,
-        "losses": 1,
-        "pnl": -94.39500000000405,
-        "pips": -5.800000000000249,
-        "scores": [
-          78
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "NY_LONDON_OVERLAP": {
-        "trades": 5,
-        "wins": 1,
-        "pnl": -564.0450000000077,
-        "pips": -27.800000000000043
-      },
-      "LONDON_SESSION": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -428.4299999999673,
-        "pips": -13.799999999999368
-      },
-      "SYDNEY": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -112.41749999999507,
-        "pips": -14.899999999999917
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -94.39500000000405,
-        "pips": -5.800000000000249
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 3,
-        "wins": 1,
-        "pnl": 68.31750000000915,
-        "pips": -1.2999999999996348
-      },
-      "TRENDING_STRONG": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -196.4249999999945,
-        "pips": -13.499999999999623
-      },
-      "BALANCED": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 56.804999999987274,
-        "pips": 2.5999999999992696
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 8,
-        "wins": 1,
-        "pnl": -1127.984999999976,
-        "pips": -50.099999999999596
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 13,
-        "wins": 2,
-        "pnl": -1317.622499999972
-      },
-      "LOW": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 118.33499999999769
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 11,
-      "WIN_TP": 3
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 25.5,
-    "symbol": "USDCAD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 18,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2048,
-    "signals_blocked_score": 1093,
-    "trades_executed": 14,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 11,
-    "wins": 2,
-    "losses": 9,
-    "win_rate": 18.2,
-    "total_pnl": -1195.8,
-    "avg_win_pips": 35.0,
-    "avg_loss_pips": -9.1,
-    "avg_win_r": 2.5,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.364,
-    "profit_factor": 0.23,
-    "max_drawdown": 1239.82,
-    "max_drawdown_pct": 6.2,
-    "max_dd_duration": 11,
-    "sharpe_ratio": -1.27,
-    "gross_profit": 354.64,
-    "gross_loss": 1550.44,
-    "final_balance": 18804.2,
-    "return_pct": -5.98,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 4,
-        "wins": 0,
-        "losses": 4,
-        "pnl": -776.7600000000177,
-        "pips": -38.10000000000091,
-        "scores": [
-          98,
-          100,
-          90,
-          125
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 7,
-        "wins": 2,
-        "losses": 5,
-        "pnl": -419.0400000000163,
-        "pips": 26.199999999999555,
-        "scores": [
-          95,
-          100,
-          100,
-          73,
-          92,
-          95,
-          105
-        ],
-        "avg_r": -0.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "SYDNEY": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -582.3000000000131,
-        "pips": -29.100000000000794
-      },
-      "LONDON_SESSION": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -157.100000000014,
-        "pips": -10.600000000000609
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -456.4000000000069,
-        "pips": 27.800000000000047
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 4,
-        "wins": 0,
-        "pnl": -777.050000000011,
-        "pips": -35.00000000000059
-      },
-      "TRENDING_STRONG": {
-        "trades": 3,
-        "wins": 1,
-        "pnl": -266.34000000001316,
-        "pips": 36.399999999999764
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -152.41000000000992,
-        "pips": -13.300000000000534
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 10,
-        "wins": 1,
-        "pnl": -1316.360000000035
-      },
-      "LOW": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 120.56000000000087
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 9,
-      "WIN_TP": 2
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 54.7,
-    "symbol": "NZDUSD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 12,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2228,
-    "signals_blocked_score": 913,
-    "trades_executed": 11,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 12,
-    "wins": 3,
-    "losses": 9,
-    "win_rate": 25.0,
-    "total_pnl": -495.72,
-    "avg_win_pips": 16.8,
-    "avg_loss_pips": -7.5,
-    "avg_win_r": 2.35,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.163,
-    "profit_factor": 0.64,
-    "max_drawdown": 935.23,
-    "max_drawdown_pct": 4.7,
-    "max_dd_duration": 12,
-    "sharpe_ratio": -0.55,
-    "gross_profit": 871.71,
-    "gross_loss": 1367.42,
-    "final_balance": 19504.28,
-    "return_pct": -2.48,
-    "strategy_stats": {
-      "SMC_OB_REVERSAL": {
-        "trades": 4,
-        "wins": 1,
-        "losses": 3,
-        "pnl": 99.44000000001438,
-        "pips": -4.699999999999704,
-        "scores": [
-          73,
-          76,
-          73,
-          83
-        ],
-        "avg_r": -0.24,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "TREND_CONTINUATION": {
-        "trades": 7,
-        "wins": 2,
-        "losses": 5,
-        "pnl": -399.9270000000141,
-        "pips": -3.70000000000093,
-        "scores": [
-          85,
-          118,
-          116,
-          111,
-          113,
-          118,
-          123
-        ],
-        "avg_r": -0.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 1,
-        "wins": 0,
-        "losses": 1,
-        "pnl": -195.2280000000084,
-        "pips": -8.700000000000374,
-        "scores": [
-          113
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "LONDON_SESSION": {
-        "trades": 3,
-        "wins": 1,
-        "pnl": -58.48700000001145,
-        "pips": 5.199999999999648
-      },
-      "SYDNEY": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 40.545999999991324,
-        "pips": 13.299999999999422
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -97.48199999999441,
-        "pips": -4.1999999999997595
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 4,
-        "wins": 0,
-        "pnl": -677.0060000000055,
-        "pips": -37.200000000000564
-      },
-      "NY_AFTERNOON": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 296.7140000000119,
-        "pips": 5.800000000000249
-      }
-    },
-    "state_stats": {
-      "BALANCED": {
-        "trades": 3,
-        "wins": 1,
-        "pnl": 196.19600000002163,
-        "pips": -3.4999999999996145
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 5,
-        "wins": 2,
-        "pnl": 85.46999999998397,
-        "pips": 19.699999999999157
-      },
-      "TRENDING_STRONG": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -389.54300000000137,
-        "pips": -16.1
-      },
-      "TRENDING_EXTENDED": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -387.83800000001236,
-        "pips": -17.20000000000055
-      }
-    },
-    "conviction_stats": {
-      "LOW": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -196.54800000001035
-      },
-      "MEDIUM": {
-        "trades": 10,
-        "wins": 3,
-        "pnl": -299.16699999999787
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 9,
-      "WIN_TP": 3
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 24.5,
-    "symbol": "USDCHF",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 20,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2172,
-    "signals_blocked_score": 892,
-    "trades_executed": 12,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 4,
-    "wins": 0,
-    "losses": 4,
-    "win_rate": 0.0,
-    "total_pnl": -690.75,
-    "avg_win_pips": 0,
-    "avg_loss_pips": -21.9,
-    "avg_win_r": 0,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -1.0,
-    "profit_factor": 0.0,
-    "max_drawdown": 690.75,
-    "max_drawdown_pct": 3.5,
-    "max_dd_duration": 4,
-    "sharpe_ratio": -77272948346870.64,
-    "gross_profit": 0,
-    "gross_loss": 690.75,
-    "final_balance": 19309.25,
-    "return_pct": -3.45,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 4,
-        "wins": 0,
-        "losses": 4,
-        "pnl": -690.7484999999987,
-        "pips": -87.5,
-        "scores": [
-          96,
-          103,
-          103,
-          103
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "NY_LONDON_OVERLAP": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -200.1869999999967,
-        "pips": -26.099999999999568
-      },
-      "LONDON_SESSION": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -197.84699999999694,
-        "pips": -26.69999999999959
-      },
-      "SYDNEY": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -292.7145000000051,
-        "pips": -34.70000000000084
-      }
-    },
-    "state_stats": {
-      "BREAKOUT_ACCEPTED": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -200.1869999999967,
-        "pips": -26.099999999999568
-      },
-      "TRENDING_STRONG": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -197.84699999999694,
-        "pips": -26.69999999999959
-      },
-      "TRENDING_EXTENDED": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -292.7145000000051,
-        "pips": -34.70000000000084
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 4,
-        "wins": 0,
-        "pnl": -690.7484999999987
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 4
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 29.9,
-    "symbol": "GBPJPY",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 7,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2353,
-    "signals_blocked_score": 873,
-    "trades_executed": 4,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 5,
-    "wins": 1,
-    "losses": 4,
-    "win_rate": 20.0,
-    "total_pnl": -480.43,
-    "avg_win_pips": 11.2,
-    "avg_loss_pips": -12.0,
-    "avg_win_r": 1.6,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.48,
-    "profit_factor": 0.4,
-    "max_drawdown": 597.23,
-    "max_drawdown_pct": 3.0,
-    "max_dd_duration": 3,
-    "sharpe_ratio": -1.46,
-    "gross_profit": 316.68,
-    "gross_loss": 797.11,
-    "final_balance": 19519.57,
-    "return_pct": -2.4,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 4,
-        "wins": 0,
-        "losses": 4,
-        "pnl": -797.1080000000148,
-        "pips": -47.800000000000864,
-        "scores": [
-          75,
-          80,
-          103,
-          103
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "SMC_OB_REVERSAL": {
-        "trades": 1,
-        "wins": 1,
-        "losses": 0,
-        "pnl": 316.67999999998517,
-        "pips": 11.199999999999477,
-        "scores": [
-          85
-        ],
-        "avg_r": 1.6,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "SYDNEY": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -599.8655000000152,
-        "pips": -35.90000000000089
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 316.67999999998517,
-        "pips": 11.199999999999477
-      },
-      "LONDON_SESSION": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -197.2424999999996,
-        "pips": -11.899999999999977
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -599.8655000000152,
-        "pips": -35.90000000000089
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 119.43749999998556,
-        "pips": -0.7000000000005002
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 5,
-        "wins": 1,
-        "pnl": -480.42800000002967
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 4,
-      "WIN_TP": 1
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 12.9,
-    "symbol": "EURJPY",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 6,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2213,
-    "signals_blocked_score": 1023,
-    "trades_executed": 5,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 7,
-    "wins": 1,
-    "losses": 6,
-    "win_rate": 14.3,
-    "total_pnl": -876.12,
-    "avg_win_pips": 24.4,
-    "avg_loss_pips": -16.2,
-    "avg_win_r": 2.1,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.557,
-    "profit_factor": 0.19,
-    "max_drawdown": 876.12,
-    "max_drawdown_pct": 4.4,
-    "max_dd_duration": 7,
-    "sharpe_ratio": -1.92,
-    "gross_profit": 203.01,
-    "gross_loss": 1079.13,
-    "final_balance": 19123.88,
-    "return_pct": -4.38,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 4,
-        "wins": 0,
-        "losses": 4,
-        "pnl": -688.6100000000073,
-        "pips": -64.10000000000053,
-        "scores": [
-          103,
-          123,
-          105,
-          118
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 2,
-        "wins": 0,
-        "losses": 2,
-        "pnl": -390.5200000000106,
-        "pips": -32.90000000000077,
-        "scores": [
-          85,
-          95
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "VWAP_MEAN_REVERSION": {
-        "trades": 1,
-        "wins": 1,
-        "losses": 0,
-        "pnl": 203.0079999999998,
-        "pips": 24.399999999999977,
-        "scores": [
-          75
-        ],
-        "avg_r": 2.1,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "LONDON_SESSION": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -200.33000000000348,
-        "pips": -23.000000000000398
-      },
-      "SYDNEY": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -393.5880000000149,
-        "pips": -26.700000000001012
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -282.2039999999997,
-        "pips": -22.89999999999992
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -593.9180000000183,
-        "pips": -49.70000000000141
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -388.5375000000024,
-        "pips": -33.40000000000032
-      },
-      "TRENDING_STRONG": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -96.67449999999708,
-        "pips": -13.89999999999958
-      },
-      "BALANCED": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 203.0079999999998,
-        "pips": 24.399999999999977
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 7,
-        "wins": 1,
-        "pnl": -876.122000000018
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 6,
-      "WIN_TP": 1
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 36.9,
-    "symbol": "AUDJPY",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 10,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2121,
-    "signals_blocked_score": 1061,
-    "trades_executed": 7,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 6,
-    "wins": 1,
-    "losses": 5,
-    "win_rate": 16.7,
-    "total_pnl": -448.18,
-    "avg_win_pips": 19.8,
-    "avg_loss_pips": -5.1,
-    "avg_win_r": 2.51,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.416,
-    "profit_factor": 0.35,
-    "max_drawdown": 690.14,
-    "max_drawdown_pct": 3.5,
-    "max_dd_duration": 6,
-    "sharpe_ratio": -1.1,
-    "gross_profit": 241.96,
-    "gross_loss": 690.14,
-    "final_balance": 19551.82,
-    "return_pct": -2.24,
-    "strategy_stats": {
-      "SMC_OB_REVERSAL": {
-        "trades": 3,
-        "wins": 0,
-        "losses": 3,
-        "pnl": -395.531500000102,
-        "pips": -7.400000000001228,
-        "scores": [
-          75,
-          73,
-          75
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "TREND_CONTINUATION": {
-        "trades": 2,
-        "wins": 1,
-        "losses": 1,
-        "pnl": 44.2649999999843,
-        "pips": 8.699999999998909,
-        "scores": [
-          113,
-          93
-        ],
-        "avg_r": 0.75,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 1,
-        "wins": 0,
-        "losses": 1,
-        "pnl": -96.91499999999056,
-        "pips": -6.999999999999318,
-        "scores": [
-          80
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "TOKYO": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -298.0250000000324,
-        "pips": -6.700000000000728
-      },
-      "LONDON_SESSION": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -197.6910000000075,
-        "pips": -11.10000000000042
-      },
-      "NY_AFTERNOON": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -97.50650000006968,
-        "pips": -0.7000000000005002
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 145.04100000000125,
-        "pips": 12.800000000000011
-      }
-    },
-    "state_stats": {
-      "BALANCED": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -395.531500000102,
-        "pips": -7.400000000001228
-      },
-      "TRENDING_STRONG": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -197.6910000000075,
-        "pips": -11.10000000000042
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 145.04100000000125,
-        "pips": 12.800000000000011
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 5,
-        "wins": 1,
-        "pnl": -350.22650000008343
-      },
-      "LOW": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -97.9550000000248
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 5,
-      "WIN_TP": 1
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 19.4,
-    "symbol": "CADJPY",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 8,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2040,
-    "signals_blocked_score": 1191,
-    "trades_executed": 6,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 9,
-    "wins": 1,
-    "losses": 8,
-    "win_rate": 11.1,
-    "total_pnl": -747.95,
-    "avg_win_pips": 42.5,
-    "avg_loss_pips": -12.7,
-    "avg_win_r": 2.5,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.611,
-    "profit_factor": 0.4,
-    "max_drawdown": 838.99,
-    "max_drawdown_pct": 4.2,
-    "max_dd_duration": 6,
-    "sharpe_ratio": -2.36,
-    "gross_profit": 488.96,
-    "gross_loss": 1236.92,
-    "final_balance": 19252.05,
-    "return_pct": -3.74,
-    "strategy_stats": {
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 4,
-        "wins": 0,
-        "losses": 4,
-        "pnl": -595.2049999999999,
-        "pips": -49.39999999999998,
-        "scores": [
-          92,
-          118,
-          95,
-          93
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "TREND_CONTINUATION": {
-        "trades": 4,
-        "wins": 1,
-        "losses": 3,
-        "pnl": -104.07799999997954,
-        "pips": -3.299999999998704,
-        "scores": [
-          88,
-          126,
-          123,
-          118
-        ],
-        "avg_r": -0.12,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "SMC_OB_REVERSAL": {
-        "trades": 1,
-        "wins": 0,
-        "losses": 1,
-        "pnl": -48.67199999999464,
-        "pips": -6.399999999999295,
-        "scores": [
-          73
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "LONDON_SESSION": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -401.08900000000824,
-        "pips": -32.00000000000074
-      },
-      "SYDNEY": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -295.1974999999893,
-        "pips": -19.79999999999933
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 4,
-        "wins": 1,
-        "pnl": -2.9964999999819213,
-        "pips": -0.899999999998613
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -48.67199999999464,
-        "pips": -6.399999999999295
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 4,
-        "wins": 0,
-        "pnl": -696.2864999999974,
-        "pips": -51.80000000000007
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 488.9624999999968,
-        "pips": 42.499999999999716
-      },
-      "TRENDING_STRONG": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -491.9589999999787,
-        "pips": -43.39999999999833
-      },
-      "BALANCED": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -48.67199999999464,
-        "pips": -6.399999999999295
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 8,
-        "wins": 1,
-        "pnl": -699.2829999999794
-      },
-      "LOW": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -48.67199999999464
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 8,
-      "WIN_TP": 1
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 51.0,
-    "symbol": "NZDJPY",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 9,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2170,
-    "signals_blocked_score": 1008,
-    "trades_executed": 9,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 5,
-    "wins": 0,
-    "losses": 5,
-    "win_rate": 0.0,
-    "total_pnl": -787.42,
-    "avg_win_pips": 0,
-    "avg_loss_pips": -5.0,
-    "avg_win_r": 0,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -1.0,
-    "profit_factor": 0.0,
-    "max_drawdown": 787.42,
-    "max_drawdown_pct": 3.9,
-    "max_dd_duration": 5,
-    "sharpe_ratio": -50119057609902.82,
-    "gross_profit": 0,
-    "gross_loss": 787.42,
-    "final_balance": 19212.58,
-    "return_pct": -3.94,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 5,
-        "wins": 0,
-        "losses": 5,
-        "pnl": -787.4229999999761,
-        "pips": -24.799999999999265,
-        "scores": [
-          88,
-          123,
-          103,
-          78,
-          133
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "LONDON_SESSION": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -296.2829999999901,
-        "pips": -8.399999999999519
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -197.60000000000565,
-        "pips": -8.00000000000023
-      },
-      "SYDNEY": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -293.5399999999804,
-        "pips": -8.399999999999519
-      }
-    },
-    "state_stats": {
-      "BREAKOUT_ACCEPTED": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -493.29799999998113,
-        "pips": -12.299999999999534
-      },
-      "TRENDING_STRONG": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -294.124999999995,
-        "pips": -12.499999999999734
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 5,
-        "wins": 0,
-        "pnl": -787.4229999999761
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 5
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 8.4,
-    "symbol": "EURGBP",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 9,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2318,
-    "signals_blocked_score": 865,
-    "trades_executed": 5,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 7,
-    "wins": 0,
-    "losses": 7,
-    "win_rate": 0.0,
-    "total_pnl": -979.51,
-    "avg_win_pips": 0,
-    "avg_loss_pips": -19.7,
-    "avg_win_r": 0,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -1.0,
-    "profit_factor": 0.0,
-    "max_drawdown": 979.51,
-    "max_drawdown_pct": 4.9,
-    "max_dd_duration": 7,
-    "sharpe_ratio": -130426514228109.52,
-    "gross_profit": 0,
-    "gross_loss": 979.51,
-    "final_balance": 19020.49,
-    "return_pct": -4.9,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 4,
-        "wins": 0,
-        "losses": 4,
-        "pnl": -588.7960000000081,
-        "pips": -80.20000000000138,
-        "scores": [
-          116,
-          123,
-          85,
-          95
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 3,
-        "wins": 0,
-        "losses": 3,
-        "pnl": -390.7149999999873,
-        "pips": -57.99999999999805,
-        "scores": [
-          113,
-          113,
-          111
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "SYDNEY": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -296.5495000000024,
-        "pips": -55.600000000000094
-      },
-      "LONDON_SESSION": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -293.9624999999914,
-        "pips": -35.09999999999902
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -388.99900000000156,
-        "pips": -47.50000000000032
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 6,
-        "wins": 0,
-        "pnl": -882.6349999999982,
-        "pips": -127.39999999999972
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -96.87599999999729,
-        "pips": -10.799999999999699
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 7,
-        "wins": 0,
-        "pnl": -979.5109999999954
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 7
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 58.3,
-    "symbol": "GBPAUD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 7,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2253,
-    "signals_blocked_score": 944,
-    "trades_executed": 7,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 12,
-    "wins": 2,
-    "losses": 10,
-    "win_rate": 16.7,
-    "total_pnl": -879.1,
-    "avg_win_pips": 37.5,
-    "avg_loss_pips": -20.4,
-    "avg_win_r": 2.33,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": -0.444,
-    "profit_factor": 0.44,
-    "max_drawdown": 1157.27,
-    "max_drawdown_pct": 5.8,
-    "max_dd_duration": 12,
-    "sharpe_ratio": -1.75,
-    "gross_profit": 677.59,
-    "gross_loss": 1556.69,
-    "final_balance": 19120.9,
-    "return_pct": -4.4,
-    "strategy_stats": {
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 2,
-        "wins": 0,
-        "losses": 2,
-        "pnl": -296.94000000000983,
-        "pips": -43.400000000000105,
-        "scores": [
-          105,
-          113
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "TREND_CONTINUATION": {
-        "trades": 9,
-        "wins": 1,
-        "losses": 8,
-        "pnl": -788.7960000000206,
-        "pips": -118.20000000000164,
-        "scores": [
-          123,
-          116,
-          111,
-          123,
-          123,
-          123,
-          118,
-          133,
-          123
-        ],
-        "avg_r": -0.61,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "SMC_OB_REVERSAL": {
-        "trades": 1,
-        "wins": 1,
-        "losses": 0,
-        "pnl": 206.64000000001082,
-        "pips": 32.80000000000172,
-        "scores": [
-          90
-        ],
-        "avg_r": 2.17,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "LONDON_SESSION": {
-        "trades": 6,
-        "wins": 0,
-        "pnl": -978.3840000000472,
-        "pips": -121.30000000000419
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 3,
-        "wins": 0,
-        "pnl": -482.0040000000045,
-        "pips": -61.1000000000006
-      },
-      "SYDNEY": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 374.6520000000212,
-        "pips": 20.80000000000304
-      },
-      "TOKYO": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 206.64000000001082,
-        "pips": 32.80000000000172
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 8,
-        "wins": 0,
-        "pnl": -1267.4640000000331,
-        "pips": -161.60000000000173
-      },
-      "BREAKOUT_ACCEPTED": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 374.18400000001174,
-        "pips": 19.800000000000928
-      },
-      "BALANCED": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 206.64000000001082,
-        "pips": 32.80000000000172
-      },
-      "TRENDING_STRONG": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -192.45600000000903,
-        "pips": -19.800000000000928
-      }
-    },
-    "conviction_stats": {
-      "MEDIUM": {
-        "trades": 12,
-        "wins": 2,
-        "pnl": -879.0960000000199
-      }
-    },
-    "outcome_counts": {
-      "LOSS_SL": 10,
-      "WIN_TP": 2
-    },
-    "partial_tp_stats": {
-      "trades_triggered": 0,
-      "wins_after_partial": 0,
-      "total_partial_profit": 0,
-      "win_rate_after_partial": 0
-    },
-    "mfe_pips": 33.8,
-    "symbol": "GBPNZD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 17,
-    "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 2209,
-    "signals_blocked_score": 968,
-    "trades_executed": 12,
-    "final_score_avg": 0,
-    "relaxed_mode": true,
-    "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
-  },
-  {
-    "total_trades": 4,
-    "wins": 2,
-    "losses": 2,
-    "win_rate": 50.0,
-    "total_pnl": 453.71,
-    "avg_win_pips": 126.9,
-    "avg_loss_pips": -12.0,
-    "avg_win_r": 2.15,
-    "avg_loss_r": -1.0,
-    "ev_per_trade": 0.573,
-    "profit_factor": 2.14,
-    "max_drawdown": 397.95,
-    "max_drawdown_pct": 2.0,
-    "max_dd_duration": 2,
-    "sharpe_ratio": 1.03,
-    "gross_profit": 851.66,
-    "gross_loss": 397.95,
-    "final_balance": 20453.71,
-    "return_pct": 2.27,
-    "strategy_stats": {
-      "TREND_CONTINUATION": {
-        "trades": 2,
-        "wins": 0,
-        "losses": 2,
-        "pnl": -397.95000000005984,
-        "pips": -23.900000000003274,
-        "scores": [
-          90,
-          91
-        ],
-        "avg_r": -1.0,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      },
-      "SMC_OB_REVERSAL": {
-        "trades": 2,
-        "wins": 2,
-        "losses": 0,
-        "pnl": 851.6609999999805,
-        "pips": 253.89999999999418,
-        "scores": [
-          75,
-          75
-        ],
-        "avg_r": 2.15,
-        "partial_tp_count": 0,
-        "partial_tp_profit": 0.0,
-        "trail_count": 0
-      }
-    },
-    "session_stats": {
-      "NY_LONDON_OVERLAP": {
-        "trades": 2,
-        "wins": 1,
-        "pnl": 224.17799999999602,
-        "pips": 99.89999999999782
-      },
-      "LONDON_SESSION": {
-        "trades": 1,
-        "wins": 0,
-        "pnl": -198.00000000006548,
-        "pips": -11.000000000003638
-      },
-      "SYDNEY": {
-        "trades": 1,
-        "wins": 1,
-        "pnl": 427.53299999999007,
-        "pips": 141.09999999999673
-      }
-    },
-    "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 4,
-        "wins": 2,
-        "pnl": 453.7109999999206,
-        "pips": 229.9999999999909
+        "pnl": -202.72000000000182,
+        "pips": -11.200000000000099
       }
     },
     "conviction_stats": {
       "MEDIUM": {
         "trades": 4,
         "wins": 2,
-        "pnl": 453.7109999999206
+        "pnl": 538.7000000000382
       }
     },
     "outcome_counts": {
@@ -2232,63 +217,307 @@
       "total_partial_profit": 0,
       "win_rate_after_partial": 0
     },
-    "mfe_pips": 202.8,
-    "symbol": "XAUUSD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 7,
+    "mfe_pips": 19.5,
+    "symbol": "GBPUSD",
+    "elapsed_seconds": 341.6,
+    "signals_found": 29,
     "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 1534,
-    "signals_blocked_score": 1749,
+    "signals_blocked_gate": 2933,
+    "signals_blocked_score": 284,
     "trades_executed": 4,
-    "final_score_avg": 0,
+    "final_score_avg": 48,
     "relaxed_mode": true,
     "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
+    "model_blocked": 23
   },
   {
-    "total_trades": 3,
-    "wins": 0,
-    "losses": 3,
-    "win_rate": 0.0,
-    "total_pnl": -574.4,
-    "avg_win_pips": 0,
-    "avg_loss_pips": -52.8,
-    "avg_win_r": 0,
+    "total_trades": 5,
+    "wins": 4,
+    "losses": 1,
+    "win_rate": 80.0,
+    "total_pnl": 1301.38,
+    "avg_win_pips": 22.9,
+    "avg_loss_pips": -8.5,
+    "avg_win_r": 2.04,
     "avg_loss_r": -1.0,
-    "ev_per_trade": -1.0,
-    "profit_factor": 0.0,
-    "max_drawdown": 574.4,
-    "max_drawdown_pct": 2.9,
-    "max_dd_duration": 3,
-    "sharpe_ratio": -378675168572865.9,
-    "gross_profit": 0,
-    "gross_loss": 574.4,
-    "final_balance": 19425.6,
-    "return_pct": -2.87,
+    "ev_per_trade": 1.435,
+    "profit_factor": 7.06,
+    "max_drawdown": 214.92,
+    "max_drawdown_pct": 1.0,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 3.53,
+    "gross_profit": 1516.3,
+    "gross_loss": 214.92,
+    "final_balance": 21301.38,
+    "return_pct": 6.51,
     "strategy_stats": {
-      "EMA_CROSS_MOMENTUM": {
-        "trades": 1,
-        "wins": 0,
-        "losses": 1,
-        "pnl": -178.9999999999992,
-        "pips": -89.4999999999996,
+      "SMC_OB_REVERSAL": {
+        "trades": 2,
+        "wins": 2,
+        "losses": 0,
+        "pnl": 485.9855000000184,
+        "pips": 20.300000000000296,
         "scores": [
-          108
+          71,
+          83
         ],
-        "avg_r": -1.0,
+        "avg_r": 1.59,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      },
+      "EMA_CROSS_MOMENTUM": {
+        "trades": 2,
+        "wins": 2,
+        "losses": 0,
+        "pnl": 1030.3150000000333,
+        "pips": 71.30000000000223,
+        "scores": [
+          96,
+          133
+        ],
+        "avg_r": 2.5,
         "partial_tp_count": 0,
         "partial_tp_profit": 0.0,
         "trail_count": 0
       },
       "TREND_CONTINUATION": {
-        "trades": 2,
+        "trades": 1,
         "wins": 0,
-        "losses": 2,
-        "pnl": -395.40000000000146,
-        "pips": -68.80000000000024,
+        "losses": 1,
+        "pnl": -214.92250000002014,
+        "pips": -8.500000000000796,
         "scores": [
-          95,
-          95
+          78
+        ],
+        "avg_r": -1.0,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      }
+    },
+    "session_stats": {
+      "TOKYO": {
+        "trades": 2,
+        "wins": 2,
+        "pnl": 485.9855000000184,
+        "pips": 20.300000000000296
+      },
+      "NY_LONDON_OVERLAP": {
+        "trades": 2,
+        "wins": 2,
+        "pnl": 1030.3150000000333,
+        "pips": 71.30000000000223
+      },
+      "SYDNEY": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -214.92250000002014,
+        "pips": -8.500000000000796
+      }
+    },
+    "state_stats": {
+      "BALANCED": {
+        "trades": 2,
+        "wins": 2,
+        "pnl": 485.9855000000184,
+        "pips": 20.300000000000296
+      },
+      "TRENDING_STRONG": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 505.4400000000192,
+        "pips": 28.80000000000109
+      },
+      "TRENDING_EXTENDED": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 524.875000000014,
+        "pips": 42.50000000000114
+      },
+      "BREAKOUT_ACCEPTED": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -214.92250000002014,
+        "pips": -8.500000000000796
+      }
+    },
+    "conviction_stats": {
+      "LOW": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 158.59999999999098
+      },
+      "MEDIUM": {
+        "trades": 4,
+        "wins": 3,
+        "pnl": 1142.7780000000405
+      }
+    },
+    "outcome_counts": {
+      "WIN_TP": 4,
+      "LOSS_SL": 1
+    },
+    "partial_tp_stats": {
+      "trades_triggered": 0,
+      "wins_after_partial": 0,
+      "total_partial_profit": 0,
+      "win_rate_after_partial": 0
+    },
+    "mfe_pips": 40.7,
+    "symbol": "USDJPY",
+    "elapsed_seconds": 339.7,
+    "signals_found": 25,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 3017,
+    "signals_blocked_score": 170,
+    "trades_executed": 5,
+    "final_score_avg": 51,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 14
+  },
+  {
+    "total_trades": 2,
+    "wins": 2,
+    "losses": 0,
+    "win_rate": 100.0,
+    "total_pnl": 665.22,
+    "avg_win_pips": 17.6,
+    "avg_loss_pips": 0,
+    "avg_win_r": 2.05,
+    "avg_loss_r": 0,
+    "ev_per_trade": 2.05,
+    "profit_factor": 999.0,
+    "max_drawdown": 0.0,
+    "max_drawdown_pct": 0.0,
+    "max_dd_duration": 0,
+    "sharpe_ratio": 9.01,
+    "gross_profit": 665.22,
+    "gross_loss": 0,
+    "final_balance": 20665.22,
+    "return_pct": 3.33,
+    "strategy_stats": {
+      "SMC_OB_REVERSAL": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "pnl": 159.46000000000095,
+        "pips": 13.400000000000079,
+        "scores": [
+          73
+        ],
+        "avg_r": 1.6,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      },
+      "EMA_CROSS_MOMENTUM": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "pnl": 505.7599999999906,
+        "pips": 21.799999999999596,
+        "scores": [
+          110
+        ],
+        "avg_r": 2.51,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      }
+    },
+    "session_stats": {
+      "TOKYO": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 159.46000000000095,
+        "pips": 13.400000000000079
+      },
+      "SYDNEY": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 505.7599999999906,
+        "pips": 21.799999999999596
+      }
+    },
+    "state_stats": {
+      "BREAKOUT_ACCEPTED": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 159.46000000000095,
+        "pips": 13.400000000000079
+      },
+      "TRENDING_EXTENDED": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 505.7599999999906,
+        "pips": 21.799999999999596
+      }
+    },
+    "conviction_stats": {
+      "LOW": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 159.46000000000095
+      },
+      "MEDIUM": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 505.7599999999906
+      }
+    },
+    "outcome_counts": {
+      "WIN_TP": 2
+    },
+    "partial_tp_stats": {
+      "trades_triggered": 0,
+      "wins_after_partial": 0,
+      "total_partial_profit": 0,
+      "win_rate_after_partial": 0
+    },
+    "mfe_pips": 23.4,
+    "symbol": "AUDUSD",
+    "elapsed_seconds": 339.0,
+    "signals_found": 17,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 3086,
+    "signals_blocked_score": 123,
+    "trades_executed": 2,
+    "final_score_avg": 40,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 14
+  },
+  {
+    "total_trades": 1,
+    "wins": 0,
+    "losses": 1,
+    "win_rate": 0.0,
+    "total_pnl": -99.83,
+    "avg_win_pips": 0,
+    "avg_loss_pips": -5.1,
+    "avg_win_r": 0,
+    "avg_loss_r": -1.0,
+    "ev_per_trade": -1.0,
+    "profit_factor": 0.0,
+    "max_drawdown": 99.83,
+    "max_drawdown_pct": 0.5,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 0.0,
+    "gross_profit": 0,
+    "gross_loss": 99.83,
+    "final_balance": 19900.17,
+    "return_pct": -0.5,
+    "strategy_stats": {
+      "TREND_CONTINUATION": {
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "pnl": -99.83250000000203,
+        "pips": -5.1000000000001044,
+        "scores": [
+          73
         ],
         "avg_r": -1.0,
         "partial_tp_count": 0,
@@ -2300,39 +529,27 @@
       "LONDON_SESSION": {
         "trades": 1,
         "wins": 0,
-        "pnl": -178.9999999999992,
-        "pips": -89.4999999999996
-      },
-      "NY_LONDON_OVERLAP": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -395.40000000000146,
-        "pips": -68.80000000000024
+        "pnl": -99.83250000000203,
+        "pips": -5.1000000000001044
       }
     },
     "state_stats": {
-      "TRENDING_EXTENDED": {
-        "trades": 2,
-        "wins": 0,
-        "pnl": -370.3999999999986,
-        "pips": -124.2999999999995
-      },
-      "TRENDING_STRONG": {
+      "BREAKOUT_ACCEPTED": {
         "trades": 1,
         "wins": 0,
-        "pnl": -204.00000000000205,
-        "pips": -34.00000000000034
+        "pnl": -99.83250000000203,
+        "pips": -5.1000000000001044
       }
     },
     "conviction_stats": {
-      "MEDIUM": {
-        "trades": 3,
+      "LOW": {
+        "trades": 1,
         "wins": 0,
-        "pnl": -574.4000000000007
+        "pnl": -99.83250000000203
       }
     },
     "outcome_counts": {
-      "LOSS_SL": 3
+      "LOSS_SL": 1
     },
     "partial_tp_stats": {
       "trades_triggered": 0,
@@ -2340,17 +557,610 @@
       "total_partial_profit": 0,
       "win_rate_after_partial": 0
     },
-    "mfe_pips": 28.2,
-    "symbol": "XAGUSD",
-    "elapsed_seconds": 5186.1,
-    "signals_found": 4,
+    "mfe_pips": 0.0,
+    "symbol": "USDCAD",
+    "elapsed_seconds": 321.3,
+    "signals_found": 25,
     "signals_blocked_consensus": 0,
-    "signals_blocked_gate": 1943,
-    "signals_blocked_score": 1314,
-    "trades_executed": 3,
+    "signals_blocked_gate": 2888,
+    "signals_blocked_score": 301,
+    "trades_executed": 1,
+    "final_score_avg": 46,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 23
+  },
+  {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "max_drawdown": 0,
+    "symbol": "NZDUSD",
+    "elapsed_seconds": 330.0,
+    "signals_found": 14,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 3055,
+    "signals_blocked_score": 143,
+    "trades_executed": 0,
     "final_score_avg": 0,
     "relaxed_mode": true,
     "run_id": "relaxed_20251025_20260423",
-    "model_blocked": 0
+    "model_blocked": 14
+  },
+  {
+    "total_trades": 1,
+    "wins": 0,
+    "losses": 1,
+    "win_rate": 0.0,
+    "total_pnl": -200.01,
+    "avg_win_pips": 0,
+    "avg_loss_pips": -5.7,
+    "avg_win_r": 0,
+    "avg_loss_r": -1.0,
+    "ev_per_trade": -1.0,
+    "profit_factor": 0.0,
+    "max_drawdown": 200.01,
+    "max_drawdown_pct": 1.0,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 0.0,
+    "gross_profit": 0,
+    "gross_loss": 200.01,
+    "final_balance": 19799.99,
+    "return_pct": -1.0,
+    "strategy_stats": {
+      "TREND_CONTINUATION": {
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "pnl": -200.01299999998577,
+        "pips": -5.699999999999594,
+        "scores": [
+          98
+        ],
+        "avg_r": -1.0,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      }
+    },
+    "session_stats": {
+      "LONDON_OPEN": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -200.01299999998577,
+        "pips": -5.699999999999594
+      }
+    },
+    "state_stats": {
+      "BREAKOUT_ACCEPTED": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -200.01299999998577,
+        "pips": -5.699999999999594
+      }
+    },
+    "conviction_stats": {
+      "MEDIUM": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -200.01299999998577
+      }
+    },
+    "outcome_counts": {
+      "LOSS_SL": 1
+    },
+    "partial_tp_stats": {
+      "trades_triggered": 0,
+      "wins_after_partial": 0,
+      "total_partial_profit": 0,
+      "win_rate_after_partial": 0
+    },
+    "mfe_pips": 0.1,
+    "symbol": "USDCHF",
+    "elapsed_seconds": 324.2,
+    "signals_found": 26,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 3008,
+    "signals_blocked_score": 155,
+    "trades_executed": 1,
+    "final_score_avg": 38,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 22
+  },
+  {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "max_drawdown": 0,
+    "symbol": "GBPJPY",
+    "elapsed_seconds": 314.0,
+    "signals_found": 6,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 3030,
+    "signals_blocked_score": 216,
+    "trades_executed": 0,
+    "final_score_avg": 0,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 6
+  },
+  {
+    "total_trades": 2,
+    "wins": 1,
+    "losses": 1,
+    "win_rate": 50.0,
+    "total_pnl": 210.68,
+    "avg_win_pips": 10.3,
+    "avg_loss_pips": -2.0,
+    "avg_win_r": 1.56,
+    "avg_loss_r": -1.0,
+    "ev_per_trade": 0.28,
+    "profit_factor": 3.11,
+    "max_drawdown": 99.97,
+    "max_drawdown_pct": 0.5,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 0.44,
+    "gross_profit": 310.65,
+    "gross_loss": 99.97,
+    "final_balance": 20210.68,
+    "return_pct": 1.05,
+    "strategy_stats": {
+      "FVG_REVERSION": {
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "pnl": -99.97000000005114,
+        "pips": -2.000000000001023,
+        "scores": [
+          71
+        ],
+        "avg_r": -1.0,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      },
+      "VWAP_MEAN_REVERSION": {
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "pnl": 310.64800000002606,
+        "pips": 10.300000000000864,
+        "scores": [
+          85
+        ],
+        "avg_r": 1.56,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      }
+    },
+    "session_stats": {
+      "TOKYO": {
+        "trades": 2,
+        "wins": 1,
+        "pnl": 210.67799999997493,
+        "pips": 8.29999999999984
+      }
+    },
+    "state_stats": {
+      "BALANCED": {
+        "trades": 2,
+        "wins": 1,
+        "pnl": 210.67799999997493,
+        "pips": 8.29999999999984
+      }
+    },
+    "conviction_stats": {
+      "LOW": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -99.97000000005114
+      },
+      "MEDIUM": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 310.64800000002606
+      }
+    },
+    "outcome_counts": {
+      "LOSS_SL": 1,
+      "WIN_TP": 1
+    },
+    "partial_tp_stats": {
+      "trades_triggered": 0,
+      "wins_after_partial": 0,
+      "total_partial_profit": 0,
+      "win_rate_after_partial": 0
+    },
+    "mfe_pips": 12.3,
+    "symbol": "EURJPY",
+    "elapsed_seconds": 324.1,
+    "signals_found": 11,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 2986,
+    "signals_blocked_score": 259,
+    "trades_executed": 2,
+    "final_score_avg": 50,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 8
+  },
+  {
+    "total_trades": 1,
+    "wins": 0,
+    "losses": 1,
+    "win_rate": 0.0,
+    "total_pnl": -199.94,
+    "avg_win_pips": 0,
+    "avg_loss_pips": -2.0,
+    "avg_win_r": 0,
+    "avg_loss_r": -1.0,
+    "ev_per_trade": -1.0,
+    "profit_factor": 0.0,
+    "max_drawdown": 199.94,
+    "max_drawdown_pct": 1.0,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 0.0,
+    "gross_profit": 0,
+    "gross_loss": 199.94,
+    "final_balance": 19800.06,
+    "return_pct": -1.0,
+    "strategy_stats": {
+      "FVG_REVERSION": {
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "pnl": -199.93999999996024,
+        "pips": -1.999999999999602,
+        "scores": [
+          76
+        ],
+        "avg_r": -1.0,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      }
+    },
+    "session_stats": {
+      "TOKYO": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -199.93999999996024,
+        "pips": -1.999999999999602
+      }
+    },
+    "state_stats": {
+      "BALANCED": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -199.93999999996024,
+        "pips": -1.999999999999602
+      }
+    },
+    "conviction_stats": {
+      "MEDIUM": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -199.93999999996024
+      }
+    },
+    "outcome_counts": {
+      "LOSS_SL": 1
+    },
+    "partial_tp_stats": {
+      "trades_triggered": 0,
+      "wins_after_partial": 0,
+      "total_partial_profit": 0,
+      "win_rate_after_partial": 0
+    },
+    "mfe_pips": 0.0,
+    "symbol": "AUDJPY",
+    "elapsed_seconds": 319.5,
+    "signals_found": 6,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 3035,
+    "signals_blocked_score": 203,
+    "trades_executed": 1,
+    "final_score_avg": 24,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 4
+  },
+  {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "max_drawdown": 0,
+    "symbol": "CADJPY",
+    "elapsed_seconds": 332.1,
+    "signals_found": 9,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 2945,
+    "signals_blocked_score": 287,
+    "trades_executed": 0,
+    "final_score_avg": 0,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 8
+  },
+  {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "max_drawdown": 0,
+    "symbol": "NZDJPY",
+    "elapsed_seconds": 344.1,
+    "signals_found": 10,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 2994,
+    "signals_blocked_score": 238,
+    "trades_executed": 0,
+    "final_score_avg": 0,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 9
+  },
+  {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "max_drawdown": 0,
+    "symbol": "EURGBP",
+    "elapsed_seconds": 361.9,
+    "signals_found": 9,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 2839,
+    "signals_blocked_score": 357,
+    "trades_executed": 0,
+    "final_score_avg": 0,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 8
+  },
+  {
+    "total_trades": 1,
+    "wins": 0,
+    "losses": 1,
+    "win_rate": 0.0,
+    "total_pnl": -199.68,
+    "avg_win_pips": 0,
+    "avg_loss_pips": -19.2,
+    "avg_win_r": 0,
+    "avg_loss_r": -1.0,
+    "ev_per_trade": -1.0,
+    "profit_factor": 0.0,
+    "max_drawdown": 199.68,
+    "max_drawdown_pct": 1.0,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 0.0,
+    "gross_profit": 0,
+    "gross_loss": 199.68,
+    "final_balance": 19800.32,
+    "return_pct": -1.0,
+    "strategy_stats": {
+      "TREND_CONTINUATION": {
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "pnl": -199.67999999999188,
+        "pips": -19.199999999999218,
+        "scores": [
+          133
+        ],
+        "avg_r": -1.0,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      }
+    },
+    "session_stats": {
+      "SYDNEY": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -199.67999999999188,
+        "pips": -19.199999999999218
+      }
+    },
+    "state_stats": {
+      "TRENDING_STRONG": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -199.67999999999188,
+        "pips": -19.199999999999218
+      }
+    },
+    "conviction_stats": {
+      "MEDIUM": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -199.67999999999188
+      }
+    },
+    "outcome_counts": {
+      "LOSS_SL": 1
+    },
+    "partial_tp_stats": {
+      "trades_triggered": 0,
+      "wins_after_partial": 0,
+      "total_partial_profit": 0,
+      "win_rate_after_partial": 0
+    },
+    "mfe_pips": 6.6,
+    "symbol": "GBPAUD",
+    "elapsed_seconds": 352.8,
+    "signals_found": 6,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 2994,
+    "signals_blocked_score": 264,
+    "trades_executed": 1,
+    "final_score_avg": 44,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 5
+  },
+  {
+    "total_trades": 2,
+    "wins": 1,
+    "losses": 1,
+    "win_rate": 50.0,
+    "total_pnl": 293.51,
+    "avg_win_pips": 42.2,
+    "avg_loss_pips": -10.3,
+    "avg_win_r": 2.5,
+    "avg_loss_r": -1.0,
+    "ev_per_trade": 0.749,
+    "profit_factor": 2.47,
+    "max_drawdown": 200.23,
+    "max_drawdown_pct": 1.0,
+    "max_dd_duration": 1,
+    "sharpe_ratio": 0.86,
+    "gross_profit": 493.74,
+    "gross_loss": 200.23,
+    "final_balance": 20293.51,
+    "return_pct": 1.47,
+    "strategy_stats": {
+      "TREND_CONTINUATION": {
+        "trades": 2,
+        "wins": 1,
+        "losses": 1,
+        "pnl": 293.50799999999634,
+        "pips": 31.90000000000026,
+        "scores": [
+          133,
+          133
+        ],
+        "avg_r": 0.75,
+        "partial_tp_count": 0,
+        "partial_tp_profit": 0.0,
+        "trail_count": 0
+      }
+    },
+    "session_stats": {
+      "LONDON_SESSION": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -200.2320000000168,
+        "pips": -10.300000000000864
+      },
+      "SYDNEY": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 493.74000000001314,
+        "pips": 42.200000000001125
+      }
+    },
+    "state_stats": {
+      "TRENDING_EXTENDED": {
+        "trades": 1,
+        "wins": 0,
+        "pnl": -200.2320000000168,
+        "pips": -10.300000000000864
+      },
+      "BREAKOUT_ACCEPTED": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 493.74000000001314,
+        "pips": 42.200000000001125
+      }
+    },
+    "conviction_stats": {
+      "MEDIUM": {
+        "trades": 2,
+        "wins": 1,
+        "pnl": 293.50799999999634
+      }
+    },
+    "outcome_counts": {
+      "LOSS_SL": 1,
+      "WIN_TP": 1
+    },
+    "partial_tp_stats": {
+      "trades_triggered": 0,
+      "wins_after_partial": 0,
+      "total_partial_profit": 0,
+      "win_rate_after_partial": 0
+    },
+    "mfe_pips": 26.3,
+    "symbol": "GBPNZD",
+    "elapsed_seconds": 331.0,
+    "signals_found": 9,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 3002,
+    "signals_blocked_score": 247,
+    "trades_executed": 2,
+    "final_score_avg": 38,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 7
+  },
+  {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "max_drawdown": 0,
+    "symbol": "XAUUSD",
+    "elapsed_seconds": 304.7,
+    "signals_found": 7,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 1813,
+    "signals_blocked_score": 1469,
+    "trades_executed": 0,
+    "final_score_avg": 0,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 7
+  },
+  {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "max_drawdown": 0,
+    "symbol": "XAGUSD",
+    "elapsed_seconds": 305.7,
+    "signals_found": 2,
+    "signals_blocked_consensus": 0,
+    "signals_blocked_gate": 2586,
+    "signals_blocked_score": 699,
+    "trades_executed": 0,
+    "final_score_avg": 0,
+    "relaxed_mode": true,
+    "run_id": "relaxed_20251025_20260423",
+    "model_blocked": 2
   }
 ]

@@ -1,13 +1,14 @@
 # =============================================================
-# backtest/run.py  v2.1
+# backtest/run.py  v3.0
 # CLI entry point: python -m backtest.run
-# Upgraded: CLI arguments, parallel execution, ML training/testing
-#
-# v2.1 CHANGES:
-#   --train          Train XGBoost model from backtest DB data
-#   --use-model      Run backtest with trained model as additional gate
-#   --clear-data     Clear all backtest DB tables for fresh start
-#   --model-source   Choose training source (backtest/live/auto)
+# v3.0 CHANGES (Strategy-Informed ML):
+#   --collect-ml     Record trade features+outcomes into SignalModel history
+#   --use-model      Filter trades using SignalModel v2 (60 features)
+#   --walk-forward   Run walk-forward validation (train → test → slide)
+#   --train-months   Training window size for walk-forward (default: 4)
+#   --test-months    Test window size for walk-forward (default: 2)
+#   --ml-threshold   WIN probability threshold (default: 0.62)
+#   --seed-model     Bootstrap SignalModel from backtest DB before running
 # =============================================================
 
 import sys
@@ -43,11 +44,11 @@ Examples:
 
   # ── Data collection & ML training ──────────────────────
   python -m backtest.run --relaxed --store-db             # Collect training data
-  python -m backtest.run --train                          # Train XGBoost from DB
-  python -m backtest.run --use-model                      # Run with model active
-  python -m backtest.run --relaxed --store-db --use-model # Collect + model combined
-  python -m backtest.run --train --model-source backtest  # Force backtest data
-  python -m backtest.run --clear-data                     # Clear DB for fresh start
+  python -m backtest.run --collect-ml                     # Record features→SignalModel
+  python -m backtest.run --use-model                      # Run with SignalModel v2
+  python -m backtest.run --walk-forward                   # Walk-forward validation
+  python -m backtest.run --walk-forward --train-months 6 --test-months 2
+  python -m backtest.run --seed-model                     # Bootstrap from backtest DB
   python -m backtest.run --model-status                   # Show model info
         """)
 
@@ -117,20 +118,35 @@ Examples:
         'Train and use the XGBoost model to filter trades')
     model_group.add_argument(
         '--train', action='store_true',
-        help='Train XGBoost model from backtest DB data and exit. '
-             'Requires --store-db data from a previous run.')
+        help='Train SignalModel from backtest DB data and exit.')
     model_group.add_argument(
         '--model-source', choices=['backtest', 'live', 'auto'],
         default='backtest',
-        help='Training data source (default: backtest). '
-             'backtest=rich 21 features, live=simpler 7 features.')
+        help='Training data source (default: backtest).')
     model_group.add_argument(
         '--use-model', action='store_true',
-        help='Run backtest with trained XGBoost model as additional gate. '
-             'Model filters out low-probability trades (SKIP recommendation).')
+        help='Filter trades using SignalModel v2 (60 features, Strategy-Informed ML).')
+    model_group.add_argument(
+        '--collect-ml', action='store_true',
+        help='Record trade features + outcomes into SignalModel history for training.')
+    model_group.add_argument(
+        '--seed-model', action='store_true',
+        help='Bootstrap SignalModel from backtest DB before running.')
+    model_group.add_argument(
+        '--walk-forward', action='store_true',
+        help='Run walk-forward validation: train ML on first N months, test on next M.')
+    model_group.add_argument(
+        '--train-months', type=int, default=4,
+        help='Training window for walk-forward (default: 4 months).')
+    model_group.add_argument(
+        '--test-months', type=int, default=2,
+        help='Test window for walk-forward (default: 2 months).')
+    model_group.add_argument(
+        '--ml-threshold', type=float, default=0.62,
+        help='WIN probability threshold for ML gate (default: 0.62 = 62%%).')
     model_group.add_argument(
         '--model-status', action='store_true',
-        help='Show model training status and exit.')
+        help='Show SignalModel status and exit.')
 
     return parser.parse_args()
 
@@ -428,7 +444,9 @@ def main():
                     strategies_filter=strategies,
                     relaxed_mode=args.relaxed,
                     store_db=args.store_db,
-                    use_model=use_model,
+                    use_model=args.use_model,
+                    collect_ml_data=args.collect_ml or args.use_model,
+                    ml_threshold=args.ml_threshold,
                     run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                     unlimited_positions=args.no_limit,
                 )

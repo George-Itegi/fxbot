@@ -86,6 +86,19 @@ def run():
     init_aggregator(WATCHLIST)
     log.info("[STARTUP] Tick Aggregator initialized (continuous streaming)")
 
+    # ── Initialize Signal Model (Strategy-Informed ML) ──────
+    from ai_engine.signal_model import get_model as get_signal_model
+    signal_model = get_signal_model()
+    if not signal_model._trained:
+        log.info("[STARTUP] Signal model not trained yet — bootstrapping from backtest DB...")
+        result = signal_model.train_from_backtest_db()
+        log.info(f"[STARTUP] Signal model bootstrap: {result.get('status')} "
+                 f"| trades={result.get('trades',0)} "
+                 f"| cv_auc={result.get('cv_auc','n/a')}")
+    else:
+        log.info(f"[STARTUP] Signal model loaded — "
+                 f"{len(signal_model._history)} trades in history")
+
     # ── Import all modules ────────────────────────────────────
     from data_layer.master_scanner import master_scan
     from strategies.strategy_engine import run_strategies
@@ -164,14 +177,15 @@ def run():
                     except Exception as e:
                         log.error(f"[CYCLE] Error during parallel scan: {e}\n{traceback.format_exc()}")
 
-            # ── Retrain models if enough new trades ───────────
+            # ── Retrain signal model if enough new trades ─────
             if TRADE_COUNT_SINCE_TRAIN >= MODEL_RETRAIN_TRADES:
-                log.info("[CYCLE] Triggering model retraining...")
+                log.info("[CYCLE] Triggering ML model retraining...")
                 try:
-                    from ai_engine.model_trainer import train_all_models
-                    train_all_models()
+                    from ai_engine.signal_model import get_model as get_signal_model
+                    result = get_signal_model().retrain()
+                    log.info(f"[CYCLE] Retrain: {result.get('status')} "
+                             f"cv_auc={result.get('cv_auc','n/a')}")
                     check_all_promotions()
-                    log.info(get_summary())
                     TRADE_COUNT_SINCE_TRAIN = 0
                 except Exception as e:
                     log.error(f"[CYCLE] Retraining failed: {e}")
@@ -392,26 +406,38 @@ def _scan_and_trade(symbol: str,
     if is_reentry:
         log.info(f"♻️   {symbol}: Re-entry allowed — {reentry_reason}")
 
-    # ── AI model scoring ──────────────────────────────────
-    from ai_engine.model_trainer import get_ai_score
-    from data_layer.price_feed import get_candles
-    df_m15  = get_candles(symbol, 'M15', 100)
-    ai_result = get_ai_score(
-        signal,
-        master.get('market_report', {}),
-        master.get('smc_report', {}),
-        df_candles=df_m15)
+    # ── Strategy-Informed ML — final gate ────────────────
+    # The model takes 60 features including ALL strategy scores
+    # and predicts WIN probability. Replaces old 7-feature XGBoost.
+    from ai_engine.signal_model import get_model as get_signal_model
+    signal_model = get_signal_model()
+    ml_result = signal_model.predict(
+        signal=signal,
+        master_report=master,
+        market_report=master.get('market_report', {}),
+        smc_report=master.get('smc_report', {}),
+        all_signals=all_signals,
+        symbol=symbol)
 
-    ai_score   = ai_result.get('ai_score', 50)
-    ai_rec     = ai_result.get('recommendation', 'NEUTRAL')
-    ai_trained = ai_result.get('xgb_trained', False)
+    win_prob  = ml_result.get('win_probability', 0.5)
+    ml_dec    = ml_result.get('decision', 'NEUTRAL')
+    size_mult = ml_result.get('size_multiplier', 1.0)
+    ml_trained= ml_result.get('trained', False)
 
-    if ai_trained and ai_rec == 'SKIP':
-        log.info(f"🚫  {symbol}: AI model rejected signal — {ai_result.get('note')}")
-        log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
-                    'ai_score': ai_score, 'was_traded': False,
-                    'skip_reason': f"AI:{ai_rec}", 'session': session, 'market_regime': state})
+    if ml_trained and ml_dec == 'SKIP':
+        log.info(f"🚫  {symbol}: ML model rejected — win_prob={win_prob:.0%}")
+        log_signal({'symbol': symbol, 'direction': direction,
+                    'strategy': strategy_name, 'ai_score': win_prob * 100,
+                    'was_traded': False,
+                    'skip_reason': f"ML_SKIP(prob={win_prob:.2f})",
+                    'session': session, 'market_regime': state})
         return False
+
+    if ml_trained:
+        log.info(f"🤖  {symbol}: ML win_prob={win_prob:.0%} "
+                 f"decision={ml_dec} size={size_mult}x")
+
+    ai_score = round(win_prob * 100)
 
     # ── Calculate position size ───────────────────────────
     sl_pips  = signal.get('sl_pips', 10)
@@ -422,7 +448,7 @@ def _scan_and_trade(symbol: str,
         log.warning(f"🚫  {symbol}: R:R too low — TP:{tp1_pips}p / SL:{sl_pips}p")
         return False
 
-    # v4.4: Dynamic position sizing based on conviction
+    # Dynamic position sizing based on ML confidence
     conviction_score = float(score + ai_score) / 2
     agreement_groups = signal.get('agreement_groups', 2)
     lot_size = calculate_lot_size(
