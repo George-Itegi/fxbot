@@ -1,23 +1,16 @@
 # =============================================================
-# backtest/engine.py  v3.0
+# backtest/engine.py  v2.0
 # The main backtest loop — upgraded to match live system.
 #
-# v3.0 CHANGES (Strategy-Informed ML integration):
-#  1. use_model flag now uses SignalModel v2 (60-feature model)
-#  2. collect_ml_data flag records all trade features + outcomes
-#     into the model's training history (seeds the model)
-#  3. walk_forward() function added for proper ML validation
-#  4. All signals passed to feature extractor as all_signals list
-#  5. Outcome recorded on every closed trade automatically
-#
 # Key upgrades vs v1.0:
-#  6. Builds proper master_report (matches live master_scanner.py schema)
-#  7. Updates feature_store (needed by LIQUIDITY_SWEEP_ENTRY)
-#  8. Passes master_report to all strategies
-#  9. Final score gate (≥ 45) from market + SMC scores
-# 10. Dynamic position sizing with conviction levels
-# 11. Partial TP + ATR trailing + dynamic TP extension
-# 12. Proper pip value per symbol (not hardcoded $1)
+#  1. Builds proper master_report (matches live master_scanner.py schema)
+#  2. Updates feature_store (needed by LIQUIDITY_SWEEP_ENTRY)
+#  3. Passes master_report to all strategies
+#  4. Final score gate (≥ 45) from market + SMC scores
+#  5. Dynamic position sizing with conviction levels
+#  6. Partial TP + ATR trailing + dynamic TP extension
+#  7. Confluence minimum = 6 (matches live)
+#  8. Proper pip value per symbol (not hardcoded $1)
 # =============================================================
 
 import datetime
@@ -60,10 +53,8 @@ class BacktestConfig:
     relaxed_mode: bool = False     # Lower gates for data collection
     store_db: bool = False         # Store trades/signals in MySQL
     run_id: str = 'default'       # Run identifier for DB grouping
-    use_model: bool = False        # Use SignalModel v2 as final gate
-    collect_ml_data: bool = True   # Record trade features+outcomes → trains model
+    use_model: bool = False        # Use trained XGBoost model as additional gate
     unlimited_positions: bool = False  # Remove max open position limits
-    ml_threshold: float = 0.62    # Min WIN probability to take trade (when use_model=True)
 
 
 def get_pip_size(symbol: str) -> float:
@@ -248,28 +239,21 @@ def run_backtest(config: BacktestConfig) -> dict:
     # ── Store feature snapshots per trade (for DB) ─────
     trade_reports = {}  # ticket -> {master_report, market_report, smc_report, flow}
 
-    # ── Load XGBoost model if --use-model ────────────────
-    xgb_model = None
+    # ── Load ML Gate model if --use-model ────────────────
+    ml_gate_active = False
     model_blocked_count = 0
-    # ── Load SignalModel v2 (60-feature Strategy-Informed ML) ─
-    signal_model = None
-    if config.use_model or config.collect_ml_data:
+    if config.use_model:
         try:
-            from ai_engine.signal_model import get_model as get_signal_model
-            signal_model = get_signal_model()
-            if config.use_model and signal_model._trained:
-                log.info(f"  [MODEL] SignalModel v2 loaded — "
-                         f"{len(signal_model._history)} history entries "
-                         f"threshold={config.ml_threshold:.0%}")
-            elif config.use_model:
-                log.warning(f"  [MODEL] --use-model but SignalModel not trained — "
-                             f"collect_ml_data mode only")
-            if config.collect_ml_data:
-                log.info(f"  [MODEL] collect_ml_data=True — "
-                         f"recording features+outcomes for training")
+            from ai_engine.ml_gate import is_model_trained, collect_all_strategy_scores
+            if is_model_trained():
+                ml_gate_active = True
+                log.info(f"  [ML_GATE] Strategy-Informed ML v3.0 loaded — "
+                         f"replacing consensus gates")
+            else:
+                log.warning(f"  [ML_GATE] --use-model but no trained model found — "
+                            f"falling back to rule-based gates")
         except Exception as e:
-            log.warning(f"  [MODEL] SignalModel load failed: {e}")
-            signal_model = None
+            log.warning(f"  [ML_GATE] Failed to load: {e}")
 
     scan_bar = config.scan_every_n_bars
 
@@ -403,135 +387,201 @@ def run_backtest(config: BacktestConfig) -> dict:
         session = master_report.get('session', 'UNKNOWN')
         combined_bias = master_report.get('combined_bias', 'NEUTRAL')
 
-        signals = []
-        for strategy_name in active_strategies:
+        # ── ML Gate path: collect ALL strategy scores ─────
+        if ml_gate_active:
             try:
-                signal = _run_one_strategy(
-                    strategy_name, symbol,
-                    s_m1, s_m5, s_m15, s_h1, s_h4,
+                all_scores = collect_all_strategy_scores(
+                    symbol, s_m1, s_m5, s_m15, s_h1, s_h4,
                     smc_report, market_report,
                     market_state, session, master_report)
 
-                if signal is None:
+                # Pick the best signal from strategies that fired
+                non_zero_scores = {k: v for k, v in all_scores.items()
+                                   if v and v > 0}
+                if not non_zero_scores:
                     continue
 
-                direction = str(signal.get('direction', ''))
-                score = signal.get('score', 0)
-
-                # Apply per-strategy minimum score
-                from strategies.strategy_engine import STRATEGY_MIN_SCORES
-                min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
-                if score < min_score:
-                    continue
-
-                signal['symbol'] = symbol
-                signal['group'] = _get_strategy_group(strategy_name)
-                signals.append(signal)
-
-            except Exception as e:
-                # Log but don't crash the backtest
-                log.debug(f"  [{symbol}] {strategy_name} error: {e}")
-                continue
-
-        if not signals:
-            continue
-
-        signals_found += 1
-
-        # ── Gate 3: Bias direction filter ─────────────────
-        # In relaxed mode, skip this filter to collect more data
-        if not config.relaxed_mode:
-            if combined_bias == 'BULLISH':
-                signals = [s for s in signals if s['direction'] == 'BUY']
-            elif combined_bias == 'BEARISH':
-                signals = [s for s in signals if s['direction'] == 'SELL']
-            if not signals:
-                continue
-
-        # ── Gate 4: Multi-group consensus ──────────────────
-        buy_groups  = set(s['group'] for s in signals if s['direction'] == 'BUY')
-        sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
-
-        min_groups = RELAXED_CONSENSUS_GROUPS if config.relaxed_mode else 2
-
-        if len(buy_groups) >= min_groups and len(buy_groups) >= len(sell_groups):
-            final_signals = [s for s in signals if s['direction'] == 'BUY']
-            final_groups = buy_groups
-        elif len(sell_groups) >= min_groups:
-            final_signals = [s for s in signals if s['direction'] == 'SELL']
-            final_groups = sell_groups
-        else:
-            signals_blocked_consensus += 1
-            # In relaxed mode, still store the blocked signal for ML
-            if config.store_db:
+                # Get the actual signal dict for the best strategy
+                best_strat_name = max(non_zero_scores,
+                                      key=non_zero_scores.get)
+                best_signal = None
                 try:
-                    from backtest.db_store import store_blocked_signal
-                    for sig in signals:
-                        store_blocked_signal(
-                            symbol=symbol, direction=sig['direction'],
-                            strategy=sig.get('strategy', 'UNKNOWN'),
-                            score=sig.get('score', 0),
-                            confluence=sig.get('confluence', []),
-                            master_report=master_report, market_report=market_report,
-                            smc_report=smc_report, flow_data=flow,
-                            was_traded=False,
-                            skip_reason=f'consensus_blocked(buy={len(buy_groups)},sell={len(sell_groups)})',
-                            run_id=config.run_id,
-                        )
+                    best_signal = _run_one_strategy(
+                        best_strat_name, symbol,
+                        s_m1, s_m5, s_m15, s_h1, s_h4,
+                        smc_report, market_report,
+                        market_state, session, master_report)
                 except Exception:
                     pass
-            continue
 
-        # ── Best signal ──────────────────────────────────
-        best = max(final_signals, key=lambda s: s['score'])
+                if best_signal is None:
+                    continue
 
-        # ── Gate 5: Confluence check ────────────────────
-        confluence = best.get('confluence', [])
-        min_conv = RELAXED_MIN_CONFLUENCE if config.relaxed_mode else MIN_CONFLUENCE
-        if len(confluence) < min_conv:
-            continue
+                signals_found += 1
 
-        # ── Gate 6: SignalModel v2 filter (if use_model=True) ──
-        # Uses 60-feature Strategy-Informed ML to predict WIN probability.
-        # When collect_ml_data=True, always records features even if not filtering.
-        ml_win_prob = 0.5
-        if signal_model is not None:
-            try:
-                ml_result = signal_model.predict(
-                    signal=best,
-                    master_report=master_report,
-                    market_report=market_report,
-                    smc_report=smc_report,
-                    all_signals=signals,
-                    symbol=symbol)
-                ml_win_prob = ml_result.get('win_probability', 0.5)
-                best['model_probability'] = ml_win_prob
+                # ── ML Gate: score the signal ──────────────
+                try:
+                    from ai_engine.ml_gate import score_signal
+                    ml_result = score_signal(
+                        best_signal, master_report, market_report,
+                        smc_report, flow,
+                        all_strategy_scores=all_scores,
+                        symbol=symbol,
+                        spread_pips=spread,
+                    )
 
-                if config.use_model and signal_model._trained:
-                    if ml_result.get('decision') == 'SKIP':
+                    win_prob = ml_result.get('probability', 0.5)
+                    recommendation = ml_result.get('recommendation', 'SKIP')
+
+                    best_signal['model_probability'] = win_prob
+                    best_signal['ml_recommendation'] = recommendation
+
+                    if recommendation == 'SKIP':
                         model_blocked_count += 1
                         if config.store_db:
                             try:
                                 from backtest.db_store import store_blocked_signal
                                 store_blocked_signal(
-                                    symbol=symbol, direction=best['direction'],
-                                    strategy=best.get('strategy', 'UNKNOWN'),
-                                    score=best.get('score', 0),
-                                    confluence=best.get('confluence', []),
+                                    symbol=symbol,
+                                    direction=best_signal['direction'],
+                                    strategy=best_strat_name,
+                                    score=best_signal.get('score', 0),
+                                    confluence=best_signal.get('confluence', []),
                                     master_report=master_report,
                                     market_report=market_report,
-                                    smc_report=smc_report, flow_data=flow,
+                                    smc_report=smc_report,
+                                    flow_data=flow,
                                     was_traded=False,
-                                    skip_reason=f'ml_skip(prob={ml_win_prob:.2f})',
-                                    run_id=config.run_id)
+                                    skip_reason=f'ml_gate_skip(prob={win_prob:.2f})',
+                                    run_id=config.run_id,
+                                )
                             except Exception:
                                 pass
                         if model_blocked_count <= 5 or model_blocked_count % 10 == 0:
-                            log.debug(f"  [MODEL] Blocked {best.get('strategy','')} "
-                                      f"{best['direction']} prob={ml_win_prob:.2f}")
+                            log.info(f"  [ML_GATE] SKIP {best_strat_name} "
+                                     f"{best_signal['direction']} "
+                                     f"prob={win_prob:.2f}")
                         continue
+
+                    # Model says TAKE or CAUTION — proceed
+                    if model_blocked_count % 20 == 0 or model_blocked_count <= 3:
+                        log.info(f"  [ML_GATE] {recommendation} {best_strat_name} "
+                                 f"{best_signal['direction']} "
+                                 f"prob={win_prob:.2f}")
+
+                    # Build final_signals compatible with existing code
+                    best = best_signal
+                    best['symbol'] = symbol
+                    best['group'] = _get_strategy_group(best_strat_name)
+                    final_signals = [best]
+                    final_groups = {_get_strategy_group(best_strat_name)}
+                    confluence = best.get('confluence', [])
+
+                except Exception as e:
+                    log.debug(f"  [ML_GATE] Scoring error: {e}")
+                    continue
+
             except Exception as e:
-                log.debug(f"  [MODEL] Prediction error: {e}")
+                log.debug(f"  [ML_GATE] Error: {e}")
+
+        # ── Rule-based path (original gates, when no ML model) ─
+        if not ml_gate_active:
+            signals = []
+            for strategy_name in active_strategies:
+                try:
+                    signal = _run_one_strategy(
+                        strategy_name, symbol,
+                        s_m1, s_m5, s_m15, s_h1, s_h4,
+                        smc_report, market_report,
+                        market_state, session, master_report)
+
+                    if signal is None:
+                        continue
+
+                    direction = str(signal.get('direction', ''))
+                    score = signal.get('score', 0)
+
+                    # Apply per-strategy minimum score
+                    from strategies.strategy_engine import STRATEGY_MIN_SCORES
+                    min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
+                    if score < min_score:
+                        continue
+
+                    signal['symbol'] = symbol
+                    signal['group'] = _get_strategy_group(strategy_name)
+                    signals.append(signal)
+
+                except Exception as e:
+                    log.debug(f"  [{symbol}] {strategy_name} error: {e}")
+                    continue
+
+            if not signals:
+                continue
+
+            signals_found += 1
+
+            # ── Gate 3: Bias direction filter ─────────────
+            if not config.relaxed_mode:
+                if combined_bias == 'BULLISH':
+                    signals = [s for s in signals
+                               if s['direction'] == 'BUY']
+                elif combined_bias == 'BEARISH':
+                    signals = [s for s in signals
+                               if s['direction'] == 'SELL']
+                if not signals:
+                    continue
+
+            # ── Gate 4: Multi-group consensus ──────────────
+            buy_groups = set(s['group'] for s in signals
+                             if s['direction'] == 'BUY')
+            sell_groups = set(s['group'] for s in signals
+                              if s['direction'] == 'SELL')
+
+            min_groups = (RELAXED_CONSENSUS_GROUPS
+                          if config.relaxed_mode else 2)
+
+            if (len(buy_groups) >= min_groups
+                    and len(buy_groups) >= len(sell_groups)):
+                final_signals = [s for s in signals
+                                 if s['direction'] == 'BUY']
+                final_groups = buy_groups
+            elif len(sell_groups) >= min_groups:
+                final_signals = [s for s in signals
+                                 if s['direction'] == 'SELL']
+                final_groups = sell_groups
+            else:
+                signals_blocked_consensus += 1
+                if config.store_db:
+                    try:
+                        from backtest.db_store import store_blocked_signal
+                        for sig in signals:
+                            store_blocked_signal(
+                                symbol=symbol, direction=sig['direction'],
+                                strategy=sig.get('strategy', 'UNKNOWN'),
+                                score=sig.get('score', 0),
+                                confluence=sig.get('confluence', []),
+                                master_report=master_report,
+                                market_report=market_report,
+                                smc_report=smc_report, flow_data=flow,
+                                was_traded=False,
+                                skip_reason=(f'consensus_blocked('
+                                             f'buy={len(buy_groups)},'
+                                             f'sell={len(sell_groups)})'),
+                                run_id=config.run_id,
+                            )
+                    except Exception:
+                        pass
+                continue
+
+            # ── Best signal ──────────────────────────────
+            best = max(final_signals, key=lambda s: s['score'])
+
+            # ── Gate 5: Confluence check ──────────────────
+            confluence = best.get('confluence', [])
+            min_conv = (RELAXED_MIN_CONFLUENCE
+                        if config.relaxed_mode else MIN_CONFLUENCE)
+            if len(confluence) < min_conv:
+                continue
 
         # ── Check if we can open a trade ─────────────────
         if not tracker.can_open(symbol):
@@ -593,15 +643,12 @@ def run_backtest(config: BacktestConfig) -> dict:
         )
         trades_executed += 1
 
-        # ── Save feature snapshot at trade entry (for DB + ML) ──
+        # ── Save feature snapshot at trade entry (for DB storage) ─
         trade_reports[tracker.ticket_counter] = {
             'master_report': master_report,
             'market_report': market_report,
-            'smc_report':    smc_report,
-            'flow':          flow,
-            'best_signal':   best,
-            'all_signals':   signals,   # All signals — needed for 60-feature extraction
-            'symbol':        symbol,
+            'smc_report': smc_report,
+            'flow': flow,
         }
 
         # ── Store signal + link to trade ticket in DB ────────
@@ -670,44 +717,12 @@ def run_backtest(config: BacktestConfig) -> dict:
                     spread_pips=spread,
                     slippage_pips=SLIPPAGE_PIPS,
                 )
+                # Also backfill outcome + profit_r into backtest_signals
                 update_signal_outcome(trade, run_id=config.run_id)
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL + updated signal outcomes")
         except Exception as e:
             log.warning(f"  [DB] Could not store trades: {e}")
-
-    # ── Record outcomes into SignalModel (collect_ml_data) ───
-    # This is how the backtest seeds the ML model with training data.
-    # Every completed trade → features + outcome stored in model history.
-    if signal_model is not None and config.collect_ml_data:
-        recorded = 0
-        for trade in tracker.closed_trades:
-            reports = trade_reports.get(trade.ticket, {})
-            if not reports:
-                continue
-            try:
-                outcome = 'WIN' if trade.profit_pips > 0 else 'LOSS'
-                signal_model.record_outcome(
-                    signal=reports.get('best_signal', {}),
-                    master_report=reports.get('master_report', {}),
-                    market_report=reports.get('market_report', {}),
-                    smc_report=reports.get('smc_report', {}),
-                    outcome=outcome,
-                    profit_pips=trade.profit_pips,
-                    all_signals=reports.get('all_signals', []),
-                    symbol=reports.get('symbol', symbol))
-                recorded += 1
-            except Exception as e:
-                log.debug(f"  [MODEL] Outcome record error: {e}")
-
-        if recorded > 0:
-            log.info(f"  [MODEL] Recorded {recorded} trade outcomes → "
-                     f"history={len(signal_model._history)} total")
-            # If history crossed the retrain threshold, trigger retrain
-            if len(signal_model._history) >= 50 and not signal_model._trained:
-                log.info("  [MODEL] Enough history — triggering initial training...")
-                result = signal_model.retrain()
-                log.info(f"  [MODEL] Initial train: cv_auc={result.get('cv_auc','n/a')}")
 
     return summary
 
@@ -760,20 +775,18 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
     symbol_spread = {}    # symbol -> total_slippage in pips
     symbol_stats = {}     # symbol -> {signals_found, blocked_gate, blocked_consensus, blocked_score, executed, model_blocked}
 
-    # ── Load XGBoost model if --use-model ────────────────
-    xgb_model = None
+    # ── Load ML Gate model if --use-model ────────────────
+    ml_gate_active = False
     if use_model:
         try:
-            from ai_engine.xgboost_classifier import is_model_trained
+            from ai_engine.ml_gate import is_model_trained
             if is_model_trained():
-                import joblib
-                from ai_engine.xgboost_classifier import MODEL_PATH, extract_features
-                xgb_model = joblib.load(MODEL_PATH)
-                log.info(f"  [MODEL] XGBoost model loaded — will filter trades")
+                ml_gate_active = True
+                log.info(f"  [ML_GATE] Strategy-Informed ML v3.0 loaded")
             else:
-                log.warning(f"  [MODEL] --use-model but no trained model found")
+                log.warning(f"  [ML_GATE] --use-model but no model found")
         except Exception as e:
-            log.warning(f"  [MODEL] Failed to load model: {e}")
+            log.warning(f"  [ML_GATE] Failed to load: {e}")
 
     for sym in symbols:
         data = load_all_data(sym, start_date, end_date, CACHE_DIR)
@@ -1039,34 +1052,25 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             if len(confluence) < min_conv:
                 continue
 
-            # Gate 6: XGBoost model filter (if --use-model)
-            if xgb_model is not None:
+            # Gate 6: ML Gate filter (if --use-model)
+            if ml_gate_active:
                 try:
-                    from ai_engine.xgboost_classifier import extract_features
-                    features = extract_features(best, market_report, smc_report)
-                    if features is not None:
-                        win_prob = float(xgb_model.predict_proba(features)[0][1])
-                        if win_prob < 0.45:
-                            stats['model_blocked'] += 1
-                            if store_db:
-                                try:
-                                    from backtest.db_store import store_blocked_signal
-                                    store_blocked_signal(
-                                        symbol=sym, direction=best['direction'],
-                                        strategy=best.get('strategy', 'UNKNOWN'),
-                                        score=best.get('score', 0),
-                                        confluence=best.get('confluence', []),
-                                        master_report=master_report, market_report=market_report,
-                                        smc_report=smc_report, flow_data=flow,
-                                        was_traded=False,
-                                        skip_reason=f'model_skip(prob={win_prob:.2f})',
-                                        run_id=run_id,
-                                    )
-                                except Exception:
-                                    pass
-                            continue
-                        else:
-                            best['model_probability'] = win_prob
+                    from ai_engine.ml_gate import score_signal, collect_all_strategy_scores
+                    all_scores = collect_all_strategy_scores(
+                        sym, s_m1, s_m5, s_m15, s_h1, s_h4,
+                        smc_report, market_report,
+                        market_state, session, master_report)
+                    ml_result = score_signal(
+                        best, master_report, market_report,
+                        smc_report, flow,
+                        all_strategy_scores=all_scores,
+                        symbol=sym, spread_pips=symbol_spread.get(sym, 0))
+                    win_prob = ml_result.get('probability', 0.5)
+                    rec = ml_result.get('recommendation', 'SKIP')
+                    best['model_probability'] = win_prob
+                    if rec == 'SKIP':
+                        stats['model_blocked'] += 1
+                        continue
                 except Exception:
                     pass
 
@@ -1207,176 +1211,3 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
 
     log.info(f"\n  Parallel backtest completed in {elapsed:.1f}s")
     return all_results
-
-
-# =============================================================
-# WALK-FORWARD VALIDATION
-# The correct way to test ML models on financial data.
-# Train on first N months → test on next M months → slide forward.
-# This tells you if the ML model genuinely improves results
-# or just overfits to the training period.
-# =============================================================
-
-def run_walk_forward(symbol: str,
-                     start_date: datetime.datetime,
-                     end_date: datetime.datetime,
-                     train_months: int = 4,
-                     test_months: int = 2,
-                     min_trades_to_train: int = 50) -> list:
-    """
-    Walk-forward validation for Strategy-Informed ML.
-
-    How it works:
-      Window 1: Train on months 1-4, test on months 5-6
-      Window 2: Train on months 1-6, test on months 7-8
-      Window 3: Train on months 1-8, test on months 9-10
-      ... continue until end_date
-
-    Each test period runs TWICE:
-      1. Without model (rule-based only)
-      2. With model (ML-filtered)
-
-    Comparison tells you the real model impact.
-
-    Returns list of window results dicts.
-    """
-    from dateutil.relativedelta import relativedelta
-    from ai_engine.signal_model import get_model as get_signal_model
-
-    log.info(f"\n{'='*65}")
-    log.info(f"  WALK-FORWARD VALIDATION: {symbol}")
-    log.info(f"  Period: {start_date.date()} → {end_date.date()}")
-    log.info(f"  Train window: {train_months} months | Test window: {test_months} months")
-    log.info(f"{'='*65}")
-
-    results = []
-    window  = 0
-    train_end = start_date + relativedelta(months=train_months)
-
-    while train_end + relativedelta(months=test_months) <= end_date:
-        window   += 1
-        test_start = train_end
-        test_end   = train_end + relativedelta(months=test_months)
-
-        log.info(f"\n[WF] Window {window}: "
-                 f"Train {start_date.date()}→{train_end.date()} | "
-                 f"Test {test_start.date()}→{test_end.date()}")
-
-        # ── Phase 1: Collect training data (relaxed mode) ──
-        log.info(f"[WF] Phase 1: Collecting training data...")
-        signal_model = get_signal_model()
-        pre_history  = len(signal_model._history)
-
-        train_cfg = BacktestConfig(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=train_end,
-            relaxed_mode=True,       # Lower gates to get more trades
-            collect_ml_data=True,    # Record features + outcomes
-            use_model=False,         # Don't filter during training collection
-        )
-        train_result = run_backtest(train_cfg)
-        new_trades = len(signal_model._history) - pre_history
-        log.info(f"[WF] Collected {new_trades} new trades → "
-                 f"history={len(signal_model._history)} total")
-
-        # ── Phase 2: Train model if enough data ─────────────
-        if len(signal_model._history) >= min_trades_to_train:
-            log.info(f"[WF] Phase 2: Training model on {len(signal_model._history)} trades...")
-            train_r = signal_model.retrain()
-            cv_auc = train_r.get('cv_auc', 0)
-            log.info(f"[WF] Model trained: cv_auc={cv_auc:.3f}")
-        else:
-            log.warning(f"[WF] Only {len(signal_model._history)} trades — "
-                        f"need {min_trades_to_train} to train. Skipping ML test.")
-            cv_auc = 0
-
-        # ── Phase 3: Test WITHOUT model ──────────────────────
-        log.info(f"[WF] Phase 3: Test (rule-based, no ML)...")
-        test_no_ml = BacktestConfig(
-            symbol=symbol,
-            start_date=test_start,
-            end_date=test_end,
-            relaxed_mode=False,
-            collect_ml_data=False,
-            use_model=False,
-        )
-        result_no_ml = run_backtest(test_no_ml)
-
-        # ── Phase 4: Test WITH model ─────────────────────────
-        if signal_model._trained:
-            log.info(f"[WF] Phase 4: Test (ML-filtered)...")
-            test_with_ml = BacktestConfig(
-                symbol=symbol,
-                start_date=test_start,
-                end_date=test_end,
-                relaxed_mode=False,
-                collect_ml_data=True,   # Keep learning during test too
-                use_model=True,
-                ml_threshold=0.62,
-            )
-            result_with_ml = run_backtest(test_with_ml)
-        else:
-            result_with_ml = None
-
-        # ── Compile window result ─────────────────────────────
-        window_result = {
-            'window':        window,
-            'train_start':   str(start_date.date()),
-            'train_end':     str(train_end.date()),
-            'test_start':    str(test_start.date()),
-            'test_end':      str(test_end.date()),
-            'training_trades': new_trades,
-            'total_history': len(signal_model._history),
-            'cv_auc':        cv_auc,
-            'no_ml': {
-                'trades':      result_no_ml.get('total_trades', 0),
-                'win_rate':    result_no_ml.get('win_rate', 0),
-                'total_pnl':   result_no_ml.get('total_pnl', 0),
-                'profit_factor':result_no_ml.get('profit_factor', 0),
-                'max_drawdown':result_no_ml.get('max_drawdown', 0),
-            },
-            'with_ml': {
-                'trades':      result_with_ml.get('total_trades', 0) if result_with_ml else 0,
-                'win_rate':    result_with_ml.get('win_rate', 0) if result_with_ml else 0,
-                'total_pnl':   result_with_ml.get('total_pnl', 0) if result_with_ml else 0,
-                'profit_factor':result_with_ml.get('profit_factor', 0) if result_with_ml else 0,
-                'max_drawdown':result_with_ml.get('max_drawdown', 0) if result_with_ml else 0,
-                'model_blocked':result_with_ml.get('model_blocked', 0) if result_with_ml else 0,
-            } if result_with_ml else None,
-        }
-        results.append(window_result)
-
-        # Print comparison
-        r_ml = window_result['with_ml']
-        r_base = window_result['no_ml']
-        log.info(f"\n[WF] Window {window} results:")
-        log.info(f"  Rule-based:  {r_base['trades']} trades | "
-                 f"WR={r_base['win_rate']:.1f}% | "
-                 f"PnL=${r_base['total_pnl']:.2f} | "
-                 f"PF={r_base['profit_factor']:.2f}")
-        if r_ml:
-            pnl_diff = r_ml['total_pnl'] - r_base['total_pnl']
-            log.info(f"  ML-filtered: {r_ml['trades']} trades | "
-                     f"WR={r_ml['win_rate']:.1f}% | "
-                     f"PnL=${r_ml['total_pnl']:.2f} | "
-                     f"PF={r_ml['profit_factor']:.2f} | "
-                     f"Blocked={r_ml['model_blocked']} | "
-                     f"Delta=${pnl_diff:+.2f}")
-
-        # Slide train window forward
-        train_end = test_end
-
-    # ── Final summary ─────────────────────────────────────────
-    log.info(f"\n{'='*65}")
-    log.info(f"  WALK-FORWARD SUMMARY: {symbol} — {window} windows")
-    total_base_pnl = sum(r['no_ml']['total_pnl'] for r in results)
-    total_ml_pnl   = sum(r['with_ml']['total_pnl'] for r in results if r['with_ml'])
-    avg_cv_auc     = sum(r['cv_auc'] for r in results) / max(len(results), 1)
-    log.info(f"  Rule-based total P&L: ${total_base_pnl:.2f}")
-    log.info(f"  ML-filtered total P&L: ${total_ml_pnl:.2f}")
-    log.info(f"  ML improvement: ${total_ml_pnl - total_base_pnl:+.2f}")
-    log.info(f"  Average CV-AUC: {avg_cv_auc:.3f}")
-    log.info(f"{'='*65}\n")
-
-    return results

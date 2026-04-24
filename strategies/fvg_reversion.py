@@ -25,7 +25,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "FVG_REVERSION"
-MIN_SCORE     = 50
+MIN_SCORE     = 68
 VERSION       = "1.1"
 
 # --- FVG Reversion Parameters ---
@@ -258,9 +258,9 @@ def evaluate(symbol: str,
                 score += 8
                 confluence.append(f"OF_BULL_{imb:+.2f}")
             else:
-                # No OF confirmation — penalty but allow through
-                score -= 10
-                confluence.append("OF_NO_CONFIRM_PENALTY")
+                # No OF confirmation — skip (retail only fills)
+                confluence.append("OF_NO_CONFIRM_SKIP")
+                return None
         elif direction == "SELL":
             if imb < -0.15 and imb_strength in ('STRONG', 'EXTREME'):
                 score += 15
@@ -269,8 +269,8 @@ def evaluate(symbol: str,
                 score += 8
                 confluence.append(f"OF_BEAR_{imb:+.2f}")
             else:
-                score -= 10
-                confluence.append("OF_NO_CONFIRM_PENALTY")
+                confluence.append("OF_NO_CONFIRM_SKIP")
+                return None
 
         # Volume surge bonus
         if volume_surge.get('surge_detected', False):

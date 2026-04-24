@@ -27,7 +27,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "STRUCTURE_ALIGNMENT"
-MIN_SCORE     = 55
+MIN_SCORE     = 70
 VERSION       = "1.0"
 
 # --- Parameters ---
@@ -202,8 +202,7 @@ def evaluate(symbol: str,
             confluence.append("H1_FULL_BEAR_ALIGN")
 
     if not h1_confirms:
-        score -= 12
-        confluence.append("NO_H1_CONFIRM_PENALTY")
+        return None  # Cross-TF structure must agree
 
     # H1 Supertrend bonus
     if (direction == "BUY" and h1_st == 1) or \
@@ -237,8 +236,7 @@ def evaluate(symbol: str,
             confluence.append(f"DELTA_NEGATIVE_{delta_value:+.0f}")
 
     if not delta_agrees:
-        score -= 15
-        confluence.append("NO_DELTA_AGREE_PENALTY")
+        return None  # Delta must agree (this is ORDER_FLOW group)
 
     # ── Step 4: OF imbalance STRONG/EXTREME ─────────────
     of_imb = market_report.get('order_flow_imbalance', {})
@@ -324,7 +322,7 @@ def evaluate(symbol: str,
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
-    if len(confluence) < 3:
+    if len(confluence) < 5:
         return None
 
     # ── Score threshold ─────────────────────────────────

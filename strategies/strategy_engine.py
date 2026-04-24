@@ -34,15 +34,15 @@ log = get_logger(__name__)
 # too easily. These minimums require real institutional confluence.
 STRATEGY_MIN_SCORES = {
     "SMC_OB_REVERSAL":       70,   # OB + delta + sweep confirmation
-    "LIQUIDITY_SWEEP_ENTRY": 65,   # Sweep + BOS + delta
-    "VWAP_MEAN_REVERSION":   55,   # VWAP distance + structure
-    "DELTA_DIVERGENCE":      50,   # Price vs delta divergence
+    "LIQUIDITY_SWEEP_ENTRY": 70,   # Sweep + BOS + delta
+    "VWAP_MEAN_REVERSION":   65,   # VWAP distance + structure
+    "DELTA_DIVERGENCE":      70,   # Price vs delta divergence
     "TREND_CONTINUATION":    72,   # Multi-TF trend + pullback
-    "FVG_REVERSION":         50,   # FVG gap fill entry
-    "EMA_CROSS_MOMENTUM":    65,   # EMA crossover + RSI momentum + delta
-    "RSI_DIVERGENCE_SMC":    50,   # RSI divergence + BOS/CHoCH
-    "BREAKOUT_MOMENTUM":     55,   # Consolidation breakout + retest
-    "STRUCTURE_ALIGNMENT":   55,   # BOS + H1 structure + delta agreement
+    "FVG_REVERSION":         68,   # FVG gap fill entry
+    "EMA_CROSS_MOMENTUM":    70,   # EMA crossover + RSI momentum + delta
+    "RSI_DIVERGENCE_SMC":    68,   # RSI divergence + BOS/CHoCH
+    "BREAKOUT_MOMENTUM":     70,   # Consolidation breakout + retest
+    "STRUCTURE_ALIGNMENT":   70,   # BOS + H1 structure + delta agreement
 }
 
 # ── Strategies grouped by what they fundamentally measure ────

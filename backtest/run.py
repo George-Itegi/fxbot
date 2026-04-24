@@ -1,14 +1,13 @@
 # =============================================================
-# backtest/run.py  v3.0
+# backtest/run.py  v2.1
 # CLI entry point: python -m backtest.run
-# v3.0 CHANGES (Strategy-Informed ML):
-#   --collect-ml     Record trade features+outcomes into SignalModel history
-#   --use-model      Filter trades using SignalModel v2 (60 features)
-#   --walk-forward   Run walk-forward validation (train → test → slide)
-#   --train-months   Training window size for walk-forward (default: 4)
-#   --test-months    Test window size for walk-forward (default: 2)
-#   --ml-threshold   WIN probability threshold (default: 0.62)
-#   --seed-model     Bootstrap SignalModel from backtest DB before running
+# Upgraded: CLI arguments, parallel execution, ML training/testing
+#
+# v2.1 CHANGES:
+#   --train          Train XGBoost model from backtest DB data
+#   --use-model      Run backtest with trained model as additional gate
+#   --clear-data     Clear all backtest DB tables for fresh start
+#   --model-source   Choose training source (backtest/live/auto)
 # =============================================================
 
 import sys
@@ -44,11 +43,11 @@ Examples:
 
   # ── Data collection & ML training ──────────────────────
   python -m backtest.run --relaxed --store-db             # Collect training data
-  python -m backtest.run --collect-ml                     # Record features→SignalModel
-  python -m backtest.run --use-model                      # Run with SignalModel v2
-  python -m backtest.run --walk-forward                   # Walk-forward validation
-  python -m backtest.run --walk-forward --train-months 6 --test-months 2
-  python -m backtest.run --seed-model                     # Bootstrap from backtest DB
+  python -m backtest.run --train                          # Train XGBoost from DB
+  python -m backtest.run --use-model                      # Run with model active
+  python -m backtest.run --relaxed --store-db --use-model # Collect + model combined
+  python -m backtest.run --train --model-source backtest  # Force backtest data
+  python -m backtest.run --clear-data                     # Clear DB for fresh start
   python -m backtest.run --model-status                   # Show model info
         """)
 
@@ -114,78 +113,59 @@ Examples:
 
     # ── ML model commands ─────────────────────────────────
     model_group = parser.add_argument_group(
-        'ML Model Training & Usage',
-        'Train and use the XGBoost model to filter trades')
+        'ML Gate v3.0 — Strategy-Informed ML',
+        'Train and use the 60-feature ML gate to filter/replaces consensus gates')
     model_group.add_argument(
         '--train', action='store_true',
-        help='Train SignalModel from backtest DB data and exit.')
+        help='Train ML Gate v3.0 from backtest DB data and exit. '
+             'Requires --store-db data from a previous run.')
     model_group.add_argument(
         '--model-source', choices=['backtest', 'live', 'auto'],
         default='backtest',
         help='Training data source (default: backtest).')
     model_group.add_argument(
         '--use-model', action='store_true',
-        help='Filter trades using SignalModel v2 (60 features, Strategy-Informed ML).')
-    model_group.add_argument(
-        '--collect-ml', action='store_true',
-        help='Record trade features + outcomes into SignalModel history for training.')
-    model_group.add_argument(
-        '--seed-model', action='store_true',
-        help='Bootstrap SignalModel from backtest DB before running.')
-    model_group.add_argument(
-        '--walk-forward', action='store_true',
-        help='Run walk-forward validation: train ML on first N months, test on next M.')
-    model_group.add_argument(
-        '--train-months', type=int, default=4,
-        help='Training window for walk-forward (default: 4 months).')
-    model_group.add_argument(
-        '--test-months', type=int, default=2,
-        help='Test window for walk-forward (default: 2 months).')
-    model_group.add_argument(
-        '--ml-threshold', type=float, default=0.62,
-        help='WIN probability threshold for ML gate (default: 0.62 = 62%%).')
+        help='Run backtest with ML Gate v3.0 replacing consensus gates. '
+             'Collects ALL strategy scores as features for the model.')
     model_group.add_argument(
         '--model-status', action='store_true',
-        help='Show SignalModel status and exit.')
+        help='Show model training status and exit.')
 
     return parser.parse_args()
 
 
 def _print_model_status():
-    """Display model training status."""
+    """Display ML Gate model status."""
     print("\n" + "="*60)
-    print("  APEX TRADER — MODEL STATUS")
+    print("  APEX TRADER — ML Gate v3.0 STATUS")
     print("="*60)
 
     try:
-        from ai_engine.model_trainer import get_model_status
-        from ai_engine.xgboost_classifier import is_model_trained
+        from ai_engine.ml_gate import is_model_trained, get_model_info
 
-        status = get_model_status()
+        if is_model_trained():
+            info = get_model_info()
+            print(f"\n  ML Gate v3.0:")
+            print(f"    Status:         TRAINED")
+            print(f"    Version:        {info.get('version', '?')}")
+            print(f"    Features:       {info.get('n_features', 60)}")
+            print(f"    Training trades: {info.get('total_trades', '?')}")
+            print(f"    Win rate:       {info.get('win_rate', '?')}%")
+            print(f"    Train accuracy: {info.get('train_accuracy', '?')}%")
+            print(f"    Val accuracy:    {info.get('val_accuracy', '?')}%")
+            print(f"    Model size:     {info.get('model_size_kb', '?')} KB")
+            print(f"    Trained at:     {info.get('trained_at', '?')[:19]}")
 
-        # XGBoost
-        xgb = status['xgboost']
-        if xgb['trained']:
-            print(f"\n  XGBoost Model:")
-            print(f"    Status:    TRAINED")
-            print(f"    File:      {xgb['path']}")
-            print(f"    Size:      {xgb['size_kb']} KB")
-            print(f"    Age:       {xgb.get('age_hours', '?')} hours ago")
+            top = info.get('top_features', [])
+            if top:
+                print(f"\n  Top 5 Features:")
+                for fname, imp in top[:5]:
+                    bar = '#' * int(imp * 200)
+                    print(f"    {fname:30s} {imp:.4f}  {bar}")
         else:
-            print(f"\n  XGBoost Model:")
+            print(f"\n  ML Gate v3.0:")
             print(f"    Status:    NOT TRAINED")
-            print(f"    Action:    Run --relaxed --store-db first, then --train")
-
-        # LSTM
-        lstm = status['lstm']
-        if lstm['trained']:
-            print(f"\n  LSTM Model:")
-            print(f"    Status:    TRAINED")
-            print(f"    Size:      {lstm['size_kb']} KB")
-            print(f"    Age:       {lstm.get('age_hours', '?')} hours ago")
-        else:
-            print(f"\n  LSTM Model:")
-            print(f"    Status:    NOT TRAINED (not recommended yet)")
+            print(f"    Action:    Run --relaxed --store-db --no-limit, then --train")
 
         # DB stats
         try:
@@ -195,17 +175,11 @@ def _print_model_status():
             print(f"    Total trades:      {stats.get('total_trades', 0)}")
             print(f"    Total wins:        {stats.get('total_wins', 0)}")
             print(f"    Blocked signals:   {stats.get('total_blocked_signals', 0)}")
-            print(f"    Executed signals:  {stats.get('total_executed_signals', 0)}")
             wr = stats.get('win_rate', 0)
             print(f"    Overall win rate:  {wr}%")
-            if wr > 0:
-                print(f"    Ready to train:    YES (50+ trades available)")
-            else:
-                print(f"    Ready to train:    NO (need 50+ trades)")
         except Exception as e:
             print(f"\n  DB Stats:  Error loading: {e}")
 
-        print(f"\n  Models directory: {status['models_dir']}")
         print("="*60 + "\n")
 
     except Exception as e:
@@ -213,36 +187,48 @@ def _print_model_status():
 
 
 def _train_model(model_source: str):
-    """Train the XGBoost model and display results."""
+    """Train the ML Gate v3.0 model and display results."""
     print("\n" + "="*60)
-    print("  APEX TRADER — XGBoost MODEL TRAINING")
+    print("  APEX TRADER — ML Gate v3.0 TRAINING")
+    print("  (Strategy-Informed: 60 features including all 10 strategy scores)")
     print("="*60)
 
     try:
-        from ai_engine.model_trainer import train_xgboost
+        from ai_engine.ml_gate import train_model
 
         print(f"\n  Training source: {model_source}")
         print(f"  This may take a moment...\n")
 
-        result = train_xgboost(source=model_source)
+        result = train_model(source=model_source)
 
         if result['status'] == 'trained':
             print(f"  Training: SUCCESS")
-            print(f"  Source:   {result.get('source', model_source)}")
+            print(f"  Version:  {result.get('version', '3.0')}")
             print(f"  Trades:   {result.get('total_trades', 0)} "
                   f"({result.get('wins', 0)}W / {result.get('losses', 0)}L)")
             print(f"  WR:       {result.get('win_rate', 0)}%")
             print(f"  Train Acc:{result.get('train_accuracy', '?')}%")
             print(f"  Val Acc:  {result.get('val_accuracy', '?')}%")
+            print(f"  Features: {result.get('n_features', 60)}")
+            print(f"  Best Iter:{result.get('best_iteration', '?')}")
             print(f"  Model:    {result.get('model_size_kb', '?')} KB")
-            print(f"  Path:     ai_engine/models/xgb_model.pkl")
+            print(f"  Path:     ai_engine/models/ml_gate_v3.pkl")
 
             # Top features
             if 'top_features' in result:
-                print(f"\n  Top 10 Features:")
+                print(f"\n  Top 15 Features:")
                 for fname, imp in result['top_features']:
-                    bar = '#' * int(imp * 100)
-                    print(f"    {fname:25s} {imp:.4f}  {bar}")
+                    bar = '#' * int(imp * 200)
+                    print(f"    {fname:30s} {imp:.4f}  {bar}")
+
+            # Calibration
+            calibration = result.get('calibration', [])
+            if calibration:
+                print(f"\n  Calibration (predicted vs actual win rate):")
+                for bucket in calibration:
+                    for name, cal in bucket.items():
+                        print(f"    {name}: pred={cal['predicted']}% "
+                              f"actual={cal['actual']}% (n={cal['count']})")
 
             print(f"\n  Model persists after restart — saved to disk.")
             print(f"  Use --use-model in your next backtest to activate.")
@@ -250,8 +236,8 @@ def _train_model(model_source: str):
             print(f"  Training: {result['status'].upper()}")
             print(f"  Reason:   {result.get('reason', 'Unknown')}")
             print(f"\n  To fix this:")
-            print(f"    1. Run: python -m backtest.run --relaxed --store-db")
-            print(f"       (collects trade data with rich features)")
+            print(f"    1. Run: python -m backtest.run --relaxed --store-db --no-limit")
+            print(f"       (collects trade data with rich features from all pairs)")
             print(f"    2. Then: python -m backtest.run --train")
 
         print("="*60 + "\n")
@@ -444,9 +430,7 @@ def main():
                     strategies_filter=strategies,
                     relaxed_mode=args.relaxed,
                     store_db=args.store_db,
-                    use_model=args.use_model,
-                    collect_ml_data=args.collect_ml or args.use_model,
-                    ml_threshold=args.ml_threshold,
+                    use_model=use_model,
                     run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                     unlimited_positions=args.no_limit,
                 )

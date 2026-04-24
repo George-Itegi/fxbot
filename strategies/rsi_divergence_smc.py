@@ -26,7 +26,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "RSI_DIVERGENCE_SMC"
-MIN_SCORE     = 50
+MIN_SCORE     = 68
 VERSION       = "1.0"
 
 # --- Parameters ---
@@ -276,8 +276,7 @@ def evaluate(symbol: str,
                 confluence.append("SMC_BIAS_ALIGNED")
                 # Still proceed — not strictly mandatory
             else:
-                score -= 10
-                confluence.append("NO_SMC_CONFIRM_PENALTY")
+                return None  # No SMC confirmation at all
         else:
             return None
 
@@ -391,7 +390,7 @@ def evaluate(symbol: str,
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
-    if len(confluence) < 3:
+    if len(confluence) < 5:
         return None
 
     # ── Score threshold ─────────────────────────────────
