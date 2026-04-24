@@ -305,6 +305,20 @@ def store_trade(trade, master_report: dict = None,
         except Exception:
             pass
 
+        # ── Dedup: skip if this exact trade already exists ──
+        c.execute("""
+            SELECT id FROM backtest_trades
+            WHERE symbol = %s AND strategy = %s AND direction = %s
+              AND entry_time = %s AND run_id = %s
+            LIMIT 1
+        """, (trade.symbol, trade.strategy, trade.direction,
+               entry_time_str, run_id))
+        if c.fetchone():
+            c.close()
+            conn.close()
+            log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
+            return
+
         # 67 columns = 66 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
@@ -441,6 +455,19 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
         if not timestamp_str or len(timestamp_str) < 10:
             from datetime import datetime
             timestamp_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+        # ── Dedup: skip if this exact signal already exists ──
+        c.execute("""
+            SELECT id FROM backtest_signals
+            WHERE symbol = %s AND strategy = %s AND direction = %s
+              AND timestamp = %s AND run_id = %s
+            LIMIT 1
+        """, (symbol, strategy, direction, timestamp_str, run_id))
+        if c.fetchone():
+            c.close()
+            conn.close()
+            log.debug(f"[DB_STORE] Skipping duplicate signal: {symbol} {strategy} {timestamp_str}")
+            return
 
         c.execute("""
             INSERT INTO backtest_signals (
