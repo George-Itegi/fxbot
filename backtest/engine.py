@@ -54,6 +54,7 @@ class BacktestConfig:
     store_db: bool = False         # Store trades/signals in MySQL
     run_id: str = 'default'       # Run identifier for DB grouping
     use_model: bool = False        # Use trained XGBoost model as additional gate
+    unlimited_positions: bool = False  # Remove max open position limits
 
 
 def get_pip_size(symbol: str) -> float:
@@ -198,11 +199,13 @@ def run_backtest(config: BacktestConfig) -> dict:
     log.info(f"  Spread: {spread}p, Slippage: {SLIPPAGE_PIPS}p, Total cost: {total_slippage}p")
 
     # ── Initialize trade tracker ──────────────────────────
+    max_open = 9999 if config.unlimited_positions else MAX_OPEN_TRADES
+    max_per_sym = 9999 if config.unlimited_positions else MAX_PER_SYMBOL
     tracker = TradeTracker(
         starting_balance=STARTING_BALANCE,
         pip_value_per_lot=pip_value,
-        max_open=MAX_OPEN_TRADES,
-        max_per_symbol=MAX_PER_SYMBOL,
+        max_open=max_open,
+        max_per_symbol=max_per_sym,
         partial_tp_enabled=PARTIAL_TP_ENABLED,
         atr_trail_enabled=ATR_TRAIL_ENABLED,
         dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
@@ -661,7 +664,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                           scan_every: int = 15, relaxed_mode: bool = False,
                           store_db: bool = False, run_id: str = 'default',
                           max_trades_per_symbol: int = 9999,
-                          use_model: bool = False) -> list:
+                          use_model: bool = False, unlimited_positions: bool = False) -> list:
     """
     Run all symbols in parallel on the same M1 timeline.
     Each symbol gets its own TradeTracker, strategies scan independently,
@@ -729,11 +732,13 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         symbol_pipval[sym] = pip_value
         symbol_spread[sym] = spread + SLIPPAGE_PIPS
 
+        max_open = 9999 if unlimited_positions else MAX_OPEN_TRADES
+        max_per_sym = 9999 if unlimited_positions else MAX_PER_SYMBOL
         symbol_trackers[sym] = TradeTracker(
             starting_balance=STARTING_BALANCE,
             pip_value_per_lot=pip_value,
-            max_open=MAX_OPEN_TRADES,
-            max_per_symbol=MAX_PER_SYMBOL,
+            max_open=max_open,
+            max_per_symbol=max_per_sym,
             partial_tp_enabled=False if relaxed_mode else PARTIAL_TP_ENABLED,
             atr_trail_enabled=False if relaxed_mode else ATR_TRAIL_ENABLED,
             dynamic_tp_enabled=False if relaxed_mode else DYNAMIC_TP_EXTENSION_ENABLED,

@@ -106,6 +106,10 @@ Examples:
         '--parallel', action='store_true',
         help='Run all symbols in parallel on the same M1 timeline (like live trading). '
              'Much faster and more realistic than sequential execution.')
+    parser.add_argument(
+        '--no-limit', action='store_true',
+        help='Remove max open position limits (no cap on total trades, '
+             'multiple trades per symbol allowed). Use for data collection.')
 
     # ── ML model commands ─────────────────────────────────
     model_group = parser.add_argument_group(
@@ -408,6 +412,7 @@ def main():
                 use_model=use_model,
                 run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                 max_trades_per_symbol=args.max_trades if args.max_trades > 0 else 9999,
+                unlimited_positions=args.no_limit,
             )
         else:
             # ── Sequential mode: one symbol at a time (original) ──
@@ -425,6 +430,7 @@ def main():
                     store_db=args.store_db,
                     use_model=use_model,
                     run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
+                    unlimited_positions=args.no_limit,
                 )
 
                 result = run_backtest(config)
