@@ -86,6 +86,16 @@ def evaluate(symbol: str,
     ob_top    = float(nearest_ob.get('top', 0))
     ob_bottom = float(nearest_ob.get('bottom', 0))
     ob_mid    = float(nearest_ob.get('mid', 0))
+    ob_dist   = float(nearest_ob.get('pips_away', 0))
+
+    # ── OB Freshness Gate ──
+    # OBs older than ~20 H1 bars are stale — institutional interest fades.
+    # Use pips_away as a proxy: if price has moved >30 pips away since OB formed,
+    # it's likely an old zone that has lost relevance.
+    # Exception: large moves are fine if price has RETURNED to the zone (touched)
+    MAX_OB_AGE_PIPS = 30.0
+    if ob_dist > MAX_OB_AGE_PIPS:
+        return None
 
     # ── MANDATORY: Price must be inside or touching the OB zone ──
     # Tighter tolerance than before — price must actually be IN the zone

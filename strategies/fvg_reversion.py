@@ -381,7 +381,13 @@ def evaluate(symbol: str,
         return None
 
     # ── Calculate SL/TP from FVG zone ─────────────────────
-    risk = _calc_risk_reward(best_fvg, close_price, direction, pip_size)
+    # Entry at FVG edge (not candle close) for optimal R:R
+    if direction == "BUY":
+        entry_price = round(best_fvg['bottom'], 5)  # Enter at demand zone bottom
+    else:
+        entry_price = round(best_fvg['top'], 5)    # Enter at supply zone top
+
+    risk = _calc_risk_reward(best_fvg, entry_price, direction, pip_size)
 
     # Verify minimum R:R of 2:1
     if risk['sl_pips'] > 0:
@@ -393,12 +399,12 @@ def evaluate(symbol: str,
 
     log.info(f"[{STRATEGY_NAME}] {direction} {symbol}"
              f" Score:{score} | FVG:{best_fvg['type']} gap={gap_pips}p"
-             f" quality={fvg_quality}"
+             f" quality={fvg_quality} entry={entry_price:.5f}"
              f" | {', '.join(confluence)}")
 
     return {
         "direction":   direction,
-        "entry_price": close_price,
+        "entry_price": entry_price,
         "sl_price":    risk['sl_price'],
         "tp1_price":   risk['tp1_price'],
         "tp2_price":   risk['tp2_price'],

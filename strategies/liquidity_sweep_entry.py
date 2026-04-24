@@ -100,6 +100,13 @@ def evaluate(symbol: str,
     if last_sweep_reversal < 3.0:
         return None
 
+    # ── Reversal depth cap: real stop hunts sweep 3-12 pips ──
+    # A 30+ pip "sweep" is a real breakdown, not a stop hunt.
+    # Institutional liquidity grabs are shallow — they pierce
+    # the level by a few pips then reverse hard.
+    if last_sweep_reversal > 15.0:
+        return None
+
     # ── MANDATORY: Delta must confirm the reversal direction ──
     # FIXED: In v1.0, delta was a bonus. Now it's required.
     # A sweep without flow confirmation is just noise.
