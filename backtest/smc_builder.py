@@ -208,56 +208,94 @@ def _find_nearest_ob(df_h1: pd.DataFrame, current_price: float) -> dict:
 
 
 def _find_last_sweep(df_h1: pd.DataFrame) -> dict:
-    """Find the most recent liquidity sweep."""
-    recent = df_h1.tail(30)
+    """
+    Find the most recent liquidity sweep using proper swing point detection.
+    A sweep occurs when price pierces a swing high/low then reverses.
+    """
+    recent = df_h1.tail(50)
+    if len(recent) < 20:
+        return {}
+
     pip_size = _guess_pip_size(float(recent.iloc[-1]['close']))
-
-    # Get recent swing highs/lows
     highs = recent['high'].values
-    lows  = recent['low'].values
+    lows = recent['low'].values
+    closes = recent['close'].values
+    n = len(highs)
 
-    last_swing_high = max(highs[:-3]) if len(highs) > 3 else highs[-2]
-    last_swing_low  = min(lows[:-3]) if len(lows) > 3 else lows[-2]
+    # Detect proper swing points (local extrema with lookback=5)
+    swing_length = 5
+    swing_highs = []  # (index, price)
+    swing_lows = []
 
-    current = float(recent.iloc[-1]['close'])
-    prev_close = float(recent.iloc[-2]['close'])
+    for i in range(swing_length, n - swing_length):
+        if highs[i] == max(highs[i - swing_length:i + swing_length + 1]):
+            swing_highs.append((i, highs[i]))
+        if lows[i] == min(lows[i - swing_length:i + swing_length + 1]):
+            swing_lows.append((i, lows[i]))
 
-    # Check for sweep of high (price went above then reversed)
-    sweep = None
-    for i in range(1, len(recent)):
-        if recent.iloc[i]['high'] > last_swing_high:
-            reversal = last_swing_high - recent.iloc[i]['close']
-            if reversal > pip_size * 3:
-                sweep = {
-                    'type': 'HIGH_SWEEP',
-                    'swept_level': round(last_swing_high, 5),
-                    'bias': 'BEARISH' if recent.iloc[i]['close'] < last_swing_high else 'BULLISH',
-                    'reversal_pips': round(reversal / pip_size, 1),
-                    'time': str(recent.iloc[i]['time']),
-                }
+    if not swing_highs and not swing_lows:
+        return {}
+
+    best_sweep = None
+    sweep_min_reversal = 3.0  # Minimum 3 pips reversal
+
+    # Check for HIGH sweeps (price pierced above swing high, then reversed)
+    for si, (sidx, sprice) in enumerate(swing_highs):
+        if si >= len(swing_highs) - 1:
+            break
+        # Look at bars AFTER this swing high until the next swing high
+        next_si = si + 1
+        end_idx = swing_highs[next_si][0] if next_si < len(swing_highs) else n
+        for j in range(sidx + 1, min(end_idx, n)):
+            if highs[j] > sprice:
+                # Pierced above swing high — check for reversal
+                reversal_pips = (highs[j] - closes[j]) / pip_size
+                if reversal_pips >= sweep_min_reversal and closes[j] < sprice:
+                    if best_sweep is None or sidx > best_sweep[0]:
+                        best_sweep = (sidx, sprice, 'HIGH_SWEEP', 'BEARISH',
+                                      reversal_pips, j)
+                    break
+            elif closes[j] > sprice * 1.003:
+                # Price moved above and stayed — not a sweep, break
                 break
 
-    if sweep is None:
-        for i in range(1, len(recent)):
-            if recent.iloc[i]['low'] < last_swing_low:
-                reversal = recent.iloc[i]['close'] - last_swing_low
-                if reversal > pip_size * 3:
-                    sweep = {
-                        'type': 'LOW_SWEEP',
-                        'swept_level': round(last_swing_low, 5),
-                        'bias': 'BULLISH' if recent.iloc[i]['close'] > last_swing_low else 'BEARISH',
-                        'reversal_pips': round(reversal / pip_size, 1),
-                        'time': str(recent.iloc[i]['time']),
-                    }
+    # Check for LOW sweeps (price pierced below swing low, then reversed)
+    for si, (sidx, sprice) in enumerate(swing_lows):
+        if si >= len(swing_lows) - 1:
+            break
+        next_si = si + 1
+        end_idx = swing_lows[next_si][0] if next_si < len(swing_lows) else n
+        for j in range(sidx + 1, min(end_idx, n)):
+            if lows[j] < sprice:
+                reversal_pips = (closes[j] - lows[j]) / pip_size
+                if reversal_pips >= sweep_min_reversal and closes[j] > sprice:
+                    if best_sweep is None or sidx > best_sweep[0]:
+                        best_sweep = (sidx, sprice, 'LOW_SWEEP', 'BULLISH',
+                                      reversal_pips, j)
                     break
+            elif closes[j] < sprice * 0.997:
+                break
 
-    return sweep if sweep else {}
+    if best_sweep:
+        sidx, sprice, stype, bias, rev_pips, sweep_bar = best_sweep
+        return {
+            'type': stype,
+            'swept_level': round(sprice, 5),
+            'bias': bias,
+            'reversal_pips': round(rev_pips, 1),
+            'time': str(recent.iloc[sweep_bar].get('time', '')),
+        }
+
+    return {}
 
 
 def _find_nearest_fvg(df_h1, current_price):
     """Find nearest Fair Value Gap."""
     pip_size = _guess_pip_size(current_price)
     recent = df_h1.tail(30)
+
+    best_fvg = None
+    best_dist = 999
 
     for i in range(2, len(recent)):
         bar1 = recent.iloc[i-2]
@@ -268,41 +306,51 @@ def _find_nearest_fvg(df_h1, current_price):
         if bar3['low'] > bar1['high']:
             gap = bar3['low'] - bar1['high']
             gap_pips = gap / pip_size
-            if gap_pips >= 3:  # Minimum 3 pips
+            if gap_pips >= 2.5:  # Minimum 2.5 pips (match strategy)
                 mid = (bar1['high'] + bar3['low']) / 2
                 distance = abs(current_price - mid) / pip_size
-                if distance <= 50:
-                    return {
+                if distance <= 100 and distance < best_dist:
+                    # Check fill: scan ALL subsequent bars (not just bar2)
+                    filled = _check_fvg_filled(recent, i, 'BULLISH', bar1['high'])
+                    quality = min(100, int(gap_pips * 2) + (20 if distance < 20 else 10 if distance < 50 else 0) + (30 if not filled else 0))
+                    best_fvg = {
                         'type': 'BULLISH_FVG',
                         'bottom': round(bar1['high'], 5),
                         'top': round(bar3['low'], 5),
                         'mid': round(mid, 5),
                         'gap_pips': round(gap_pips, 1),
-                        'filled': bar2['low'] <= bar1['high'],
+                        'filled': filled,
+                        'quality_score': quality,
                     }
+                    best_dist = distance
 
         # Bearish FVG: gap between bar3 high and bar1 low
         elif bar1['low'] > bar3['high']:
             gap = bar1['low'] - bar3['high']
             gap_pips = gap / pip_size
-            if gap_pips >= 3:
+            if gap_pips >= 2.5:
                 mid = (bar3['high'] + bar1['low']) / 2
                 distance = abs(current_price - mid) / pip_size
-                if distance <= 50:
-                    return {
+                if distance <= 100 and distance < best_dist:
+                    filled = _check_fvg_filled(recent, i, 'BEARISH', bar1['low'])
+                    quality = min(100, int(gap_pips * 2) + (20 if distance < 20 else 10 if distance < 50 else 0) + (30 if not filled else 0))
+                    best_fvg = {
                         'type': 'BEARISH_FVG',
                         'bottom': round(bar3['high'], 5),
                         'top': round(bar1['low'], 5),
                         'mid': round(mid, 5),
                         'gap_pips': round(gap_pips, 1),
-                        'filled': bar2['high'] >= bar1['low'],
+                        'filled': filled,
+                        'quality_score': quality,
                     }
+                    best_dist = distance
 
-    return {}
+    return best_fvg if best_fvg else {}
 
 
 def _find_quality_fvgs(df_h1, current_price):
-    """Find all quality FVGs (gap >= 5 pips, unfilled, within 80 pips)."""
+    """Find all quality FVGs (gap >= 2.5 pips, unfilled, within 100 pips).
+    Quality scoring now matches live system: size + freshness + fill status."""
     pip_size = _guess_pip_size(current_price)
     recent = df_h1.tail(50)
     fvgs = []
@@ -315,12 +363,23 @@ def _find_quality_fvgs(df_h1, current_price):
         if bar3['low'] > bar1['high']:
             gap = bar3['low'] - bar1['high']
             gap_pips = gap / pip_size
-            if gap_pips >= 5:
+            if gap_pips >= 2.5:  # Lowered from 5 to match strategy MIN_FVG_SIZE_PIPS
                 mid = (bar1['high'] + bar3['low']) / 2
                 dist = abs(current_price - mid) / pip_size
-                quality = min(100, int(gap_pips * 3))
-                filled = bar2['low'] <= bar1['high']
-                if dist <= 80:
+                if dist <= 100:  # Widened from 80
+                    # Multi-factor quality score (matches live system)
+                    filled = _check_fvg_filled(recent, i, 'BULLISH', bar1['high'])
+                    quality = int(gap_pips * 2)  # Size component
+                    # Freshness bonus — closer FVGs are more relevant
+                    if dist < 20:
+                        quality += 20
+                    elif dist < 50:
+                        quality += 10
+                    # Not filled bonus — unfilled gaps are more likely to fill
+                    if not filled:
+                        quality += 30
+                    quality = min(100, quality)
+
                     fvgs.append({
                         'type': 'BULLISH_FVG',
                         'bottom': round(bar1['high'], 5),
@@ -333,12 +392,20 @@ def _find_quality_fvgs(df_h1, current_price):
         elif bar1['low'] > bar3['high']:
             gap = bar1['low'] - bar3['high']
             gap_pips = gap / pip_size
-            if gap_pips >= 5:
+            if gap_pips >= 2.5:
                 mid = (bar3['high'] + bar1['low']) / 2
                 dist = abs(current_price - mid) / pip_size
-                quality = min(100, int(gap_pips * 3))
-                filled = bar2['high'] >= bar1['low']
-                if dist <= 80:
+                if dist <= 100:
+                    filled = _check_fvg_filled(recent, i, 'BEARISH', bar1['low'])
+                    quality = int(gap_pips * 2)
+                    if dist < 20:
+                        quality += 20
+                    elif dist < 50:
+                        quality += 10
+                    if not filled:
+                        quality += 30
+                    quality = min(100, quality)
+
                     fvgs.append({
                         'type': 'BEARISH_FVG',
                         'bottom': round(bar3['high'], 5),
@@ -350,6 +417,24 @@ def _find_quality_fvgs(df_h1, current_price):
                     })
 
     return fvgs
+
+
+def _check_fvg_filled(recent, fvg_idx, fvg_type, level):
+    """
+    Check if an FVG has been filled by scanning ALL subsequent bars.
+    Matches live system behavior (not just the middle bar).
+    """
+    for j in range(fvg_idx + 1, len(recent)):
+        bar = recent.iloc[j]
+        if fvg_type == 'BULLISH':
+            # Bullish FVG filled when price drops into the gap
+            if bar['low'] <= level:
+                return True
+        elif fvg_type == 'BEARISH':
+            # Bearish FVG filled when price rises into the gap
+            if bar['high'] >= level:
+                return True
+    return False
 
 
 def _find_nearest_pool(df_h1, current_price):

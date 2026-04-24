@@ -65,7 +65,8 @@ def evaluate(symbol: str,
     else:
         pip_size = 0.0001
 
-    atr_pips = features.get("atr_m15", 10)
+    atr_raw = features.get("atr_m15", 0)
+    atr_pips = atr_raw / pip_size if atr_raw > 0 else 10.0
     if atr_pips < 3.0:
         return None
 
