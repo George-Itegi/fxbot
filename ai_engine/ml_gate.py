@@ -439,17 +439,17 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.
              max(float(row.get('sl_pips', 10) or 10), 0.1)),
             1.0 if str(row.get('direction', '')) == 'BUY' else -1.0,
 
-            # Strategy scores (10) — from passed dict
-            float(ss.get('SMC_OB_REVERSAL', 0) or 0),
-            float(ss.get('LIQUIDITY_SWEEP_ENTRY', 0) or 0),
-            float(ss.get('VWAP_MEAN_REVERSION', 0) or 0),
-            float(ss.get('DELTA_DIVERGENCE', 0) or 0),
-            float(ss.get('TREND_CONTINUATION', 0) or 0),
-            float(ss.get('FVG_REVERSION', 0) or 0),
-            float(ss.get('EMA_CROSS_MOMENTUM', 0) or 0),
-            float(ss.get('RSI_DIVERGENCE_SMC', 0) or 0),
-            float(ss.get('BREAKOUT_MOMENTUM', 0) or 0),
-            float(ss.get('STRUCTURE_ALIGNMENT', 0) or 0),
+            # Strategy scores (10) — directly from DB columns
+            float(row.get('ss_smc_ob', 0) or 0),
+            float(row.get('ss_liquidity_sweep', 0) or 0),
+            float(row.get('ss_vwap_reversion', 0) or 0),
+            float(row.get('ss_delta_divergence', 0) or 0),
+            float(row.get('ss_trend_continuation', 0) or 0),
+            float(row.get('ss_fvg_reversion', 0) or 0),
+            float(row.get('ss_ema_cross', 0) or 0),
+            float(row.get('ss_rsi_divergence', 0) or 0),
+            float(row.get('ss_breakout_momentum', 0) or 0),
+            float(row.get('ss_structure_align', 0) or 0),
 
             # Consensus (3) — not fully in DB, use defaults
             float(row.get('agreement_groups', 1) or 1),
@@ -627,6 +627,10 @@ def train_model(source: str = 'auto') -> dict:
                     final_score, market_score, smc_score, htf_approved, htf_score,
                     combined_bias, agreement_groups,
                     spread_pips, slippage_pips,
+                    ss_smc_ob, ss_liquidity_sweep, ss_vwap_reversion,
+                    ss_delta_divergence, ss_trend_continuation,
+                    ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
+                    ss_breakout_momentum, ss_structure_align,
                     profit_pips, profit_r, win
                 FROM backtest_trades
                 WHERE source = 'BACKTEST'

@@ -583,6 +583,19 @@ def run_backtest(config: BacktestConfig) -> dict:
             if len(confluence) < min_conv:
                 continue
 
+            # Collect ALL strategy scores for ML training data
+            if config.store_db:
+                try:
+                    from ai_engine.ml_gate import collect_all_strategy_scores
+                    all_scores = collect_all_strategy_scores(
+                        symbol, s_m1, s_m5, s_m15, s_h1, s_h4,
+                        smc_report, market_report,
+                        market_state, session, master_report)
+                except Exception:
+                    all_scores = None
+            else:
+                all_scores = None
+
         # ── Check if we can open a trade ─────────────────
         if not tracker.can_open(symbol):
             continue
@@ -649,6 +662,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             'market_report': market_report,
             'smc_report': smc_report,
             'flow': flow,
+            'strategy_scores': all_scores,
         }
 
         # ── Store signal + link to trade ticket in DB ────────
@@ -716,6 +730,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     run_id=config.run_id,
                     spread_pips=spread,
                     slippage_pips=SLIPPAGE_PIPS,
+                    strategy_scores=reports.get('strategy_scores'),
                 )
                 # Also backfill outcome + profit_r into backtest_signals
                 update_signal_outcome(trade, run_id=config.run_id)
@@ -1127,6 +1142,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 'market_report': market_report,
                 'smc_report': smc_report,
                 'flow': flow,
+                'strategy_scores': all_scores if ml_gate_active else None,
             }
 
             # Store executed signal
@@ -1200,6 +1216,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         run_id=run_id,
                         spread_pips=spread,
                         slippage_pips=SLIPPAGE_PIPS,
+                        strategy_scores=reports.get('strategy_scores'),
                     )
                     update_signal_outcome(trade, run_id=run_id)
                     stored += 1

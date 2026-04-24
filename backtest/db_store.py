@@ -204,7 +204,18 @@ def _auto_migrate_signals(cursor, conn):
         ('backtest_signals', 'trade_ticket',  'INT DEFAULT NULL'),
         ('backtest_signals', 'confluence',     'TEXT'),
         ('backtest_trades', 'htf_score',      'INT DEFAULT 50'),
-        ('backtest_trades', 'price_position', 'VARCHAR(20) DEFAULT \'INSIDE_VA\''),
+        ('backtest_trades', 'price_position', "VARCHAR(20) DEFAULT 'INSIDE_VA'"),
+        # ── ML Gate v3.0: 10 strategy score columns ──
+        ('backtest_trades', 'ss_smc_ob',           'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_liquidity_sweep',  'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_vwap_reversion',   'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_delta_divergence', 'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_trend_continuation','DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_fvg_reversion',    'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_ema_cross',        'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_rsi_divergence',   'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_breakout_momentum','DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_structure_align',  'DOUBLE DEFAULT 0'),
     ]
     for table, col, col_def in migrations:
         try:
@@ -255,10 +266,14 @@ def _safe_int(val, default=0) -> int:
 def store_trade(trade, master_report: dict = None,
                 market_report: dict = None, smc_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
-                spread_pips: float = 0.0, slippage_pips: float = 0.0):
+                spread_pips: float = 0.0, slippage_pips: float = 0.0,
+                strategy_scores: dict = None):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
+
+    strategy_scores: dict of {strategy_name: score} for ALL 10 strategies.
+                     This is the KEY data for ML Gate v3.0 training.
     """
     try:
         conn = _get_or_create_conn()
@@ -284,6 +299,19 @@ def store_trade(trade, master_report: dict = None,
         bias_map = {'BULLISH': 1.0, 'BEARISH': -1.0, 'NEUTRAL': 0.0}
         delta_bias_val = bias_map.get(str(delta_d.get('bias', 'NEUTRAL')), 0.0)
         rd_bias_val = bias_map.get(str(rd_d.get('bias', 'NEUTRAL')), 0.0)
+
+        # Encode strategy scores (KEY for ML Gate v3.0)
+        ss = strategy_scores or {}
+        ss_smc_ob           = _safe_float(ss.get('SMC_OB_REVERSAL', 0))
+        ss_liquidity_sweep  = _safe_float(ss.get('LIQUIDITY_SWEEP_ENTRY', 0))
+        ss_vwap_reversion   = _safe_float(ss.get('VWAP_MEAN_REVERSION', 0))
+        ss_delta_divergence = _safe_float(ss.get('DELTA_DIVERGENCE', 0))
+        ss_trend_continuation = _safe_float(ss.get('TREND_CONTINUATION', 0))
+        ss_fvg_reversion    = _safe_float(ss.get('FVG_REVERSION', 0))
+        ss_ema_cross        = _safe_float(ss.get('EMA_CROSS_MOMENTUM', 0))
+        ss_rsi_divergence   = _safe_float(ss.get('RSI_DIVERGENCE_SMC', 0))
+        ss_breakout_momentum = _safe_float(ss.get('BREAKOUT_MOMENTUM', 0))
+        ss_structure_align  = _safe_float(ss.get('STRUCTURE_ALIGNMENT', 0))
 
         # Outcome: was this a win?
         is_win = 1 if trade.profit_pips > 0 else 0
@@ -319,7 +347,7 @@ def store_trade(trade, master_report: dict = None,
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
             return
 
-        # 67 columns = 66 %s + 1 literal 'BACKTEST'
+        # 77 columns = 76 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -339,6 +367,10 @@ def store_trade(trade, master_report: dict = None,
                 spread_pips, slippage_pips,
                 partial_tp_triggered, partial_tp_pips, partial_tp_usd,
                 trail_activated, tp_extended, highest_profit_pips,
+                ss_smc_ob, ss_liquidity_sweep, ss_vwap_reversion,
+                ss_delta_divergence, ss_trend_continuation,
+                ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
+                ss_breakout_momentum, ss_structure_align,
                 source
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
@@ -347,7 +379,9 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,
                 'BACKTEST'
             )
         """, (
@@ -396,7 +430,7 @@ def store_trade(trade, master_report: dict = None,
             _safe_float(pd_d.get('pips_to_eq', 0)),
             struct_d.get('trend', 'RANGING'),
             _safe_int(htf_d.get('score', 50)),
-            _safe_float((mr.get('atr') or 0)),  # atr from market_report
+            _safe_float((mr.get('atr') or 0)),
             _safe_float(vwap_d.get('pip_from_vwap', 0)),
             _safe_float(prof_d.get('pip_to_poc', 0)),
             _safe_float(prof_d.get('va_width_pips', 0)),
@@ -409,6 +443,11 @@ def store_trade(trade, master_report: dict = None,
             1 if trade.trail_activated else 0,
             1 if trade.tp_extended else 0,
             _safe_float(trade.highest_profit_pips),
+            # ── Strategy scores (10 features for ML Gate v3.0) ──
+            ss_smc_ob, ss_liquidity_sweep, ss_vwap_reversion,
+            ss_delta_divergence, ss_trend_continuation,
+            ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
+            ss_breakout_momentum, ss_structure_align,
         ))
 
         conn.commit()
