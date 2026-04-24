@@ -65,7 +65,8 @@ def evaluate(symbol: str,
     else:
         pip_size = 0.0001
 
-    atr_pips = features.get("atr_m15", 10)
+    atr_raw = features.get("atr_m15", 0)
+    atr_pips = atr_raw / pip_size if atr_raw > 0 else 10.0
     if atr_pips < 3.0:
         return None
 
@@ -97,6 +98,13 @@ def evaluate(symbol: str,
 
     # Reversal must be meaningful (at least 3 pips)
     if last_sweep_reversal < 3.0:
+        return None
+
+    # ── Reversal depth cap: real stop hunts sweep 3-12 pips ──
+    # A 30+ pip "sweep" is a real breakdown, not a stop hunt.
+    # Institutional liquidity grabs are shallow — they pierce
+    # the level by a few pips then reverse hard.
+    if last_sweep_reversal > 15.0:
         return None
 
     # ── MANDATORY: Delta must confirm the reversal direction ──

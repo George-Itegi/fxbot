@@ -398,7 +398,7 @@ def evaluate(symbol: str,
 
     log.info(f"[{STRATEGY_NAME}] {direction} {symbol}"
              f" Score:{score} | FVG:{best_fvg['type']} gap={gap_pips}p"
-             f" quality={fvg_quality}"
+             f" quality={fvg_quality} entry={entry_price:.5f}"
              f" | {', '.join(confluence)}")
 
     return {

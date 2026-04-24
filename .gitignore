@@ -130,3 +130,11 @@ google-services.plist
 # Project specific
 data_layer/__pycache__/
 strategies/__pycache__/
+
+# Backtest cache — binary pickle files, never commit
+backtest/.cache/
+*.pkl
+
+# Database — local only
+database/*.db
+*.db
