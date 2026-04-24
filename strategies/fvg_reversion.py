@@ -9,8 +9,8 @@
 # BUY  when: price retraces INTO a bullish FVG (demand imbalance)
 # SELL when: price retraces INTO a bearish FVG (supply imbalance)
 #
-# Entry: at FVG midline (50% of gap = optimal entry zone)
-# SL:   below FVG zone (gap doesn't fill = thesis broken)
+# Entry: at FVG deep edge (bottom for BUY, top for SELL)
+# SL:   beyond FVG edge using ATR-based buffer (not fixed pips)
 # TP:   opposite edge of FVG (gap fill target)
 #
 # Win rate target: 60-68%
@@ -26,14 +26,15 @@ log = get_logger(__name__)
 
 STRATEGY_NAME = "FVG_REVERSION"
 MIN_SCORE     = 68
-VERSION       = "1.0"
+VERSION       = "1.1"
 
 # --- FVG Reversion Parameters ---
 MIN_FVG_QUALITY   = 35      # Lowered from 60 — quality = gap_pips*3, so 35 = ~12pips FVG
 MAX_FVG_DISTANCE  = 100     # Widened from 80 — more FVGs reachable
 MIN_FVG_SIZE_PIPS = 2.5     # Lowered from 3.0 — more FVGs qualify
 PARTIAL_FILL_TP   = 0.7     # Close 50% at 70% of gap fill (book profit early)
-SL_BUFFER_PIPS    = 2.0     # Extra pips beyond FVG edge for SL
+SL_BUFFER_PIPS    = 2.0     # Extra pips beyond FVG edge for SL (minimum)
+SL_ATR_MULTIPLIER = 0.5      # Use 50% of ATR as SL buffer (whichever is larger)
 
 
 def _get_pip_size(price: float) -> float:
@@ -73,16 +74,23 @@ def _fvg_direction(fvg: dict) -> str:
 
 
 def _calc_risk_reward(fvg: dict, price: float, direction: str,
-                      pip_size: float) -> dict:
+                      pip_size: float, atr_pips: float = 10.0) -> dict:
     """
     Calculate SL and TP based on FVG zone.
     SL: beyond the opposite edge of the FVG (thesis = gap fills)
     TP1: at FVG fill target (opposite edge)
     TP2: beyond FVG (let winner run to ATR extension)
+
+    SL uses the LARGER of fixed buffer or ATR-based buffer to prevent
+    tiny 2-pip stops on deep entries.
     """
+    # Use the larger of fixed buffer or ATR-based buffer
+    atr_buffer = max(SL_BUFFER_PIPS, atr_pips * SL_ATR_MULTIPLIER)
+
     if direction == "BUY":
         # BUY bullish FVG: price pulls back into demand zone
-        sl_price = round(fvg['bottom'] - SL_BUFFER_PIPS * pip_size, 5)
+        # Entry is at bottom (deep edge), SL below the far side
+        sl_price = round(fvg['bottom'] - atr_buffer * pip_size, 5)
         tp1_price = round(fvg['top'], 5)   # Fill target = top of gap
         sl_pips = round((price - sl_price) / pip_size, 1)
         tp1_pips = round((tp1_price - price) / pip_size, 1)
@@ -92,14 +100,15 @@ def _calc_risk_reward(fvg: dict, price: float, direction: str,
         tp2_pips = round((tp2_price - price) / pip_size, 1)
     else:
         # SELL bearish FVG: price pulls back into supply zone
-        sl_price = round(fvg['top'] + SL_BUFFER_PIPS * pip_size, 5)
+        # Entry is at top (deep edge), SL above the far side
+        sl_price = round(fvg['top'] + atr_buffer * pip_size, 5)
         tp1_price = round(fvg['bottom'], 5)  # Fill target = bottom of gap
         sl_pips = round((sl_price - price) / pip_size, 1)
         tp1_pips = round((price - tp1_price) / pip_size, 1)
         # TP2 = extend 1.5x beyond gap fill
         gap_size = fvg['top'] - fvg['bottom']
         tp2_price = round(tp1_price - gap_size * 0.5, 5)
-        tp2_pips = round((price - tp2_price) / pip_size, 1)
+        tp2_pips = round((tp2_price - price) / pip_size, 1)
 
     return {
         'sl_price':  sl_price,
@@ -386,9 +395,9 @@ def evaluate(symbol: str,
     else:
         entry_price = round(best_fvg['top'], 5)     # Enter at supply zone top
 
-    risk = _calc_risk_reward(best_fvg, entry_price, direction, pip_size)
+    risk = _calc_risk_reward(best_fvg, entry_price, direction, pip_size, atr_pips)
 
-    # Verify minimum R:R of 2:1
+    # Verify minimum R:R of 1.5:1
     if risk['sl_pips'] > 0:
         rr_ratio = risk['tp1_pips'] / risk['sl_pips']
         if rr_ratio < 1.5:
