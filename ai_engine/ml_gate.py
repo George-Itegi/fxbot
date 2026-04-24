@@ -542,21 +542,15 @@ def score_signal(signal: dict,
                  flow_data: dict,
                  all_strategy_scores: dict = None,
                  symbol: str = '',
-                 spread_pips: float = 0.0,
-                 relaxed_mode: bool = False) -> dict:
+                 spread_pips: float = 0.0) -> dict:
     """
     Main scoring function — extract features + predict win probability.
     Returns dict with probability and recommendation.
 
-    Standard thresholds:
+    Thresholds:
       >= 0.62 → TAKE (full size)
       0.50-0.62 → CAUTION (half size)
       < 0.50 → SKIP
-
-    Relaxed thresholds (more trades, slightly lower WR):
-      >= 0.50 → TAKE (full size)
-      0.40-0.50 → CAUTION (half size)
-      < 0.40 → SKIP
     """
     features = extract_features(
         signal, master_report, market_report, smc_report,
@@ -572,22 +566,12 @@ def score_signal(signal: dict,
     prob = predict(features)
     trained = os.path.exists(MODEL_PATH)
 
-    if relaxed_mode:
-        # Lower thresholds — more trades pass through
-        if prob >= 0.50:
-            rec = 'TAKE'
-        elif prob >= 0.40:
-            rec = 'CAUTION'
-        else:
-            rec = 'SKIP'
+    if prob >= 0.62:
+        rec = 'TAKE'
+    elif prob >= 0.50:
+        rec = 'CAUTION'
     else:
-        # Standard thresholds
-        if prob >= 0.62:
-            rec = 'TAKE'
-        elif prob >= 0.50:
-            rec = 'CAUTION'
-        else:
-            rec = 'SKIP'
+        rec = 'SKIP'
 
     return {
         'probability': prob,
