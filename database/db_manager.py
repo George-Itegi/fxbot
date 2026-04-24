@@ -250,7 +250,7 @@ def close_trade(ticket: int, exit_price: float,
                 INSERT INTO strategy_performance
                     (strategy, total_trades, wins, losses, breakevens,
                      total_pnl, win_rate, last_updated)
-                VALUES (%s, 1, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, 1, %s, %s, %s, %s, 0, %s)
                 ON DUPLICATE KEY UPDATE
                     total_trades = total_trades + 1,
                     wins         = wins + VALUES(wins),
