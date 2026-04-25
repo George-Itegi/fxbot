@@ -113,7 +113,7 @@ def get_ai_score(signal: dict,
                 symbol=symbol,
             )
             if result.get('trained'):
-                result['model_version'] = 'ml_gate_v3'
+                result['model_version'] = 'ml_gate_v3r'
                 return result
     except Exception:
         pass
@@ -127,7 +127,7 @@ def get_ai_score(signal: dict,
     except Exception:
         return {
             'ai_score': 50,
-            'probability': 0.5,
+            'predicted_r': 0.0,
             'recommendation': 'NEUTRAL',
             'trained': False,
             'model_version': 'none',

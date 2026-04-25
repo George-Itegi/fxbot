@@ -1,9 +1,10 @@
 # =============================================================
-# ai_engine/ml_gate.py  v3.0 — Strategy-Informed ML Gate
+# ai_engine/ml_gate.py  v3.1 — Strategy-Informed ML Gate (Regression)
 #
 # PURPOSE: Replace ALL 7 hardcoded gates with a single ML model
 # that learns which combinations of strategy scores + market features
-# predict winning trades.
+# predict profitable trades — now using REGRESSION (predict R-multiple)
+# instead of classification (predict win/loss).
 #
 # ARCHITECTURE:
 #   Layer 1 — Feature Engineering (63 features):
@@ -18,21 +19,30 @@
 #     - 6  volatility/state features
 #     - 3  symbol type features
 #     - 3  self-improvement features (recent win rates)
-#     = 60 total features
+#     = 63 total features
 #
-#   Layer 2 — ML Model (XGBoost):
-#     Input:  60-feature vector
-#     Output: WIN probability (0.0 - 1.0) for each direction
-#     Trained on: backtest_trades + backtest_signals + live trades
+#   Layer 2 — ML Model (XGBoost Regressor):
+#     Input:  63-feature vector
+#     Output: Predicted R-multiple (continuous float) per trade
+#     Trained on: backtest_trades with profit_r as target
+#     v3.1: Switched from XGBClassifier (binary) to XGBRegressor
 #
-#   Layer 3 — Execution Filter:
-#     >= 62% → TAKE trade (full size)
-#     50-62% → CAUTION (half size)
-#     < 50%  → SKIP
+#   Layer 3 — Execution Filter (R-based thresholds):
+#     >= R:0.5 → TAKE trade (good edge expected)
+#     0.0-0.5   → CAUTION (marginal edge)
+#     < 0.0     → SKIP (negative or zero expected R)
 #
 #   Layer 4 — Self-Improvement Loop:
 #     Every 50 closed trades → retrain on ALL historical data
-#     Log CV-AUC, top 10 features, calibration report
+#     Log MAE, R², correlation, top features, quintile calibration
+#
+# WHY REGRESSION over classification:
+#   Classification treats ALL wins equally (R:0.05 = R:5.0 → both = 1).
+#   Regression learns to distinguish high-quality trades (R:2.0+) from
+#   marginal scalps (R:0.05). This enables:
+#     1. Better trade selection (only take trades with high expected R)
+#     2. Kelly-style position sizing by confidence level
+#     3. True edge measurement (expected R per signal)
 #
 # BACKWARD COMPATIBLE:
 #   - Works with existing backtest_trades DB table (no schema change)
@@ -50,16 +60,22 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__),
-                          'models', 'ml_gate_v3.pkl')
+                          'models', 'ml_gate_v3r.pkl')
 META_PATH = os.path.join(os.path.dirname(__file__),
-                         'models', 'ml_gate_meta.json')
+                         'models', 'ml_gate_v3r_meta.json')
 
 MIN_TRADES_TO_TRAIN = 80   # Minimum trades before training
 RETRAIN_EVERY_N_TRADES = 50  # Auto-retrain frequency
 
+# ── Regression-specific constants ──
+R_CLIP_MIN = -2.0    # Clip R-multiple outliers below this
+R_CLIP_MAX = 5.0     # Clip R-multiple outliers above this
+TAKE_THRESHOLD = 0.5  # Minimum predicted R to TAKE a trade
+CAUTION_THRESHOLD = 0.0  # Below this → SKIP
+
 
 # ════════════════════════════════════════════════════════════════
-# FEATURE NAMES (60 total) — must match extract_features exactly
+# FEATURE NAMES (63 total) — must match extract_features exactly
 # ════════════════════════════════════════════════════════════════
 
 FEATURE_NAMES = [
@@ -311,7 +327,7 @@ def extract_features(signal: dict,
         recent_avg_r = float(si.get('recent_avg_r', 0.0))
         strategy_wr = float(si.get('strategy_wr', 0.5))
 
-        # ── Build the 60-feature vector ──
+        # ── Build the 63-feature vector ──
         features = [
             # Market quality (7)
             float(master_report.get('final_score', 0)),
@@ -522,7 +538,7 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.
 
 
 # ════════════════════════════════════════════════════════════════
-# LAYER 2: MODEL — PREDICT
+# LAYER 2: MODEL — PREDICT (Regression: returns R-multiple)
 # ════════════════════════════════════════════════════════════════
 
 def is_model_trained() -> bool:
@@ -550,19 +566,21 @@ def get_model_info() -> dict:
 
 def predict(features: np.ndarray) -> float:
     """
-    Predict win probability using trained model.
-    Returns 0.5 (neutral) if no model exists.
+    Predict expected R-multiple using trained regression model.
+    Returns 0.0 (neutral) if no model exists.
     """
     if not os.path.exists(MODEL_PATH):
-        return 0.5
+        return 0.0
     try:
         import joblib
         model = joblib.load(MODEL_PATH)
-        prob = float(model.predict_proba(features)[0][1])
-        return round(prob, 4)
+        predicted_r = float(model.predict(features)[0])
+        # Clip to reasonable range
+        predicted_r = max(R_CLIP_MIN, min(R_CLIP_MAX, predicted_r))
+        return round(predicted_r, 4)
     except Exception as e:
         log.error(f"[ML_GATE] Prediction failed: {e}")
-        return 0.5
+        return 0.0
 
 
 def score_signal(signal: dict,
@@ -574,13 +592,12 @@ def score_signal(signal: dict,
                  symbol: str = '',
                  spread_pips: float = 0.0) -> dict:
     """
-    Main scoring function — extract features + predict win probability.
-    Returns dict with probability and recommendation.
+    Main scoring function — extract features + predict expected R-multiple.
 
-    Thresholds:
-      >= 0.62 → TAKE (full size)
-      0.50-0.62 → CAUTION (half size)
-      < 0.50 → SKIP
+    R-based thresholds:
+      >= 0.5 → TAKE (good edge — expected return is at least 50% of risk)
+      0.0-0.5 → CAUTION (marginal edge — might take with reduced size)
+      < 0.0   → SKIP (negative or zero expected R)
     """
     features = extract_features(
         signal, master_report, market_report, smc_report,
@@ -588,23 +605,23 @@ def score_signal(signal: dict,
 
     if features is None:
         return {
-            'probability': 0.5,
+            'predicted_r': 0.0,
             'recommendation': 'NEUTRAL',
             'trained': False,
         }
 
-    prob = predict(features)
+    predicted_r = predict(features)
     trained = os.path.exists(MODEL_PATH)
 
-    if prob >= 0.62:
+    if predicted_r >= TAKE_THRESHOLD:
         rec = 'TAKE'
-    elif prob >= 0.50:
+    elif predicted_r >= CAUTION_THRESHOLD:
         rec = 'CAUTION'
     else:
         rec = 'SKIP'
 
     return {
-        'probability': prob,
+        'predicted_r': predicted_r,
         'recommendation': rec,
         'trained': trained,
         'features': features.tolist() if trained else None,
@@ -612,7 +629,7 @@ def score_signal(signal: dict,
 
 
 # ════════════════════════════════════════════════════════════════
-# LAYER 4: SELF-IMPROVEMENT — TRAIN
+# LAYER 4: SELF-IMPROVEMENT — TRAIN (Regression Model)
 # ════════════════════════════════════════════════════════════════
 
 def _json_default(obj):
@@ -626,15 +643,17 @@ def _json_default(obj):
 
 def train_model(source: str = 'auto') -> dict:
     """
-    Train the ML gate model from database.
+    Train the ML gate REGRESSION model from database.
+
+    Target: profit_r (R-multiple of each trade) — continuous float.
+    This allows the model to distinguish between a barely-profitable
+    scalp (R:+0.05) and a strong trend ride (R:+3.0), unlike binary
+    classification which treats both identically as "win = 1".
 
     Args:
         source: 'backtest' | 'live' | 'auto'
-            - backtest: train from backtest_trades table only
-            - live: train from live trades table
-            - auto: try backtest first, fallback to live
 
-    Returns dict with training results and metrics.
+    Returns dict with training results and regression metrics.
     """
     try:
         import xgboost as xgb
@@ -676,6 +695,7 @@ def train_model(source: str = 'auto') -> dict:
                   AND outcome IS NOT NULL
                   AND outcome != ''
                   AND win IS NOT NULL
+                  AND profit_r IS NOT NULL
                 ORDER BY entry_time ASC
             """)
             rows = cursor.fetchall()
@@ -702,18 +722,18 @@ def train_model(source: str = 'auto') -> dict:
                 'rows': len(rows),
             }
 
-        # ── Build feature matrix ──
+        # ── Build feature matrix + R-multiple target ──
         X = []
-        y = []
+        y = []  # R-multiple (continuous target)
 
         for row in rows:
             try:
                 features = extract_features_from_db(row)
                 if features is None:
                     continue
-                label = 1 if row.get('win') else 0
+                r_multiple = float(row.get('profit_r', 0) or 0)
                 X.append(features)
-                y.append(label)
+                y.append(r_multiple)
             except Exception:
                 continue
 
@@ -725,64 +745,84 @@ def train_model(source: str = 'auto') -> dict:
             }
 
         X = np.array(X, dtype=np.float32)
-        y = np.array(y, dtype=np.int32)
+        y_raw = np.array(y, dtype=np.float32)
 
-        # ── Class balance ──
-        win_count = int(y.sum())
-        loss_count = len(y) - win_count
+        # ── Clip outliers to prevent extreme R values from dominating loss ──
+        y = np.clip(y_raw, R_CLIP_MIN, R_CLIP_MAX)
+
+        # ── Target statistics ──
+        win_count = int((y_raw > 0).sum())
+        loss_count = int((y_raw <= 0).sum())
         wr = win_count / len(y) * 100
-        scale_pos = loss_count / win_count if win_count > 0 and win_count < loss_count else 1.0
+        mean_r = float(np.mean(y_raw))
+        median_r = float(np.median(y_raw))
+        std_r = float(np.std(y_raw))
+        positive_mean = float(np.mean(y_raw[y_raw > 0])) if win_count > 0 else 0.0
+        negative_mean = float(np.mean(y_raw[y_raw <= 0])) if loss_count > 0 else 0.0
 
-        log.info(f"[ML_GATE] Training data: {len(y)} trades "
-                 f"({win_count}W / {loss_count}L = {wr:.1f}% WR)")
+        log.info(f"[ML_GATE] Regression training: {len(y)} trades "
+                 f"({win_count}W / {loss_count}L = {wr:.1f}% WR, "
+                 f"mean_R={mean_r:.3f}, median_R={median_r:.3f})")
 
-        # ── Train with walk-forward validation ──
+        # ── Train/val split (no stratify — regression target is continuous) ──
         from sklearn.model_selection import train_test_split
         X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y)
+            X, y, test_size=0.2, random_state=42)
 
-        model = xgb.XGBClassifier(
-            n_estimators=200,
+        # ── XGBoost Regressor ──
+        model = xgb.XGBRegressor(
+            n_estimators=300,
             max_depth=5,
-            learning_rate=0.08,
-            use_label_encoder=False,
-            eval_metric='logloss',
+            learning_rate=0.05,
+            objective='reg:squarederror',
             random_state=42,
-            scale_pos_weight=scale_pos,
             min_child_weight=5,
             subsample=0.8,
             colsample_bytree=0.7,
             reg_alpha=0.1,
             reg_lambda=1.0,
-            early_stopping_rounds=20,
+            early_stopping_rounds=30,
         )
 
         model.fit(X_train, y_train,
                   eval_set=[(X_val, y_val)],
                   verbose=False)
 
-        train_acc = round(model.score(X_train, y_train) * 100, 1)
-        val_acc = round(model.score(X_val, y_val) * 100, 1)
+        # ── Regression metrics ──
+        train_preds = model.predict(X_train)
+        val_preds = model.predict(X_val)
+
+        train_mae = float(np.mean(np.abs(train_preds - y_train)))
+        val_mae = float(np.mean(np.abs(val_preds - y_val)))
+        val_rmse = float(np.sqrt(np.mean((val_preds - y_val) ** 2)))
+
+        # R² score (how much variance the model explains)
+        ss_res = np.sum((y_val - val_preds) ** 2)
+        ss_tot = np.sum((y_val - np.mean(y_val)) ** 2)
+        val_r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        # Pearson correlation (directional agreement)
+        if len(y_val) > 2 and np.std(y_val) > 0 and np.std(val_preds) > 0:
+            val_corr = float(np.corrcoef(y_val, val_preds)[0, 1])
+        else:
+            val_corr = 0.0
 
         # ── Feature importance (top 15) ──
         importance = model.feature_importances_
         top_features = sorted(zip(FEATURE_NAMES, importance),
                               key=lambda x: x[1], reverse=True)[:15]
 
-        # ── Calibration check ──
-        # Bucket predictions and check actual win rate per bucket
-        val_probs = model.predict_proba(X_val)[:, 1]
-        calibration = _check_calibration(val_probs, y_val)
+        # ── Quintile calibration ──
+        calibration = _check_regression_calibration(val_preds, y_val)
 
         # ── Retrain on full data for production ──
-        model_final = xgb.XGBClassifier(
-            n_estimators=model.best_iteration if hasattr(model, 'best_iteration') else 200,
+        best_n = getattr(model, 'best_iteration', 300)
+        model_final = xgb.XGBRegressor(
+            n_estimators=best_n,
             max_depth=5,
-            learning_rate=0.08,
-            use_label_encoder=False,
-            eval_metric='logloss',
+            learning_rate=0.05,
+            objective='reg:squarederror',
             random_state=42,
-            scale_pos_weight=scale_pos,
             min_child_weight=5,
             subsample=0.8,
             colsample_bytree=0.7,
@@ -797,16 +837,32 @@ def train_model(source: str = 'auto') -> dict:
 
         meta = {
             'status': 'trained',
-            'version': '3.0',
+            'version': '3.1-regression',
+            'model_type': 'XGBRegressor',
+            'target': 'profit_r (R-multiple, continuous)',
             'n_features': len(FEATURE_NAMES),
             'total_trades': int(len(y)),
             'wins': int(win_count),
             'losses': int(loss_count),
             'win_rate': float(round(wr, 1)),
-            'train_accuracy': float(train_acc),
-            'val_accuracy': float(val_acc),
-            'scale_pos_weight': float(round(scale_pos, 3)),
-            'best_iteration': int(getattr(model, 'best_iteration', 200)),
+            # R-multiple distribution
+            'mean_r': round(mean_r, 3),
+            'median_r': round(median_r, 3),
+            'std_r': round(std_r, 3),
+            'positive_mean_r': round(positive_mean, 3),
+            'negative_mean_r': round(negative_mean, 3),
+            'r_clip_range': [R_CLIP_MIN, R_CLIP_MAX],
+            # Regression metrics
+            'train_mae': round(train_mae, 4),
+            'val_mae': round(val_mae, 4),
+            'val_rmse': round(val_rmse, 4),
+            'val_r2': round(val_r2, 4),
+            'val_correlation': round(val_corr, 4),
+            # Training params
+            'best_iteration': int(best_n),
+            'take_threshold': TAKE_THRESHOLD,
+            'caution_threshold': CAUTION_THRESHOLD,
+            # Feature importance
             'top_features': [(f, float(round(i, 4))) for f, i in top_features],
             'calibration': calibration,
             'model_size_kb': float(round(os.path.getsize(MODEL_PATH) / 1024, 1)),
@@ -815,8 +871,8 @@ def train_model(source: str = 'auto') -> dict:
         with open(META_PATH, 'w') as f:
             json.dump(meta, f, indent=2, default=_json_default)
 
-        log.info(f"[ML_GATE] Model trained: {len(y)} trades "
-                 f"(train={train_acc}%, val={val_acc}%) "
+        log.info(f"[ML_GATE] Regression model trained: {len(y)} trades "
+                 f"(MAE={val_mae:.3f}, R²={val_r2:.3f}, corr={val_corr:.3f}) "
                  f"top_feature={top_features[0][0]} ({top_features[0][1]:.3f})")
 
         return meta
@@ -828,34 +884,43 @@ def train_model(source: str = 'auto') -> dict:
         return {'status': 'error', 'reason': str(e)}
 
 
-def _check_calibration(probs: np.ndarray, labels: np.ndarray,
-                       n_buckets: int = 5) -> list:
+def _check_regression_calibration(preds: np.ndarray, actuals: np.ndarray,
+                                 n_buckets: int = 5) -> list:
     """
-    Check if predicted probabilities are calibrated.
-    Returns list of {bucket, predicted_avg, actual_wr, count}.
+    Check regression calibration by splitting predictions into quintiles.
+    If the model is well-calibrated, predicted R should match actual R
+    within each quintile — the bottom quintile should have the worst
+    actual R and the top quintile should have the best.
+
+    Returns list of {quintile, predicted_avg, actual_avg, actual_median, count}.
     """
     try:
         calibration = []
-        for i in range(n_buckets):
-            low = i / n_buckets
-            high = (i + 1) / n_buckets
-            if i == n_buckets - 1:
-                high = 1.01  # include edge
+        sorted_idx = np.argsort(preds)
+        chunk_size = max(1, len(sorted_idx) // n_buckets)
 
-            mask = (probs >= low) & (probs < high)
-            if mask.sum() < 3:
+        for i in range(n_buckets):
+            start = i * chunk_size
+            end = start + chunk_size if i < n_buckets - 1 else len(sorted_idx)
+            chunk_idx = sorted_idx[start:end]
+
+            if len(chunk_idx) < 2:
                 continue
 
-            bucket_probs = probs[mask]
-            bucket_labels = labels[mask]
-            pred_avg = round(float(bucket_probs.mean()) * 100, 1)
-            actual_wr = round(float(bucket_labels.mean()) * 100, 1)
+            pred_mean = round(float(preds[chunk_idx].mean()), 3)
+            actual_mean = round(float(actuals[chunk_idx].mean()), 3)
+            actual_median = round(float(np.median(actuals[chunk_idx])), 3)
+            actual_std = round(float(np.std(actuals[chunk_idx])), 3)
+            win_rate = round(float((actuals[chunk_idx] > 0).sum() / len(chunk_idx) * 100), 1)
 
             calibration.append({
-                f'bucket_{int(low*100)}-{int(high*100)}%': {
-                    'predicted': pred_avg,
-                    'actual': actual_wr,
-                    'count': int(mask.sum()),
+                f'quintile_{i+1}': {
+                    'predicted_r': pred_mean,
+                    'actual_mean_r': actual_mean,
+                    'actual_median_r': actual_median,
+                    'actual_std_r': actual_std,
+                    'win_rate_pct': win_rate,
+                    'count': int(len(chunk_idx)),
                 }
             })
         return calibration

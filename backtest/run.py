@@ -138,7 +138,7 @@ Examples:
 def _print_model_status():
     """Display ML Gate model status."""
     print("\n" + "="*60)
-    print("  APEX TRADER — ML Gate v3.0 STATUS")
+    print("  APEX TRADER — ML Gate v3.1 STATUS (Regression)")
     print("="*60)
 
     try:
@@ -146,16 +146,23 @@ def _print_model_status():
 
         if is_model_trained():
             info = get_model_info()
-            print(f"\n  ML Gate v3.0:")
-            print(f"    Status:         TRAINED")
-            print(f"    Version:        {info.get('version', '?')}")
-            print(f"    Features:       {info.get('n_features', 60)}")
-            print(f"    Training trades: {info.get('total_trades', '?')}")
-            print(f"    Win rate:       {info.get('win_rate', '?')}%")
-            print(f"    Train accuracy: {info.get('train_accuracy', '?')}%")
-            print(f"    Val accuracy:    {info.get('val_accuracy', '?')}%")
-            print(f"    Model size:     {info.get('model_size_kb', '?')} KB")
-            print(f"    Trained at:     {info.get('trained_at', '?')[:19]}")
+            print(f"\n  ML Gate v3.1 (Regression):")
+            print(f"    Status:           TRAINED")
+            print(f"    Version:          {info.get('version', '?')}")
+            print(f"    Model type:       {info.get('model_type', '?')}")
+            print(f"    Target:           {info.get('target', '?')}")
+            print(f"    Features:         {info.get('n_features', 63)}")
+            print(f"    Training trades:  {info.get('total_trades', '?')}")
+            print(f"    Win rate:         {info.get('win_rate', '?')}%")
+            print(f"    Mean R:           {info.get('mean_r', '?')}")
+            print(f"    Median R:         {info.get('median_r', '?')}")
+            print(f"    Val MAE:          {info.get('val_mae', '?')}")
+            print(f"    Val R²:           {info.get('val_r2', '?')}")
+            print(f"    Val Correlation:  {info.get('val_correlation', '?')}")
+            print(f"    Model size:       {info.get('model_size_kb', '?')} KB")
+            print(f"    Trained at:       {info.get('trained_at', '?')[:19]}")
+            print(f"    TAKE threshold:   R >= {info.get('take_threshold', 0.5)}")
+            print(f"    CAUTION threshold: R >= {info.get('caution_threshold', 0.0)}")
 
             top = info.get('top_features', [])
             if top:
@@ -163,8 +170,19 @@ def _print_model_status():
                 for fname, imp in top[:5]:
                     bar = '#' * int(imp * 200)
                     print(f"    {fname:30s} {imp:.4f}  {bar}")
+
+            # Quintile calibration
+            calibration = info.get('calibration', [])
+            if calibration:
+                print(f"\n  Quintile Calibration (predicted vs actual R):")
+                for bucket in calibration:
+                    for name, cal in bucket.items():
+                        print(f"    {name}: pred_R={cal['predicted_r']:.3f} "
+                              f"actual_R={cal['actual_mean_r']:.3f} "
+                              f"WR={cal['win_rate_pct']:.1f}% "
+                              f"(n={cal['count']})")
         else:
-            print(f"\n  ML Gate v3.0:")
+            print(f"\n  ML Gate v3.1 (Regression):")
             print(f"    Status:    NOT TRAINED")
             print(f"    Action:    Run --relaxed --store-db --no-limit, then --train")
 
@@ -188,32 +206,47 @@ def _print_model_status():
 
 
 def _train_model(model_source: str):
-    """Train the ML Gate v3.0 model and display results."""
+    """Train the ML Gate v3.1 regression model and display results."""
     print("\n" + "="*60)
-    print("  APEX TRADER — ML Gate v3.0 TRAINING")
-    print("  (Strategy-Informed: 63 features including all 10 strategy scores + Fibonacci)")
+    print("  APEX TRADER — ML Gate v3.1 TRAINING (Regression)")
+    print("  (Predicts R-multiple per trade — not binary win/loss)")
+    print("  (63 features: market quality, OF, VWAP, SMC, all 10 strategy scores, Fib)")
     print("="*60)
 
     try:
         from ai_engine.ml_gate import train_model
 
         print(f"\n  Training source: {model_source}")
+        print(f"  Target: profit_r (R-multiple, continuous)")
         print(f"  This may take a moment...\n")
 
         result = train_model(source=model_source)
 
         if result['status'] == 'trained':
             print(f"  Training: SUCCESS")
-            print(f"  Version:  {result.get('version', '3.0')}")
+            print(f"  Version:  {result.get('version', '3.1')}")
+            print(f"  Type:     {result.get('model_type', 'XGBRegressor')}")
             print(f"  Trades:   {result.get('total_trades', 0)} "
                   f"({result.get('wins', 0)}W / {result.get('losses', 0)}L)")
             print(f"  WR:       {result.get('win_rate', 0)}%")
-            print(f"  Train Acc:{result.get('train_accuracy', '?')}%")
-            print(f"  Val Acc:  {result.get('val_accuracy', '?')}%")
-            print(f"  Features: {result.get('n_features', 60)}")
-            print(f"  Best Iter:{result.get('best_iteration', '?')}")
-            print(f"  Model:    {result.get('model_size_kb', '?')} KB")
-            print(f"  Path:     ai_engine/models/ml_gate_v3.pkl")
+            print(f"  Features: {result.get('n_features', 63)}")
+            print(f"")
+            print(f"  R-multiple Distribution:")
+            print(f"    Mean R:           {result.get('mean_r', 0)}")
+            print(f"    Median R:         {result.get('median_r', 0)}")
+            print(f"    Std Dev:          {result.get('std_r', 0)}")
+            print(f"    Avg Win R:        {result.get('positive_mean_r', 0)}")
+            print(f"    Avg Loss R:       {result.get('negative_mean_r', 0)}")
+            print(f"")
+            print(f"  Regression Metrics:")
+            print(f"    Train MAE:        {result.get('train_mae', '?')}")
+            print(f"    Val MAE:          {result.get('val_mae', '?')}")
+            print(f"    Val RMSE:         {result.get('val_rmse', '?')}")
+            print(f"    Val R²:           {result.get('val_r2', '?')}")
+            print(f"    Val Correlation:  {result.get('val_correlation', '?')}")
+            print(f"    Best Iteration:   {result.get('best_iteration', '?')}")
+            print(f"    Model:            {result.get('model_size_kb', '?')} KB")
+            print(f"    Path:             ai_engine/models/ml_gate_v3r.pkl")
 
             # Top features
             if 'top_features' in result:
@@ -222,15 +255,23 @@ def _train_model(model_source: str):
                     bar = '#' * int(imp * 200)
                     print(f"    {fname:30s} {imp:.4f}  {bar}")
 
-            # Calibration
+            # Quintile calibration
             calibration = result.get('calibration', [])
             if calibration:
-                print(f"\n  Calibration (predicted vs actual win rate):")
+                print(f"\n  Quintile Calibration (sorted by predicted R):")
+                print(f"    {'Quintile':20s} {'Pred R':>8s} {'Actual R':>9s} {'WR%':>6s} {'N':>5s}")
+                print(f"    {'-'*50}")
                 for bucket in calibration:
                     for name, cal in bucket.items():
-                        print(f"    {name}: pred={cal['predicted']}% "
-                              f"actual={cal['actual']}% (n={cal['count']})")
+                        print(f"    {name:20s} {cal['predicted_r']:>8.3f} "
+                              f"{cal['actual_mean_r']:>9.3f} "
+                              f"{cal['win_rate_pct']:>5.1f}% "
+                              f"{cal['count']:>5d}")
 
+            print(f"\n  Execution thresholds:")
+            print(f"    TAKE:    R >= {result.get('take_threshold', 0.5)}")
+            print(f"    CAUTION: R >= {result.get('caution_threshold', 0.0)}")
+            print(f"    SKIP:    R <  {result.get('caution_threshold', 0.0)}")
             print(f"\n  Model persists after restart — saved to disk.")
             print(f"  Use --use-model in your next backtest to activate.")
         else:
@@ -346,10 +387,10 @@ def main():
     use_model = args.use_model
     model_loaded = False
     if use_model:
-        from ai_engine.xgboost_classifier import is_model_trained
+        from ai_engine.ml_gate import is_model_trained
         if not is_model_trained():
             print("\n  WARNING: --use-model specified but no trained model found!")
-            print("  Run --train first to train the model.")
+            print("  Run --relaxed --store-db --no-limit, then --train first.")
             print("  Continuing WITHOUT model filtering...\n")
             use_model = False
         else:

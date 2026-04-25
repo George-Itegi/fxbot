@@ -373,10 +373,10 @@ def run_backtest(config: BacktestConfig) -> dict:
                         spread_pips=spread,
                     )
 
-                    win_prob = ml_result.get('probability', 0.5)
+                    predicted_r = ml_result.get('predicted_r', 0.0)
                     recommendation = ml_result.get('recommendation', 'SKIP')
 
-                    best_signal['model_probability'] = win_prob
+                    best_signal['model_predicted_r'] = predicted_r
                     best_signal['ml_recommendation'] = recommendation
 
                     if recommendation == 'SKIP':
@@ -384,14 +384,14 @@ def run_backtest(config: BacktestConfig) -> dict:
                         if model_blocked_count <= 5 or model_blocked_count % 10 == 0:
                             log.info(f"  [ML_GATE] SKIP {best_strat_name} "
                                      f"{best_signal['direction']} "
-                                     f"prob={win_prob:.2f}")
+                                     f"R={predicted_r:.2f}")
                         continue
 
                     # Model says TAKE or CAUTION — proceed
                     if model_blocked_count % 20 == 0 or model_blocked_count <= 3:
                         log.info(f"  [ML_GATE] {recommendation} {best_strat_name} "
                                  f"{best_signal['direction']} "
-                                 f"prob={win_prob:.2f}")
+                                 f"R={predicted_r:.2f}")
 
                     # Build final_signals compatible with existing code
                     best = best_signal
@@ -924,9 +924,9 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         smc_report, flow,
                         all_strategy_scores=all_scores,
                         symbol=sym, spread_pips=symbol_spread.get(sym, 0))
-                    win_prob = ml_result.get('probability', 0.5)
+                    predicted_r = ml_result.get('predicted_r', 0.0)
                     rec = ml_result.get('recommendation', 'SKIP')
-                    best['model_probability'] = win_prob
+                    best['model_predicted_r'] = predicted_r
                     if rec == 'SKIP':
                         stats['model_blocked'] += 1
                         continue
