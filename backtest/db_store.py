@@ -498,6 +498,8 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
     These are CRITICAL for ML — they tell the model what NOT to trade.
     trade_ticket: if this signal became a trade, links to backtest_trades.ticket
     """
+    conn = None
+    c = None
     try:
         conn = _get_or_create_conn()
         c = conn.cursor(dictionary=True)
@@ -531,8 +533,6 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
             LIMIT 1
         """, (symbol, strategy, direction, timestamp_str, run_id))
         if c.fetchone():
-            c.close()
-            conn.close()
             log.debug(f"[DB_STORE] Skipping duplicate signal: {symbol} {strategy} {timestamp_str}")
             return
 
@@ -564,11 +564,18 @@ def store_blocked_signal(symbol: str, direction: str, strategy: str,
         ))
 
         conn.commit()
-        c.close()
-        conn.close()
 
     except Exception as e:
         log.warning(f"[DB_STORE] store_blocked_signal error: {e}")
+    finally:
+        try:
+            c.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def mark_signal_executed(trade, run_id: str = 'default'):

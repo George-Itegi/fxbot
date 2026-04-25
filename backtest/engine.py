@@ -323,7 +323,7 @@ def run_backtest(config: BacktestConfig) -> dict:
         if final_score < score_gate:
             if config.store_db:
                 signals_blocked_score += 1
-                if signals_blocked_score % 50 == 1:  # Store every ~50th to avoid flooding DB
+                if signals_blocked_score % 200 == 1:  # Store every ~200th to avoid pool exhaustion
                     try:
                         from backtest.db_store import store_blocked_signal
                         store_blocked_signal(
@@ -929,7 +929,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             score_gate = RELAXED_MIN_SCORE if relaxed_mode else MASTER_MIN_SCORE
             if final_score < score_gate:
                 stats['blocked_score'] += 1
-                if store_db and stats['blocked_score'] % 50 == 1:
+                if store_db and stats['blocked_score'] % 200 == 1:
                     try:
                         from backtest.db_store import store_blocked_signal
                         store_blocked_signal(
