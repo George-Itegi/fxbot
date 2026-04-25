@@ -30,17 +30,12 @@ MIN_SWING_PIPS  = 2.0      # Minimum swing size to consider (lowered from 3.0)
 DELTA_WEAKEN_THRESHOLD = 0.3  # Delta must weaken by this ratio (lowered from 0.4)
 
 
-def _get_pip_size(price: float) -> float:
-    """Return pip size for a symbol based on its price."""
-    if price > 500:
-        return 1.0
-    elif price > 50:
-        return 0.01
-    else:
-        return 0.0001
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
-def _find_swing_highs_lows(df: pd.DataFrame, lookback: int = 20) -> dict:
+def _find_swing_highs_lows(df: pd.DataFrame, lookback: int = 20, symbol: str = '') -> dict:
     """
     Find recent swing highs and swing lows in candle data.
     A swing high: candle whose high is higher than N candles on each side.
@@ -55,7 +50,7 @@ def _find_swing_highs_lows(df: pd.DataFrame, lookback: int = 20) -> dict:
     
     recent = df.tail(lookback * 2 + 1).copy()
     current_close = float(recent.iloc[-1]['close'])
-    pip_size = _get_pip_size(current_close)
+    pip_size = _get_pip_size(symbol, current_close)
     
     swing_highs = []
     swing_lows = []
@@ -94,7 +89,8 @@ def _find_swing_highs_lows(df: pd.DataFrame, lookback: int = 20) -> dict:
 
 def _detect_bearish_divergence(df: pd.DataFrame, swings: dict,
                                 delta_at_swings: list,
-                                current_delta: float) -> dict:
+                                current_delta: float,
+                                symbol: str = '') -> dict:
     """
     Bearish divergence: price makes higher high BUT delta weakens.
     Indicates sellers absorbing buying pressure — fake breakout.
@@ -104,7 +100,7 @@ def _detect_bearish_divergence(df: pd.DataFrame, swings: dict,
         return None
     
     highs = swings['swing_highs']
-    pip_size = _get_pip_size(float(df.iloc[-1]['close']))
+    pip_size = _get_pip_size(symbol, float(df.iloc[-1]['close']))
     
     # Need at least 2 swing highs: one previous, one recent
     prev_high = highs[-2] if len(highs) >= 2 else None
@@ -169,7 +165,8 @@ def _detect_bearish_divergence(df: pd.DataFrame, swings: dict,
 
 def _detect_bullish_divergence(df: pd.DataFrame, swings: dict,
                                 delta_at_swings: list,
-                                current_delta: float) -> dict:
+                                current_delta: float,
+                                symbol: str = '') -> dict:
     """
     Bullish divergence: price makes lower low BUT delta strengthens.
     Indicates buyers absorbing selling pressure — potential reversal.
@@ -179,7 +176,7 @@ def _detect_bullish_divergence(df: pd.DataFrame, swings: dict,
         return None
     
     lows = swings['swing_lows']
-    pip_size = _get_pip_size(float(df.iloc[-1]['close']))
+    pip_size = _get_pip_size(symbol, float(df.iloc[-1]['close']))
     
     prev_low = lows[-2] if len(lows) >= 2 else None
     curr_low = lows[-1]
@@ -269,7 +266,7 @@ def evaluate(symbol: str,
         return None
     
     close_price = float(df_m15.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     atr_pips = float(df_m15.iloc[-1].get('atr', 0)) / pip_size
     
     if atr_pips < 2.0:
@@ -289,7 +286,7 @@ def evaluate(symbol: str,
     
     # ── Find Swing Highs/Lows on M15 ────────────────────────
     swing_lb = 3 if relaxed else 5  # Relaxed: tighter window, more swings
-    swings = _find_swing_highs_lows(df_m15, lookback=swing_lb)
+    swings = _find_swing_highs_lows(df_m15, lookback=swing_lb, symbol=symbol)
     
     # Simplified delta-at-swings: use current delta and delta_strength
     # In a full implementation, we'd store delta values at each swing point
@@ -306,10 +303,10 @@ def evaluate(symbol: str,
     swing_proximity = 10 if relaxed else 5
     
     # ── Detect Bearish Divergence (SELL) ────────────────────
-    bear_div = _detect_bearish_divergence(df_m15, swings, delta_values, current_delta)
+    bear_div = _detect_bearish_divergence(df_m15, swings, delta_values, current_delta, symbol)
     
     # ── Detect Bullish Divergence (BUY) ─────────────────────
-    bull_div = _detect_bullish_divergence(df_m15, swings, delta_values, current_delta)
+    bull_div = _detect_bullish_divergence(df_m15, swings, delta_values, current_delta, symbol)
     
     # Pick the strongest divergence
     divergence = None

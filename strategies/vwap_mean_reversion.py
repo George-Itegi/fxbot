@@ -8,6 +8,11 @@ MIN_SCORE = 60   # Lowered — intraday VWAP setups score 55-70 realistically
 VERSION = "1.1"
 MIN_RR = 1.2
 
+
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
+
 def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
              market_report=None,
              smc_report=None, external_data=None, master_report=None,
@@ -17,7 +22,7 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
     m15 = df_m15.iloc[-1]
     h1 = df_h1.iloc[-1]
     close_price = float(m15['close'])
-    pip_size = 0.01 if close_price > 50 else 0.0001
+    pip_size = _get_pip_size(symbol, close_price)
     atr_pips = float(m15['atr']) / pip_size
     if atr_pips < 2.0:
         return None

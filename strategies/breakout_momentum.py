@@ -38,14 +38,14 @@ MIN_ATR_EXPANSION  = 1.2    # ATR must expand by this ratio post-breakout
 MIN_RANGE_PIPS     = 8.0    # Minimum consolidation range in pips to trade
 
 
-def _get_pip_size(price: float) -> float:
-    if price > 500:     return 1.0
-    elif price > 50:    return 0.01
-    else:               return 0.0001
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
 def _detect_consolidation(df_h1: pd.DataFrame, lookback: int = RANGE_LOOKBACK,
-                          use_lagged: bool = False, lag_bars: int = 24) -> dict:
+                          use_lagged: bool = False, lag_bars: int = 24,
+                          symbol: str = '') -> dict:
     """
     Detect consolidation range on H1.
     Returns dict with range info or None if not consolidating.
@@ -64,7 +64,7 @@ def _detect_consolidation(df_h1: pd.DataFrame, lookback: int = RANGE_LOOKBACK,
     else:
         recent = df_h1.tail(lookback).copy()
     current_close = float(df_h1.iloc[-1]['close'])
-    pip_size = _get_pip_size(current_close)
+    pip_size = _get_pip_size(symbol, current_close)
 
     # Range = highest high and lowest low in lookback
     range_high = float(recent['high'].max())
@@ -194,7 +194,7 @@ def evaluate(symbol: str,
         return None
 
     close_price = float(df_m15.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     atr_pips = float(df_m15.iloc[-1].get('atr', 0)) / pip_size
 
     if atr_pips < 2.0:
@@ -205,9 +205,9 @@ def evaluate(symbol: str,
     # temporal contradiction where current breakout invalidates consol
     if relaxed:
         consol = _detect_consolidation(df_h1, use_lagged=True,
-                                        lag_bars=RANGE_LOOKBACK)
+                                        lag_bars=RANGE_LOOKBACK, symbol=symbol)
     else:
-        consol = _detect_consolidation(df_h1)
+        consol = _detect_consolidation(df_h1, symbol=symbol)
 
     if not consol['consolidating']:
         # Relaxed: also accept wider consolidation

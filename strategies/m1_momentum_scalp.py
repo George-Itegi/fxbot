@@ -26,16 +26,9 @@ TP_MIN_RR          = 1.5    # Minimum TP/SL ratio
 TP_RR_MULTIPLIER   = 2.5    # TP = SL * this (let winners run)
 
 
-def _get_pip_size(price: float) -> float:
-    """Return pip size for a symbol based on its price.
-    NOTE: This is approximate — for exact pip size, use order_manager._get_pip_point.
-    """
-    if price > 500:     # Indices
-        return 1.0
-    elif price > 50:    # JPY pairs, Gold
-        return 0.01
-    else:               # Standard forex
-        return 0.0001
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
 def _detect_m1_engulfing(df_m1: pd.DataFrame) -> str:
@@ -145,7 +138,7 @@ def evaluate(symbol: str,
         return None
     
     close_price = float(df_m1.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     atr_pips = float(df_m15.iloc[-1].get('atr', 0)) / pip_size
     
     # Need minimum ATR for scalp to be worthwhile

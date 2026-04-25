@@ -34,14 +34,9 @@ SESSION_OPENS = {
 }
 
 
-def _get_pip_size(price: float) -> float:
-    """Return pip size for a symbol based on its price."""
-    if price > 500:
-        return 1.0
-    elif price > 50:
-        return 0.01
-    else:
-        return 0.0001
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
 def _get_session_open_hour(session: str) -> int:
@@ -56,7 +51,7 @@ def _get_session_open_hour(session: str) -> int:
 
 
 def _calculate_opening_range(df_m1: pd.DataFrame, session: str,
-                              now_utc: datetime) -> dict | None:
+                              now_utc: datetime, symbol: str = '') -> dict | None:
     """
     Calculate the opening range for the current session.
     
@@ -110,7 +105,7 @@ def _calculate_opening_range(df_m1: pd.DataFrame, session: str,
     range_size = range_high - range_low
     
     close_price = float(df_m1.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     range_pips = round(range_size / pip_size, 1)
     
     # Range must be meaningful
@@ -210,11 +205,11 @@ def evaluate(symbol: str,
         return None
     
     close_price = float(df_m1.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     
     # ── Calculate Opening Range ─────────────────────────────
     now_utc = datetime.now(timezone.utc)
-    orb = _calculate_opening_range(df_m1, session, now_utc)
+    orb = _calculate_opening_range(df_m1, session, now_utc, symbol)
     
     if orb is None:
         return None

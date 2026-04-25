@@ -35,10 +35,9 @@ ADX_MIN           = 20    # M15 ADX must exceed this (trend strength)
 CROSSBAR_WINDOW   = 5     # Bars to look back for recent crossover
 
 
-def _get_pip_size(price: float) -> float:
-    if price > 500:     return 1.0
-    elif price > 50:    return 0.01
-    else:               return 0.0001
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
 def _detect_recent_cross(df: pd.DataFrame, direction: str,
@@ -153,7 +152,7 @@ def evaluate(symbol: str,
         return None
 
     close_price = float(df_m15.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     atr_pips = float(df_m15.iloc[-1].get('atr', 0)) / pip_size
 
     if atr_pips < 2.0:

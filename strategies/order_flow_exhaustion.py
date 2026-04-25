@@ -8,6 +8,11 @@ STRATEGY_NAME = "ORDER_FLOW_EXHAUSTION"
 MIN_SCORE     = 75
 VERSION       = "1.0"
 
+
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
+
 def evaluate(symbol: str,
              df_m1: pd.DataFrame = None,
              df_m5: pd.DataFrame = None,
@@ -38,7 +43,7 @@ def evaluate(symbol: str,
     atr_value = df_m15.iloc[-1].get("atr")
     if atr_value is None:
         return None
-    pip_size = 0.01 if current_price > 50 else 0.0001
+    pip_size = _get_pip_size(symbol, current_price)
     atr_pips = float(atr_value) / pip_size
 
     # Get SMC context

@@ -38,13 +38,12 @@ MIN_RSI_DIVERGENCE = 5.0 # Minimum RSI difference for divergence
 OB_FVG_PROXIMITY = 25.0  # Pips — how close OB/FVG must be
 
 
-def _get_pip_size(price: float) -> float:
-    if price > 500:     return 1.0
-    elif price > 50:    return 0.01
-    else:               return 0.0001
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
-def _find_swing_points(df: pd.DataFrame, lookback: int = 10) -> dict:
+def _find_swing_points(df: pd.DataFrame, lookback: int = 10, symbol: str = '') -> dict:
     """
     Find swing highs and lows using candle data.
     Returns dict with 'swing_highs' and 'swing_lows' lists.
@@ -54,7 +53,7 @@ def _find_swing_points(df: pd.DataFrame, lookback: int = 10) -> dict:
 
     recent = df.tail(lookback * 2 + 1).copy()
     current_close = float(recent.iloc[-1]['close'])
-    pip_size = _get_pip_size(current_close)
+    pip_size = _get_pip_size(symbol, current_close)
 
     swing_highs = []
     swing_lows = []
@@ -88,7 +87,7 @@ def _find_swing_points(df: pd.DataFrame, lookback: int = 10) -> dict:
     return {"swing_highs": swing_highs, "swing_lows": swing_lows}
 
 
-def _detect_rsi_divergence(df: pd.DataFrame,
+def _detect_rsi_divergence(df: pd.DataFrame, symbol: str = '',
                             swing_lookback: int = SWING_LOOKBACK,
                             min_rsi_diff: float = MIN_RSI_DIVERGENCE) -> dict | None:
     """
@@ -99,7 +98,7 @@ def _detect_rsi_divergence(df: pd.DataFrame,
         return None
 
     close_price = float(df.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
 
     # Get RSI values
     rsi_col = 'rsi'
@@ -111,7 +110,7 @@ def _detect_rsi_divergence(df: pd.DataFrame,
         return None
 
     # Find swing points in both price and RSI
-    swings = _find_swing_points(df.tail(RSI_LOOKBACK), lookback=swing_lookback)
+    swings = _find_swing_points(df.tail(RSI_LOOKBACK), lookback=swing_lookback, symbol=symbol)
     swing_highs = swings['swing_highs']
     swing_lows = swings['swing_lows']
 
@@ -200,7 +199,7 @@ def evaluate(symbol: str,
         return None
 
     close_price = float(df_m15.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     atr_pips = float(df_m15.iloc[-1].get('atr', 0)) / pip_size
 
     if atr_pips < 2.0:
@@ -218,7 +217,7 @@ def evaluate(symbol: str,
         swing_lb = SWING_LOOKBACK
         min_rsi_div = MIN_RSI_DIVERGENCE
 
-    divergence = _detect_rsi_divergence(df_m15, swing_lookback=swing_lb,
+    divergence = _detect_rsi_divergence(df_m15, symbol, swing_lookback=swing_lb,
                                           min_rsi_diff=min_rsi_div)
 
     if divergence is None:

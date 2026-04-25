@@ -31,6 +31,7 @@ from backtest.config import (
     MIN_RR_RATIO, MASTER_MIN_SCORE, MAX_OPEN_TRADES, MAX_PER_SYMBOL,
     CONVICTION_LOW_SCORE_MAX, CONVICTION_MED_SCORE_MAX,
 )
+from core.pip_utils import get_pip_size
 
 # Relaxed mode overrides
 RELAXED_MIN_SCORE = 35
@@ -55,21 +56,6 @@ class BacktestConfig:
     run_id: str = 'default'       # Run identifier for DB grouping
     use_model: bool = False        # Use trained XGBoost model as additional gate
     unlimited_positions: bool = False  # Remove max open position limits
-
-
-def get_pip_size(symbol: str) -> float:
-    """Calculate pip size for a symbol."""
-    sym = symbol.upper()
-    if any(x in sym for x in ["US30", "US500", "USTEC", "JP225", "DE30", "UK100"]):
-        return 1.0
-    elif "XAU" in sym:
-        return 0.1
-    elif "XAG" in sym:
-        return 0.01
-    elif any(x in sym for x in ["JPY"]):
-        return 0.01
-    else:
-        return 0.0001
 
 
 def _build_master_report(symbol: str,

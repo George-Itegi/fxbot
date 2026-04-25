@@ -37,17 +37,12 @@ SL_BUFFER_PIPS    = 2.0     # Extra pips beyond FVG edge for SL (minimum)
 SL_ATR_MULTIPLIER = 0.5      # Use 50% of ATR as SL buffer (whichever is larger)
 
 
-def _get_pip_size(price: float) -> float:
-    """Return pip size for a symbol based on its price."""
-    if price > 500:
-        return 1.0     # Gold
-    elif price > 50:
-        return 0.01    # JPY pairs
-    else:
-        return 0.0001  # Major forex
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
-def _price_in_fvg(price: float, fvg: dict, buffer_pips: float = 0) -> bool:
+def _price_in_fvg(price: float, fvg: dict, buffer_pips: float = 0, symbol: str = '') -> bool:
     """
     Check if current price is inside or near the FVG zone.
     With buffer_pips, we also trigger if price is approaching the zone.
@@ -61,7 +56,7 @@ def _price_in_fvg(price: float, fvg: dict, buffer_pips: float = 0) -> bool:
         zone_bottom = fvg['bottom']
         zone_top    = fvg['top']
 
-    pip_size = _get_pip_size(price)
+    pip_size = _get_pip_size(symbol, price)
     adjusted_bottom = zone_bottom - buffer_pips * pip_size
     adjusted_top    = zone_top + buffer_pips * pip_size
 
@@ -150,7 +145,7 @@ def evaluate(symbol: str,
         return None
 
     close_price = float(df_m15.iloc[-1]['close'])
-    pip_size    = _get_pip_size(close_price)
+    pip_size    = _get_pip_size(symbol, close_price)
     atr_pips    = float(df_m15.iloc[-1].get('atr', 0)) / pip_size
 
     if atr_pips < 2.0:
@@ -193,7 +188,7 @@ def evaluate(symbol: str,
 
         # Price must be near or inside the FVG zone
         # Use a buffer of 5 pips to catch entries as price approaches
-        if not _price_in_fvg(close_price, fvg, buffer_pips=5.0):
+        if not _price_in_fvg(close_price, fvg, buffer_pips=5.0, symbol=symbol):
             continue
 
         # Score this candidate

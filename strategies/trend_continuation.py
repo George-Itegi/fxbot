@@ -19,10 +19,9 @@ MIN_SCORE     = 72
 VERSION       = "2.0"
 
 
-def _get_pip_size(price: float) -> float:
-    if price > 500:     return 1.0
-    elif price > 50:    return 0.01
-    else:               return 0.0001
+def _get_pip_size(symbol: str, price: float) -> float:
+    from core.pip_utils import get_pip_size as _gps
+    return _gps(symbol, price)
 
 
 def _detect_rejection_candle(df_m5: pd.DataFrame, direction: str) -> str:
@@ -60,7 +59,7 @@ def _detect_rejection_candle(df_m5: pd.DataFrame, direction: str) -> str:
     return "NONE"
 
 
-def _is_pullback_to_ema(df_m15: pd.DataFrame, direction: str) -> dict:
+def _is_pullback_to_ema(df_m15: pd.DataFrame, direction: str, symbol: str = '') -> dict:
     if df_m15 is None or len(df_m15) < 20:
         return {"is_pullback": False, "level": 0, "ema_type": "", "dist_pips": 999}
 
@@ -70,7 +69,7 @@ def _is_pullback_to_ema(df_m15: pd.DataFrame, direction: str) -> dict:
     close = float(last['close'])
     low = float(last['low'])
     high = float(last['high'])
-    pip_size = _get_pip_size(close)
+    pip_size = _get_pip_size(symbol, close)
 
     tolerance = 2.0  # pips
 
@@ -170,7 +169,7 @@ def evaluate(symbol: str,
         return None
 
     close_price = float(df_m15.iloc[-1]['close'])
-    pip_size = _get_pip_size(close_price)
+    pip_size = _get_pip_size(symbol, close_price)
     atr_pips = float(df_m15.iloc[-1].get('atr', 0)) / pip_size
 
     if atr_pips < 2.0:
@@ -211,7 +210,7 @@ def evaluate(symbol: str,
         score += 5; confluence.append("H1_SUPERTREND_ALIGNED")
 
     # ── Step 3: MANDATORY pullback to key EMA ───────────────
-    pullback = _is_pullback_to_ema(df_m15, direction)
+    pullback = _is_pullback_to_ema(df_m15, direction, symbol)
     if not pullback['is_pullback']:
         return None  # v2.0: Pullback is MANDATORY — no soft fallback
 
