@@ -6,7 +6,7 @@
 # predict winning trades.
 #
 # ARCHITECTURE:
-#   Layer 1 — Feature Engineering (60 features):
+#   Layer 1 — Feature Engineering (63 features):
 #     - 8  market quality features (score, delta, OF, volume)
 #     - 4  VWAP features
 #     - 8  SMC features (BOS, OBs, FVGs, sweeps, P/D zone)
@@ -147,10 +147,15 @@ FEATURE_NAMES = [
 
     # ── Group 12: Price context (1) ─────────────────────────
     'fx_spread_pips',        # Spread at entry
+
+    # ── Group 13: Fibonacci confluence (3) ──────────────────
+    'fib_confluence_score',  # Fibonacci confluence score (0-20)
+    'fib_in_golden_zone',    # 1 if price is in 0.618-0.786 golden zone
+    'fib_bias_aligned',      # 1 if Fib bias aligns with trade direction
 ]
 
-# Should be 60 features
-assert len(FEATURE_NAMES) == 60, f"Expected 60 features, got {len(FEATURE_NAMES)}"
+# Should be 63 features
+assert len(FEATURE_NAMES) == 63, f"Expected 63 features, got {len(FEATURE_NAMES)}"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -208,7 +213,7 @@ def extract_features(signal: dict,
                      spread_pips: float = 0.0,
                      self_improvement: dict = None) -> np.ndarray:
     """
-    Extract 60 numerical features from the full market context.
+    Extract 63 numerical features from the full market context.
 
     Args:
         signal:              The best strategy signal dict (with score, direction, SL/TP, etc.)
@@ -223,7 +228,7 @@ def extract_features(signal: dict,
         self_improvement:    Dict with 'recent_wr', 'recent_avg_r', 'strategy_wr'
 
     Returns:
-        np.ndarray of shape (1, 60) or None on error
+        np.ndarray of shape (1, 63) or None on error
     """
     try:
         mr = market_report or {}
@@ -255,6 +260,21 @@ def extract_features(signal: dict,
         ss_rsi = float(ss.get('RSI_DIVERGENCE_SMC', 0) or 0)
         ss_breakout = float(ss.get('BREAKOUT_MOMENTUM', 0) or 0)
         ss_struct = float(ss.get('STRUCTURE_ALIGNMENT', 0) or 0)
+
+        # ── Fibonacci confluence ──
+        fib_data = signal.get('fib_data', {})
+        if not fib_data:
+            try:
+                direction = str(signal.get('direction', ''))
+                entry_price = float(signal.get('entry_price', 0))
+                if entry_price > 0:
+                    from backtest.fib_builder import build_fib_report, check_fib_confluence
+                    fib_report = build_fib_report(current_price=entry_price)
+                    fib_check = check_fib_confluence(entry_price, direction, fib_report)
+                    fib_data = fib_check
+                    signal['fib_data'] = fib_data  # Cache for reuse
+            except Exception:
+                fib_data = {}
 
         # ── Consensus features ──
         non_zero = {k: v for k, v in ss.items() if v and v > 0}
@@ -379,6 +399,11 @@ def extract_features(signal: dict,
 
             # Price context (1)
             float(spread_pips),
+
+            # Fibonacci confluence (3)
+            float(fib_data.get('confluence_score', 0)),
+            1.0 if fib_data.get('in_golden_zone', False) else 0.0,
+            1.0 if fib_data.get('fib_bias_aligned', False) else 0.0,
         ]
 
         return np.array(features, dtype=np.float32).reshape(1, -1)
@@ -390,7 +415,7 @@ def extract_features(signal: dict,
 
 def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.ndarray:
     """
-    Extract 60 features from a backtest_trades DB row.
+    Extract 63 features from a backtest_trades DB row.
     Used for training from stored historical data.
     """
     try:
@@ -482,6 +507,11 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.
 
             # Price context (1)
             float(row.get('spread_pips', 0) or 0),
+
+            # Fibonacci confluence (3) — from DB columns
+            float(row.get('fib_confluence_score', 0) or 0),
+            1.0 if row.get('fib_in_golden_zone') else 0.0,
+            1.0 if row.get('fib_bias_aligned') else 0.0,
         ]
 
         return np.array(features, dtype=np.float32)

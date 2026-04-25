@@ -181,6 +181,17 @@ def evaluate(symbol: str,
         if 'EXTREME_PREMIUM' in pd_zone:
             score -= 15; confluence.append("PD_PREMIUM_PENALTY")
 
+        # ── Fibonacci confluence bonus ──────────────────
+        try:
+            from backtest.fib_builder import build_fib_report, check_fib_confluence
+            fib_report = build_fib_report(df_h1=df_h1, df_h4=df_h4, current_price=entry_price)
+            fib_check = check_fib_confluence(entry_price, "BUY", fib_report, pip_size)
+            if fib_check['fib_bonus'] > 0:
+                score += fib_check['fib_bonus']
+                confluence.extend(fib_check['confluence'])
+        except Exception:
+            pass
+
         if len(confluence) < 5:
             return None
 
@@ -266,6 +277,17 @@ def evaluate(symbol: str,
 
         if 'EXTREME_DISCOUNT' in pd_zone:
             score -= 15; confluence.append("PD_DISCOUNT_PENALTY")
+
+        # ── Fibonacci confluence bonus ──────────────────
+        try:
+            from backtest.fib_builder import build_fib_report, check_fib_confluence
+            fib_report = build_fib_report(df_h1=df_h1, df_h4=df_h4, current_price=entry_price)
+            fib_check = check_fib_confluence(entry_price, "SELL", fib_report, pip_size)
+            if fib_check['fib_bonus'] > 0:
+                score += fib_check['fib_bonus']
+                confluence.extend(fib_check['confluence'])
+        except Exception:
+            pass
 
         if len(confluence) < 5:
             return None

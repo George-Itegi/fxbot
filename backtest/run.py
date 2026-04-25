@@ -190,7 +190,7 @@ def _train_model(model_source: str):
     """Train the ML Gate v3.0 model and display results."""
     print("\n" + "="*60)
     print("  APEX TRADER — ML Gate v3.0 TRAINING")
-    print("  (Strategy-Informed: 60 features including all 10 strategy scores)")
+    print("  (Strategy-Informed: 63 features including all 10 strategy scores + Fibonacci)")
     print("="*60)
 
     try:

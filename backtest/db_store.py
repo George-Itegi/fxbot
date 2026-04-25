@@ -138,6 +138,11 @@ def _ensure_tables(conn):
             ss_breakout_momentum INT DEFAULT 0,
             ss_structure_align  INT DEFAULT 0,
 
+            -- Fibonacci confluence (3 features for ML Gate v3.1)
+            fib_confluence_score DOUBLE DEFAULT 0,
+            fib_in_golden_zone   TINYINT DEFAULT 0,
+            fib_bias_aligned     TINYINT DEFAULT 0,
+
             -- Flag: is this a backtest trade?
             source              VARCHAR(20) DEFAULT 'BACKTEST',
 
@@ -228,6 +233,9 @@ def _auto_migrate_signals(cursor, conn):
         ('backtest_trades', 'ss_rsi_divergence',   'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'ss_breakout_momentum','DOUBLE DEFAULT 0'),
         ('backtest_trades', 'ss_structure_align',  'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'fib_confluence_score', 'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'fib_in_golden_zone',   'TINYINT DEFAULT 0'),
+        ('backtest_trades', 'fib_bias_aligned',     'TINYINT DEFAULT 0'),
     ]
     for table, col, col_def in migrations:
         try:
@@ -325,6 +333,12 @@ def store_trade(trade, master_report: dict = None,
         ss_breakout_momentum = _safe_float(ss.get('BREAKOUT_MOMENTUM', 0))
         ss_structure_align  = _safe_float(ss.get('STRUCTURE_ALIGNMENT', 0))
 
+        # Fibonacci confluence (from signal's fib_data dict)
+        fib_data = signal.get('fib_data', {})
+        fib_confluence_score = _safe_float(fib_data.get('fib_bonus', 0))
+        fib_in_golden_zone = 1 if fib_data.get('in_golden_zone', False) else 0
+        fib_bias_aligned = 1 if fib_data.get('fib_bias_aligned', False) else 0
+
         # Outcome: was this a win?
         is_win = 1 if trade.profit_pips > 0 else 0
 
@@ -359,7 +373,7 @@ def store_trade(trade, master_report: dict = None,
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
             return
 
-        # 78 columns = 77 %s + 1 literal 'BACKTEST'
+        # 81 columns = 80 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -383,6 +397,7 @@ def store_trade(trade, master_report: dict = None,
                 ss_delta_divergence, ss_trend_continuation,
                 ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
                 ss_breakout_momentum, ss_structure_align,
+                fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
                 source
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
@@ -392,8 +407,8 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,
-                'BACKTEST'
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                , 'BACKTEST'
             )
         """, (
             run_id, trade.ticket, trade.symbol, trade.direction,
@@ -459,6 +474,8 @@ def store_trade(trade, master_report: dict = None,
             ss_delta_divergence, ss_trend_continuation,
             ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
             ss_breakout_momentum, ss_structure_align,
+            # ── Fibonacci confluence (3 features for ML Gate v3.1) ──
+            fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
         ))
 
         conn.commit()
