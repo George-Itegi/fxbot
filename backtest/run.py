@@ -101,7 +101,8 @@ Examples:
              'lower confluence min (4). Use for data collection / model training.')
     parser.add_argument(
         '--store-db', action='store_true',
-        help='Store every trade and blocked signal into MySQL for ML training.')
+        help='Store executed trades into MySQL for ML training. '
+             'Blocked signals are NOT stored (they were never used in training).')
     parser.add_argument(
         '--parallel', action='store_true',
         help='Run all symbols in parallel on the same M1 timeline (like live trading). '

@@ -614,10 +614,10 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['run_id'] = config.run_id
     summary['model_blocked'] = model_blocked_count
 
-    # ── Store all completed trades + update signal outcomes ─
+    # ── Store all completed trades to DB ─
     if config.store_db:
         try:
-            from backtest.db_store import store_trade, update_signal_outcome
+            from backtest.db_store import store_trade
             spread = AVG_SPREAD_PIPS.get(symbol, AVG_SPREAD_PIPS['DEFAULT'])
             stored = 0
             for trade in tracker.closed_trades:
@@ -634,10 +634,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
                 )
-                # Also backfill outcome + profit_r into backtest_signals
-                update_signal_outcome(trade, run_id=config.run_id)
                 stored += 1
-            log.info(f"  [DB] Stored {stored} trades in MySQL + updated signal outcomes")
+            log.info(f"  [DB] Stored {stored} trades in MySQL")
         except Exception as e:
             log.warning(f"  [DB] Could not store trades: {e}")
 
@@ -1030,7 +1028,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         # Store trades to DB
         if store_db:
             try:
-                from backtest.db_store import store_trade, update_signal_outcome
+                from backtest.db_store import store_trade
                 spread = AVG_SPREAD_PIPS.get(sym, AVG_SPREAD_PIPS['DEFAULT'])
                 stored = 0
                 for trade in tracker.closed_trades:
@@ -1046,7 +1044,6 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
                     )
-                    update_signal_outcome(trade, run_id=run_id)
                     stored += 1
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
             except Exception as e:

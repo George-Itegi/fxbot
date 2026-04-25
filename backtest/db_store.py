@@ -208,18 +208,16 @@ def _ensure_tables(conn):
         )
     """)
 
-    # ── Auto-migrate: add missing columns to existing tables ──
-    _auto_migrate_signals(c, conn)
-
+    # Note: backtest_signals table no longer populated (blocked signals removed)
+    # Only backtest_trades is active for ML training
+    _auto_migrate_trades(c, conn)
     c.close()
 
 
-def _auto_migrate_signals(cursor, conn):
-    """Add missing columns to backtest_signals if they don't exist.
-    This avoids needing to DROP + recreate tables after schema changes."""
+def _auto_migrate_trades(cursor, conn):
+    """Add missing columns to backtest_trades if they don't exist.
+    Note: backtest_signals migrations removed (table no longer populated)."""
     migrations = [
-        ('backtest_signals', 'trade_ticket',  'INT DEFAULT NULL'),
-        ('backtest_signals', 'confluence',     'TEXT'),
         ('backtest_trades', 'htf_score',      'INT DEFAULT 50'),
         ('backtest_trades', 'price_position', "VARCHAR(20) DEFAULT 'INSIDE_VA'"),
         # ── ML Gate v3.0: 10 strategy score columns ──
@@ -250,14 +248,21 @@ def _auto_migrate_signals(cursor, conn):
                 log.warning(f"[DB_STORE] Migration failed for {table}.{col}: {e}")
 
 
+_tables_ensured = False
+
+
 def _get_or_create_conn():
-    """Get a MySQL connection, creating tables on first use."""
+    """Get a MySQL connection, ensuring tables exist on first use only."""
+    global _tables_ensured
     from database.db_manager import get_connection
     conn = get_connection()
-    try:
-        _ensure_tables(conn)
-    except Exception as e:
-        log.warning(f"[DB_STORE] Table creation check: {e}")
+    # Only check/create tables ONCE per process — not on every connection
+    if not _tables_ensured:
+        try:
+            _ensure_tables(conn)
+            _tables_ensured = True
+        except Exception as e:
+            log.warning(f"[DB_STORE] Table creation check: {e}")
     # Consume any leftover unread results from pooled connection
     try:
         while conn.unread_result:
@@ -333,9 +338,9 @@ def store_trade(trade, master_report: dict = None,
         ss_breakout_momentum = _safe_float(ss.get('BREAKOUT_MOMENTUM', 0))
         ss_structure_align  = _safe_float(ss.get('STRUCTURE_ALIGNMENT', 0))
 
-        # Fibonacci confluence (from signal's fib_data dict)
-        fib_data = signal.get('fib_data', {})
-        fib_confluence_score = _safe_float(fib_data.get('fib_bonus', 0))
+        # Fibonacci confluence (from strategy_scores dict)
+        fib_data = (strategy_scores or {}).get('_fib_data', {})
+        fib_confluence_score = _safe_float(fib_data.get('confluence_score', 0))
         fib_in_golden_zone = 1 if fib_data.get('in_golden_zone', False) else 0
         fib_bias_aligned = 1 if fib_data.get('fib_bias_aligned', False) else 0
 
@@ -486,143 +491,14 @@ def store_trade(trade, master_report: dict = None,
         log.warning(f"[DB_STORE] store_trade error: {e}")
 
 
-def store_blocked_signal(symbol: str, direction: str, strategy: str,
-                         score: int, confluence: list,
-                         master_report: dict, market_report: dict,
-                         smc_report: dict, flow_data: dict,
-                         was_traded: bool, skip_reason: str,
-                         run_id: str = 'default',
-                         trade_ticket: int = None):
-    """
-    Store a signal that was generated but blocked (consensus/gates/score).
-    These are CRITICAL for ML — they tell the model what NOT to trade.
-    trade_ticket: if this signal became a trade, links to backtest_trades.ticket
-    """
-    conn = None
-    c = None
-    try:
-        conn = _get_or_create_conn()
-        c = conn.cursor(dictionary=True)
-
-        mr = market_report or {}
-        sr = smc_report or {}
-        fd = flow_data or {}
-
-        delta_d = fd.get('delta', {})
-        rd_d = fd.get('rolling_delta', {})
-        of_d = fd.get('order_flow_imbalance', {})
-
-        strategy_group = 'UNKNOWN'
-        try:
-            from strategies.strategy_engine import _get_strategy_group
-            strategy_group = _get_strategy_group(strategy)
-        except Exception:
-            pass
-
-        timestamp_str = (master_report or {}).get('timestamp', '')
-        # Validate timestamp — MySQL DATETIME requires full 'YYYY-MM-DD HH:MM:SS'
-        if not timestamp_str or len(timestamp_str) < 10:
-            from datetime import datetime
-            timestamp_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-
-        # ── Dedup: skip if this exact signal already exists ──
-        c.execute("""
-            SELECT id FROM backtest_signals
-            WHERE symbol = %s AND strategy = %s AND direction = %s
-              AND timestamp = %s AND run_id = %s
-            LIMIT 1
-        """, (symbol, strategy, direction, timestamp_str, run_id))
-        if c.fetchone():
-            log.debug(f"[DB_STORE] Skipping duplicate signal: {symbol} {strategy} {timestamp_str}")
-            return
-
-        c.execute("""
-            INSERT INTO backtest_signals (
-                run_id, timestamp, symbol, direction, strategy, strategy_group,
-                score, confluence_count, confluence,
-                was_traded, was_executed, trade_ticket, skip_reason,
-                session, market_state, combined_bias, final_score,
-                delta, rolling_delta, of_imbalance, vol_surge,
-                smc_bias, pd_zone, structure_trend
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """, (
-            run_id, timestamp_str, symbol, direction, strategy, strategy_group,
-            score, len(confluence) if confluence else 0,
-            ','.join(confluence) if confluence else '',
-            1 if was_traded else 0, 1 if was_traded else 0, trade_ticket, skip_reason[:100],
-            (master_report or {}).get('session', 'UNKNOWN'),
-            (master_report or {}).get('market_state', 'BALANCED'),
-            (master_report or {}).get('combined_bias', 'NEUTRAL'),
-            (master_report or {}).get('final_score', 0),
-            _safe_float(delta_d.get('delta', 0)),
-            _safe_float(rd_d.get('delta', 0)),
-            _safe_float(of_d.get('imbalance', 0)),
-            1 if (fd.get('volume_surge', {})).get('surge_detected') else 0,
-            sr.get('smc_bias', 'NEUTRAL'),
-            str((sr.get('premium_discount', {})).get('zone', 'NEUTRAL')),
-            (sr.get('structure', {})).get('trend', 'RANGING'),
-        ))
-
-        conn.commit()
-
-    except Exception as e:
-        log.warning(f"[DB_STORE] store_blocked_signal error: {e}")
-    finally:
-        try:
-            c.close()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-def mark_signal_executed(trade, run_id: str = 'default'):
-    """Update a signal to mark it as executed when trade opens."""
-    try:
-        conn = _get_or_create_conn()
-        c = conn.cursor(dictionary=True)
-
-        c.execute("""
-            UPDATE backtest_signals
-            SET was_executed = 1, was_traded = 1,
-                skip_reason = 'EXECUTED'
-            WHERE trade_ticket = %s
-              AND run_id = %s
-        """, (trade.ticket, run_id))
-
-        conn.commit()
-        c.close()
-        conn.close()
-    except Exception as e:
-        log.debug(f"[DB_STORE] mark_signal_executed error: {e}")
-
-
-def update_signal_outcome(trade, run_id: str = 'default'):
-    """Update a signal row with the trade outcome after it closes.
-    This fills in the outcome + profit_r columns so backtest_signals
-    becomes a complete ML training set (positive + negative examples)."""
-    try:
-        conn = _get_or_create_conn()
-        c = conn.cursor(dictionary=True)
-
-        outcome = trade.outcome or 'UNKNOWN'
-        profit_r = round(float(trade.profit_r), 3) if trade.profit_r else 0.0
-
-        c.execute("""
-            UPDATE backtest_signals
-            SET outcome = %s,
-                profit_r = %s
-            WHERE trade_ticket = %s
-              AND run_id = %s
-        """, (outcome, profit_r, trade.ticket, run_id))
-
-        conn.commit()
-        c.close()
-        conn.close()
-    except Exception as e:
-        log.debug(f"[DB_STORE] update_signal_outcome error: {e}")
+# ── BLOCKED SIGNAL STORAGE REMOVED (v1.1) ──────────────────
+# Blocked signals were never used in ML training (only executed
+# trades with outcomes are used). Storing them caused DB pool
+# exhaustion with 17 concurrent pairs. Removed to eliminate the
+# #1 source of connection pool drain.
+# ── SIGNAL EXECUTED / OUTCOME UPDATES REMOVED ──────────────
+# These updated the backtest_signals table which is no longer
+# populated. Dead code — removed along with signal storage.
 
 
 def get_training_data(min_trades: int = 50) -> list:
