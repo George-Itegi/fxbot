@@ -338,9 +338,10 @@ def store_trade(trade, master_report: dict = None,
         ss_breakout_momentum = _safe_float(ss.get('BREAKOUT_MOMENTUM', 0))
         ss_structure_align  = _safe_float(ss.get('STRUCTURE_ALIGNMENT', 0))
 
-        # Fibonacci confluence (from strategy_scores dict)
+        # Fibonacci confluence (from strategy_scores._fib_data)
+        # check_fib_confluence returns: {fib_bonus, in_golden_zone, fib_bias_aligned, ...}
         fib_data = (strategy_scores or {}).get('_fib_data', {})
-        fib_confluence_score = _safe_float(fib_data.get('confluence_score', 0))
+        fib_confluence_score = _safe_float(fib_data.get('fib_bonus', 0))
         fib_in_golden_zone = 1 if fib_data.get('in_golden_zone', False) else 0
         fib_bias_aligned = 1 if fib_data.get('fib_bias_aligned', False) else 0
 

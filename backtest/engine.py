@@ -576,6 +576,21 @@ def run_backtest(config: BacktestConfig) -> dict:
         trades_executed += 1
 
         # ── Save feature snapshot at trade entry (for DB storage) ─
+        # Compute Fibonacci confluence for this trade
+        fib_data = {}
+        if config.store_db:
+            try:
+                from backtest.fib_builder import build_fib_report, check_fib_confluence
+                fib_report = build_fib_report(df_h1=s_h1, df_h4=s_h4,
+                                             current_price=entry_price)
+                fib_data = check_fib_confluence(entry_price,
+                                                 best['direction'], fib_report)
+            except Exception:
+                fib_data = {}
+        if all_scores is None:
+            all_scores = {}
+        all_scores['_fib_data'] = fib_data
+
         trade_reports[tracker.ticket_counter] = {
             'master_report': master_report,
             'market_report': market_report,
@@ -978,13 +993,26 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             )
             stats['executed'] += 1
 
-            # Save snapshot
+            # Save snapshot + compute Fibonacci confluence for DB
+            fib_data_snap = {}
+            if store_db:
+                try:
+                    from backtest.fib_builder import build_fib_report, check_fib_confluence
+                    fib_report = build_fib_report(df_h1=s_h1, df_h4=s_h4,
+                                                 current_price=entry_price)
+                    fib_data_snap = check_fib_confluence(entry_price,
+                                                      best['direction'], fib_report)
+                except Exception:
+                    fib_data_snap = {}
+            snap_scores = (all_scores if ml_gate_active else None) or {}
+            snap_scores['_fib_data'] = fib_data_snap
+
             symbol_reports[sym][tracker.ticket_counter] = {
                 'master_report': master_report,
                 'market_report': market_report,
                 'smc_report': smc_report,
                 'flow': flow,
-                'strategy_scores': all_scores if ml_gate_active else None,
+                'strategy_scores': snap_scores if snap_scores.get('_fib_data') else (all_scores if ml_gate_active else None),
             }
 
             # Trade metadata saved (no DB write for signals)
