@@ -410,7 +410,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                         best_strat_name, symbol,
                         s_m1, s_m5, s_m15, s_h1, s_h4,
                         smc_report, market_report,
-                        market_state, session, master_report)
+                        market_state, session, master_report,
+                        relaxed=config.relaxed_mode)
                 except Exception:
                     pass
 
@@ -493,7 +494,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strategy_name, symbol,
                         s_m1, s_m5, s_m15, s_h1, s_h4,
                         smc_report, market_report,
-                        market_state, session, master_report)
+                        market_state, session, master_report,
+                        relaxed=config.relaxed_mode)
 
                     if signal is None:
                         continue
@@ -997,7 +999,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         strategy_name, sym,
                         s_m1, s_m5, s_m15, s_h1, s_h4,
                         smc_report, market_report,
-                        market_state, session, master_report)
+                        market_state, session, master_report,
+                        relaxed=relaxed_mode)
                     if signal is None:
                         continue
                     direction = str(signal.get('direction', ''))

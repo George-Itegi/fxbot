@@ -242,10 +242,13 @@ def _run_one_strategy(name, symbol,
                       df_m1, df_m5, df_m15, df_h1, df_h4,
                       smc_report, market_report,
                       market_state, session,
-                      master_report=None) -> dict | None:
+                      master_report=None,
+                      relaxed: bool = False) -> dict | None:
     """
     Route to the correct strategy evaluate function.
     FIXED: hard state gates now actually block execution.
+    In relaxed mode: hard state/session gates are bypassed for
+    dead strategies (DELTA_DIVERGENCE, RSI_DIVERGENCE_SMC, BREAKOUT_MOMENTUM).
     """
     info          = REGISTRY.get(name, {})
     best_states   = info.get('best_state', [])
@@ -297,20 +300,27 @@ def _run_one_strategy(name, symbol,
     }
 
     # ── Check market state gate ─────────────────────────────────
-    if name in HARD_STATE_GATES:
-        allowed_states = HARD_STATE_GATES[name]
-        if market_state not in allowed_states:
-            log.debug(f"[ENGINE] {name} blocked — state {market_state} "
-                      f"not in {allowed_states}")
-            return None
+    # In relaxed mode: bypass hard gates for strategies that need relaxation
+    RELAXED_STRATEGIES = {"DELTA_DIVERGENCE", "RSI_DIVERGENCE_SMC",
+                          "BREAKOUT_MOMENTUM"}
+    skip_hard_gates = relaxed and name in RELAXED_STRATEGIES
+
+    if not skip_hard_gates:
+        if name in HARD_STATE_GATES:
+            allowed_states = HARD_STATE_GATES[name]
+            if market_state not in allowed_states:
+                log.debug(f"[ENGINE] {name} blocked — state {market_state} "
+                          f"not in {allowed_states}")
+                return None
 
     # ── Check session gate ───────────────────────────────────────
-    if name in HARD_SESSION_GATES and session:
-        allowed_sessions = HARD_SESSION_GATES[name]
-        if session not in allowed_sessions:
-            log.debug(f"[ENGINE] {name} blocked — session {session} "
-                      f"not in {allowed_sessions}")
-            return None
+    if not skip_hard_gates:
+        if name in HARD_SESSION_GATES and session:
+            allowed_sessions = HARD_SESSION_GATES[name]
+            if session not in allowed_sessions:
+                log.debug(f"[ENGINE] {name} blocked — session {session} "
+                          f"not in {allowed_sessions}")
+                return None
 
     # Route to strategy evaluate function
     try:
@@ -342,7 +352,8 @@ def _run_one_strategy(name, symbol,
                 symbol, df_m1, df_m5, df_m15, df_h1,
                 smc_report=smc_report,
                 market_report=market_report,
-                master_report=master_report)
+                master_report=master_report,
+                relaxed=relaxed)
 
         elif name == "FVG_REVERSION":
             return fvg_evaluate(
@@ -363,14 +374,16 @@ def _run_one_strategy(name, symbol,
                 symbol, df_m1, df_m5, df_m15, df_h1,
                 smc_report=smc_report,
                 market_report=market_report,
-                df_h4=df_h4, master_report=master_report)
+                df_h4=df_h4, master_report=master_report,
+                relaxed=relaxed)
 
         elif name == "BREAKOUT_MOMENTUM":
             return breakout_evaluate(
                 symbol, df_m1, df_m5, df_m15, df_h1,
                 smc_report=smc_report,
                 market_report=market_report,
-                df_h4=df_h4, master_report=master_report)
+                df_h4=df_h4, master_report=master_report,
+                relaxed=relaxed)
 
         elif name == "STRUCTURE_ALIGNMENT":
             return struct_align_evaluate(

@@ -245,7 +245,8 @@ def evaluate(symbol: str,
              smc_report: dict = None,
              market_report: dict = None,
              df_h4: pd.DataFrame = None,
-             master_report: dict = None) -> dict | None:
+             master_report: dict = None,
+             relaxed: bool = False) -> dict | None:
     """
     Fires when a delta divergence is detected:
     - BEARISH: price higher high + delta weakening = SELL
@@ -287,7 +288,8 @@ def evaluate(symbol: str,
     volume_surge  = market_report.get('volume_surge', {})
     
     # ── Find Swing Highs/Lows on M15 ────────────────────────
-    swings = _find_swing_highs_lows(df_m15, lookback=5)
+    swing_lb = 3 if relaxed else 5  # Relaxed: tighter window, more swings
+    swings = _find_swing_highs_lows(df_m15, lookback=swing_lb)
     
     # Simplified delta-at-swings: use current delta and delta_strength
     # In a full implementation, we'd store delta values at each swing point
@@ -299,6 +301,9 @@ def evaluate(symbol: str,
     
     score = 0
     confluence = []
+    
+    # Relaxed: wider proximity for swing+delta alternative
+    swing_proximity = 10 if relaxed else 5
     
     # ── Detect Bearish Divergence (SELL) ────────────────────
     bear_div = _detect_bearish_divergence(df_m15, swings, delta_values, current_delta)
@@ -325,7 +330,7 @@ def evaluate(symbol: str,
         if swings['swing_highs'] and delta_bias == "BEARISH":
             nearest_high = swings['swing_highs'][0]
             dist = nearest_high['pips_from_current']
-            if dist < 5:  # Price very close to or above swing high
+            if dist < swing_proximity:  # Price close to or above swing high
                 direction = "SELL"
                 divergence = {
                     'type': 'BEARISH',
@@ -336,7 +341,7 @@ def evaluate(symbol: str,
         elif swings['swing_lows'] and delta_bias == "BULLISH":
             nearest_low = swings['swing_lows'][0]
             dist = nearest_low['pips_from_current']
-            if dist < 5:
+            if dist < swing_proximity:
                 direction = "BUY"
                 divergence = {
                     'type': 'BULLISH',
@@ -460,9 +465,12 @@ def evaluate(symbol: str,
                 confluence.append("HIGH_MOMENTUM_REVERSAL")
     
     # ── Score threshold ─────────────────────────────────────
-    if len(confluence) < 5:
+    min_confluence = 3 if relaxed else 5
+    min_score = (MIN_SCORE - 20) if relaxed else MIN_SCORE  # Relaxed: 50 vs 70
+
+    if len(confluence) < min_confluence:
         return None
-    if score < MIN_SCORE:
+    if score < min_score:
         return None
     
     # ── Calculate SL/TP ─────────────────────────────────────

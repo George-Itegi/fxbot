@@ -44,15 +44,25 @@ def _get_pip_size(price: float) -> float:
     else:               return 0.0001
 
 
-def _detect_consolidation(df_h1: pd.DataFrame, lookback: int = RANGE_LOOKBACK) -> dict:
+def _detect_consolidation(df_h1: pd.DataFrame, lookback: int = RANGE_LOOKBACK,
+                          use_lagged: bool = False, lag_bars: int = 24) -> dict:
     """
     Detect consolidation range on H1.
     Returns dict with range info or None if not consolidating.
+    
+    Args:
+        use_lagged: If True, compute range from bars offset by lag_bars
+                    (avoids temporal contradiction with breakout detection).
     """
-    if df_h1 is None or len(df_h1) < lookback + 5:
+    if df_h1 is None or len(df_h1) < lookback + lag_bars + 5:
         return {"consolidating": False}
 
-    recent = df_h1.tail(lookback).copy()
+    if use_lagged:
+        # Use older H1 bars for range definition — current bars may
+        # already show the breakout, invalidating consolidation
+        recent = df_h1.iloc[-(lookback + lag_bars):-lag_bars].copy()
+    else:
+        recent = df_h1.tail(lookback).copy()
     current_close = float(df_h1.iloc[-1]['close'])
     pip_size = _get_pip_size(current_close)
 
@@ -93,7 +103,8 @@ def _detect_consolidation(df_h1: pd.DataFrame, lookback: int = RANGE_LOOKBACK) -
 
 def _detect_breakout(df_m15: pd.DataFrame,
                      range_high: float, range_low: float,
-                     pip_size: float) -> dict | None:
+                     pip_size: float,
+                     retest_tolerance: float = RETEST_TOLERANCE) -> dict | None:
     """
     Detect if price has broken out of the consolidation range
     on M15 and is now retesting the broken level.
@@ -139,12 +150,12 @@ def _detect_breakout(df_m15: pd.DataFrame,
         broken_level = range_high
         # Check for retest: price pulled back near broken level
         dist_to_level = (current_close - range_high) / pip_size
-        retest = 0 <= dist_to_level <= RETEST_TOLERANCE
+        retest = 0 <= dist_to_level <= retest_tolerance
     elif bearish_breakout and current_close < range_low:
         direction = "SELL"
         broken_level = range_low
         dist_to_level = (range_low - current_close) / pip_size
-        retest = 0 <= dist_to_level <= RETEST_TOLERANCE
+        retest = 0 <= dist_to_level <= retest_tolerance
     else:
         return None
 
@@ -169,7 +180,8 @@ def evaluate(symbol: str,
              smc_report: dict = None,
              market_report: dict = None,
              df_h4: pd.DataFrame = None,
-             master_report: dict = None) -> dict | None:
+             master_report: dict = None,
+             relaxed: bool = False) -> dict | None:
     """
     Breakout Momentum Strategy:
     Enters after price breaks out of consolidation with retest entry.
@@ -189,10 +201,31 @@ def evaluate(symbol: str,
         return None
 
     # ── Step 1: Detect consolidation on H1 (mandatory) ─
-    consol = _detect_consolidation(df_h1)
+    # In relaxed mode: use lagged H1 range (older data) to avoid
+    # temporal contradiction where current breakout invalidates consol
+    if relaxed:
+        consol = _detect_consolidation(df_h1, use_lagged=True,
+                                        lag_bars=RANGE_LOOKBACK)
+    else:
+        consol = _detect_consolidation(df_h1)
 
     if not consol['consolidating']:
-        return None
+        # Relaxed: also accept wider consolidation
+        if relaxed and consol.get('range_pips', 0) < 80:
+            # Force consolidate with wider params
+            consol = {
+                'consolidating': True,
+                'type': 'RELAXED_WIDE',
+                'range_high': consol.get('range_high', 0),
+                'range_low': consol.get('range_low', 0),
+                'range_pips': consol.get('range_pips', 0),
+                'adx': consol.get('adx', 0),
+                'pip_size': pip_size,
+            }
+            if consol['range_pips'] < 5:
+                return None
+        else:
+            return None
 
     score = 0
     confluence = []
@@ -202,8 +235,10 @@ def evaluate(symbol: str,
     confluence.append(f"RANGE_{consol['range_pips']}p_ADX_{consol['adx']:.0f}")
 
     # ── Step 2: Detect breakout + retest on M15 ─────────
+    retest_tol = 8.0 if relaxed else RETEST_TOLERANCE
     breakout = _detect_breakout(df_m15, consol['range_high'],
-                                consol['range_low'], pip_size)
+                                consol['range_low'], pip_size,
+                                retest_tolerance=retest_tol)
 
     if breakout is None:
         return None
@@ -251,7 +286,12 @@ def evaluate(symbol: str,
             confluence.append(f"OF_BEAR_{imb:+.2f}")
 
     if not delta_confirms:
-        return None  # Must have flow confirmation for breakout
+        if relaxed:
+            # Relaxed: delta not confirming = penalty, not a kill
+            score -= 12
+            confluence.append("NO_DELTA_CONFIRM_PENALTY")
+        else:
+            return None  # Strict: must have flow confirmation for breakout
 
     # ── Step 4: Volume surge confirmation ───────────────
     surge = market_report.get('volume_surge', {})
@@ -326,11 +366,14 @@ def evaluate(symbol: str,
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
-    if len(confluence) < 5:
+    # ── Score threshold ─────────────────────────────────
+    min_confluence = 3 if relaxed else 5
+    min_score = (MIN_SCORE - 15) if relaxed else MIN_SCORE  # Relaxed: 55 vs 70
+
+    if len(confluence) < min_confluence:
         return None
 
-    # ── Score threshold ─────────────────────────────────
-    if score < MIN_SCORE:
+    if score < min_score:
         return None
 
     # ── Calculate SL/TP ─────────────────────────────────

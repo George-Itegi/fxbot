@@ -88,7 +88,9 @@ def _find_swing_points(df: pd.DataFrame, lookback: int = 10) -> dict:
     return {"swing_highs": swing_highs, "swing_lows": swing_lows}
 
 
-def _detect_rsi_divergence(df: pd.DataFrame) -> dict | None:
+def _detect_rsi_divergence(df: pd.DataFrame,
+                            swing_lookback: int = SWING_LOOKBACK,
+                            min_rsi_diff: float = MIN_RSI_DIVERGENCE) -> dict | None:
     """
     Detect RSI divergence on M15 timeframe.
     Returns divergence info dict or None.
@@ -109,7 +111,7 @@ def _detect_rsi_divergence(df: pd.DataFrame) -> dict | None:
         return None
 
     # Find swing points in both price and RSI
-    swings = _find_swing_points(df.tail(RSI_LOOKBACK), lookback=3)
+    swings = _find_swing_points(df.tail(RSI_LOOKBACK), lookback=swing_lookback)
     swing_highs = swings['swing_highs']
     swing_lows = swings['swing_lows']
 
@@ -129,7 +131,7 @@ def _detect_rsi_divergence(df: pd.DataFrame) -> dict | None:
                 curr_rsi = float(df.iloc[curr_idx][rsi_col])
 
                 rsi_diff = prev_rsi - curr_rsi
-                if rsi_diff > MIN_RSI_DIVERGENCE:
+                if rsi_diff > min_rsi_diff:
                     price_range = (curr['price'] - prev['price']) / pip_size
                     strength = 'EXTREME' if curr_rsi > RSI_OVERBOUGHT else \
                                'STRONG' if rsi_diff > 10 else 'MODERATE'
@@ -159,7 +161,7 @@ def _detect_rsi_divergence(df: pd.DataFrame) -> dict | None:
                 curr_rsi = float(df.iloc[curr_idx][rsi_col])
 
                 rsi_diff = curr_rsi - prev_rsi
-                if rsi_diff > MIN_RSI_DIVERGENCE:
+                if rsi_diff > min_rsi_diff:
                     price_range = (prev['price'] - curr['price']) / pip_size
                     strength = 'EXTREME' if curr_rsi < RSI_OVERSOLD else \
                                'STRONG' if rsi_diff > 10 else 'MODERATE'
@@ -186,7 +188,8 @@ def evaluate(symbol: str,
              smc_report: dict = None,
              market_report: dict = None,
              df_h4: pd.DataFrame = None,
-             master_report: dict = None) -> dict | None:
+             master_report: dict = None,
+             relaxed: bool = False) -> dict | None:
     """
     RSI Divergence + SMC Confirmation Strategy:
     Fires when M15 RSI diverges from price AND SMC structure confirms.
@@ -204,7 +207,19 @@ def evaluate(symbol: str,
         return None
 
     # ── Detect RSI Divergence (mandatory) ───────────────
-    divergence = _detect_rsi_divergence(df_m15)
+    # In relaxed mode: use wider swing lookback and lower RSI diff
+    if relaxed:
+        orig_swing_lookback = SWING_LOOKBACK
+        orig_min_rsi_div = MIN_RSI_DIVERGENCE
+        # Temporarily widen parameters for detection
+        swing_lb = 5   # wider window catches more swings
+        min_rsi_div = 2.0  # smaller divergences are valid
+    else:
+        swing_lb = SWING_LOOKBACK
+        min_rsi_div = MIN_RSI_DIVERGENCE
+
+    divergence = _detect_rsi_divergence(df_m15, swing_lookback=swing_lb,
+                                          min_rsi_diff=min_rsi_div)
 
     if divergence is None:
         return None
@@ -224,7 +239,7 @@ def evaluate(symbol: str,
         score += 22
         confluence.append("RSI_DIV_STRONG")
     else:
-        score += 14
+        score += 22 if relaxed else 14  # Relaxed: MODERATE gets STRONG points
         confluence.append("RSI_DIV_MODERATE")
 
     confluence.append(divergence['description'])
@@ -276,9 +291,18 @@ def evaluate(symbol: str,
                 confluence.append("SMC_BIAS_ALIGNED")
                 # Still proceed — not strictly mandatory
             else:
-                return None  # No SMC confirmation at all
+                if relaxed:
+                    # Relaxed: no SMC alignment = penalty, not a kill
+                    score -= 10
+                    confluence.append("NO_SMC_CONFIRM_PENALTY")
+                else:
+                    return None  # Strict: no SMC confirmation at all
         else:
-            return None
+            if relaxed:
+                score -= 10
+                confluence.append("NO_SMC_REPORT_PENALTY")
+            else:
+                return None
 
     # ── OB/FVG Zone proximity (bonus) ───────────────────
     if smc_report:
@@ -390,11 +414,14 @@ def evaluate(symbol: str,
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
-    if len(confluence) < 5:
+    # ── Score threshold ─────────────────────────────────
+    min_confluence = 3 if relaxed else 5
+    min_score = (MIN_SCORE - 18) if relaxed else MIN_SCORE  # Relaxed: 50 vs 68
+
+    if len(confluence) < min_confluence:
         return None
 
-    # ── Score threshold ─────────────────────────────────
-    if score < MIN_SCORE:
+    if score < min_score:
         return None
 
     # ── Calculate SL/TP ─────────────────────────────────
