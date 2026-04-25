@@ -113,7 +113,7 @@ PIP_VALUE_PER_LOT = {
     "USDJPY": 6.50,  "EURJPY": 6.50,  "GBPJPY": 6.50,
     "AUDJPY": 6.50, "CADJPY": 6.50, "NZDJPY": 6.50,
     "CHFJPY": 6.50,
-    "EURGBP": 13.00, "GBPAUD": 6.50, "GBPNZD": 6.00,
+    "EURGBP": 13.00, "GBPAUD": 15.00, "GBPNZD": 6.00,
     "EURCAD": 7.50,  "GBPCHF": 11.00, "AUDNZD": 6.00,
     "XAUUSD": 1.0,   "XAGUSD": 50.0,
     "DEFAULT": 10.0,

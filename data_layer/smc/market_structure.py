@@ -19,12 +19,18 @@ load_dotenv()
 
 
 def _get_pip_size_from_price(price: float) -> float:
-    """Fallback pip size based on price when symbol name is unavailable."""
-    if price > 500:     # Indices (JP225 ~39000, US30 ~40000, etc.)
+    """Fallback pip size based on price when symbol name is unavailable.
+    Updated to handle commodities correctly:
+      Gold (~2000+): 0.1  (not 1.0 — price > 500 heuristic was wrong)
+      Silver (~25-35): 0.01 (not 0.0001 — price < 50 heuristic was wrong)
+    """
+    if price > 1000:   # Gold
+        return 0.1
+    elif price > 500:  # Indices (JP225 ~39000, US30 ~40000)
         return 1.0
-    elif price > 50:    # JPY pairs, Gold
+    elif price > 50:   # JPY pairs
         return 0.01
-    else:               # Standard forex
+    else:              # Standard forex
         return 0.0001
 
 
