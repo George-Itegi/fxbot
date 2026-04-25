@@ -321,22 +321,7 @@ def run_backtest(config: BacktestConfig) -> dict:
         final_score = master_report.get('final_score', 0)
         score_gate = RELAXED_MIN_SCORE if config.relaxed_mode else MASTER_MIN_SCORE
         if final_score < score_gate:
-            if config.store_db:
-                signals_blocked_score += 1
-                if signals_blocked_score % 200 == 1:  # Store every ~200th to avoid pool exhaustion
-                    try:
-                        from backtest.db_store import store_blocked_signal
-                        store_blocked_signal(
-                            symbol=symbol, direction='NONE',
-                            strategy='PRE_GATE', score=final_score,
-                            confluence=[], master_report=master_report,
-                            market_report=market_report, smc_report=smc_report,
-                            flow_data=flow, was_traded=False,
-                            skip_reason=f'score_below_{score_gate}',
-                            run_id=config.run_id,
-                        )
-                    except Exception:
-                        pass
+            signals_blocked_score += 1
             continue
 
         # ── Gate 1: Institutional confirmation ────────────
@@ -346,40 +331,11 @@ def run_backtest(config: BacktestConfig) -> dict:
 
         if not has_institutional:
             signals_blocked_gate += 1
-            # Store gate-blocked signals for ML (every ~50th to manage volume)
-            if config.store_db and signals_blocked_gate % 50 == 1:
-                try:
-                    from backtest.db_store import store_blocked_signal
-                    store_blocked_signal(
-                        symbol=symbol, direction='NONE',
-                        strategy='PRE_GATE', score=final_score,
-                        confluence=[], master_report=master_report,
-                        market_report=market_report, smc_report=smc_report,
-                        flow_data=flow, was_traded=False,
-                        skip_reason='no_institutional_flow',
-                        run_id=config.run_id,
-                    )
-                except Exception:
-                    pass
             continue
 
         # ── Gate 2: Choppy market ─────────────────────────
         is_choppy = flow.get('momentum', {}).get('is_choppy', True)
         if is_choppy and not surge_active:
-            if config.store_db:
-                try:
-                    from backtest.db_store import store_blocked_signal
-                    store_blocked_signal(
-                        symbol=symbol, direction='NONE',
-                        strategy='PRE_GATE', score=final_score,
-                        confluence=[], master_report=master_report,
-                        market_report=market_report, smc_report=smc_report,
-                        flow_data=flow, was_traded=False,
-                        skip_reason='choppy_market',
-                        run_id=config.run_id,
-                    )
-                except Exception:
-                    pass
             continue
 
         # ── Run strategies ────────────────────────────────
@@ -439,25 +395,6 @@ def run_backtest(config: BacktestConfig) -> dict:
 
                     if recommendation == 'SKIP':
                         model_blocked_count += 1
-                        if config.store_db:
-                            try:
-                                from backtest.db_store import store_blocked_signal
-                                store_blocked_signal(
-                                    symbol=symbol,
-                                    direction=best_signal['direction'],
-                                    strategy=best_strat_name,
-                                    score=best_signal.get('score', 0),
-                                    confluence=best_signal.get('confluence', []),
-                                    master_report=master_report,
-                                    market_report=market_report,
-                                    smc_report=smc_report,
-                                    flow_data=flow,
-                                    was_traded=False,
-                                    skip_reason=f'ml_gate_skip(prob={win_prob:.2f})',
-                                    run_id=config.run_id,
-                                )
-                            except Exception:
-                                pass
                         if model_blocked_count <= 5 or model_blocked_count % 10 == 0:
                             log.info(f"  [ML_GATE] SKIP {best_strat_name} "
                                      f"{best_signal['direction']} "
@@ -553,26 +490,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                 final_groups = sell_groups
             else:
                 signals_blocked_consensus += 1
-                if config.store_db:
-                    try:
-                        from backtest.db_store import store_blocked_signal
-                        for sig in signals:
-                            store_blocked_signal(
-                                symbol=symbol, direction=sig['direction'],
-                                strategy=sig.get('strategy', 'UNKNOWN'),
-                                score=sig.get('score', 0),
-                                confluence=sig.get('confluence', []),
-                                master_report=master_report,
-                                market_report=market_report,
-                                smc_report=smc_report, flow_data=flow,
-                                was_traded=False,
-                                skip_reason=(f'consensus_blocked('
-                                             f'buy={len(buy_groups)},'
-                                             f'sell={len(sell_groups)})'),
-                                run_id=config.run_id,
-                            )
-                    except Exception:
-                        pass
                 continue
 
             # ── Best signal ──────────────────────────────
@@ -667,24 +584,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             'strategy_scores': all_scores,
         }
 
-        # ── Store signal + link to trade ticket in DB ────────
-        if config.store_db:
-            try:
-                from backtest.db_store import store_blocked_signal
-                # Store the executed signal with trade_ticket link
-                store_blocked_signal(
-                    symbol=symbol, direction=best['direction'],
-                    strategy=best.get('strategy', 'UNKNOWN'),
-                    score=best.get('score', 0),
-                    confluence=best.get('confluence', []),
-                    master_report=master_report, market_report=market_report,
-                    smc_report=smc_report, flow_data=flow,
-                    was_traded=True, skip_reason='EXECUTED',
-                    run_id=config.run_id,
-                    trade_ticket=tracker.ticket_counter,
-                )
-            except Exception:
-                pass
+        # ── Store signal metadata for ML training (no DB write) ────────
 
         if trades_executed % 5 == 0:
             log.info(f"  [{symbol}] Trade #{trades_executed} | "
@@ -929,20 +829,6 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             score_gate = RELAXED_MIN_SCORE if relaxed_mode else MASTER_MIN_SCORE
             if final_score < score_gate:
                 stats['blocked_score'] += 1
-                if store_db and stats['blocked_score'] % 200 == 1:
-                    try:
-                        from backtest.db_store import store_blocked_signal
-                        store_blocked_signal(
-                            symbol=sym, direction='NONE',
-                            strategy='PRE_GATE', score=final_score,
-                            confluence=[], master_report=master_report,
-                            market_report=market_report, smc_report=smc_report,
-                            flow_data=flow, was_traded=False,
-                            skip_reason=f'score_below_{score_gate}',
-                            run_id=run_id,
-                        )
-                    except Exception:
-                        pass
                 continue
 
             # Gate 1: Institutional
@@ -952,39 +838,11 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
 
             if not has_institutional:
                 stats['blocked_gate'] += 1
-                if store_db and stats['blocked_gate'] % 50 == 1:
-                    try:
-                        from backtest.db_store import store_blocked_signal
-                        store_blocked_signal(
-                            symbol=sym, direction='NONE',
-                            strategy='PRE_GATE', score=final_score,
-                            confluence=[], master_report=master_report,
-                            market_report=market_report, smc_report=smc_report,
-                            flow_data=flow, was_traded=False,
-                            skip_reason='no_institutional_flow',
-                            run_id=run_id,
-                        )
-                    except Exception:
-                        pass
                 continue
 
             # Gate 2: Choppy
             is_choppy = flow.get('momentum', {}).get('is_choppy', True)
             if is_choppy and not surge_active:
-                if store_db:
-                    try:
-                        from backtest.db_store import store_blocked_signal
-                        store_blocked_signal(
-                            symbol=sym, direction='NONE',
-                            strategy='PRE_GATE', score=final_score,
-                            confluence=[], master_report=master_report,
-                            market_report=market_report, smc_report=smc_report,
-                            flow_data=flow, was_traded=False,
-                            skip_reason='choppy_market',
-                            run_id=run_id,
-                        )
-                    except Exception:
-                        pass
                 continue
 
             # Run strategies
@@ -1042,23 +900,6 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 final_groups = sell_groups
             else:
                 stats['blocked_consensus'] += 1
-                if store_db:
-                    try:
-                        from backtest.db_store import store_blocked_signal
-                        for sig in signals:
-                            store_blocked_signal(
-                                symbol=sym, direction=sig['direction'],
-                                strategy=sig.get('strategy', 'UNKNOWN'),
-                                score=sig.get('score', 0),
-                                confluence=sig.get('confluence', []),
-                                master_report=master_report, market_report=market_report,
-                                smc_report=smc_report, flow_data=flow,
-                                was_traded=False,
-                                skip_reason=f'consensus_blocked(buy={len(buy_groups)},sell={len(sell_groups)})',
-                                run_id=run_id,
-                            )
-                    except Exception:
-                        pass
                 continue
 
             # Best signal
@@ -1148,23 +989,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 'strategy_scores': all_scores if ml_gate_active else None,
             }
 
-            # Store executed signal
-            if store_db:
-                try:
-                    from backtest.db_store import store_blocked_signal
-                    store_blocked_signal(
-                        symbol=sym, direction=best['direction'],
-                        strategy=best.get('strategy', 'UNKNOWN'),
-                        score=best.get('score', 0),
-                        confluence=best.get('confluence', []),
-                        master_report=master_report, market_report=market_report,
-                        smc_report=smc_report, flow_data=flow,
-                        was_traded=True, skip_reason='EXECUTED',
-                        run_id=run_id,
-                        trade_ticket=tracker.ticket_counter,
-                    )
-                except Exception:
-                    pass
+            # Trade metadata saved (no DB write for signals)
 
             log.info(f"  [{sym}] Trade #{stats['executed']} | "
                      f"{best['direction']} {best.get('strategy','')} "
