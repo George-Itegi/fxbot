@@ -585,7 +585,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                                              current_price=entry_price)
                 fib_data = check_fib_confluence(entry_price,
                                                  best['direction'], fib_report)
-            except Exception:
+            except Exception as e:
+                log.debug(f"[{symbol}] Fib computation skipped: {e}")
                 fib_data = {}
         if all_scores is None:
             all_scores = {}
@@ -1002,7 +1003,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                                  current_price=entry_price)
                     fib_data_snap = check_fib_confluence(entry_price,
                                                       best['direction'], fib_report)
-                except Exception:
+                except Exception as e:
+                    log.debug(f"[{sym}] Fib computation skipped: {e}")
                     fib_data_snap = {}
             snap_scores = (all_scores if ml_gate_active else None) or {}
             snap_scores['_fib_data'] = fib_data_snap
@@ -1012,7 +1014,10 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 'market_report': market_report,
                 'smc_report': smc_report,
                 'flow': flow,
-                'strategy_scores': snap_scores if snap_scores.get('_fib_data') else (all_scores if ml_gate_active else None),
+                # Always pass snap_scores when store_db; the truthy check on
+                # _fib_data dict value was causing fib data to be dropped
+                # when fib_data_snap was {} (empty dict is falsy in Python).
+                'strategy_scores': snap_scores if store_db else (all_scores if ml_gate_active else None),
             }
 
             # Trade metadata saved (no DB write for signals)
