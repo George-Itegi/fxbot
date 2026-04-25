@@ -278,6 +278,12 @@ def _run_one_strategy(name, symbol,
                                   "BALANCED", "TRENDING_EXTENDED"],
         "RSI_DIVERGENCE_SMC":    ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED"],
+        # Breakout — needs confirmed trends, fails in ranges
+        "BREAKOUT_MOMENTUM":     ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
+                                  "TRENDING_EXTENDED"],
+        # Structure alignment — needs clear structure (BOS/HH-HL)
+        "STRUCTURE_ALIGNMENT":   ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
+                                  "TRENDING_EXTENDED", "BALANCED"],
     }
 
     # ── HARD session gates ──────────────────────────────────────
