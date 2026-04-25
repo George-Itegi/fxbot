@@ -33,7 +33,7 @@ def _get_pool():
         try:
             _pool = pooling.MySQLConnectionPool(
                 pool_name="apex_pool",
-                pool_size=50,
+                pool_size=32,
                 pool_reset_session=True,
                 host=DB_HOST,
                 port=DB_PORT,
