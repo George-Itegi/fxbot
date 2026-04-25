@@ -15,8 +15,8 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 STRATEGY_NAME = "TREND_CONTINUATION"
-MIN_SCORE     = 72
-VERSION       = "2.0"
+MIN_SCORE     = 80
+VERSION       = "2.1"
 
 
 def _get_pip_size(symbol: str, price: float) -> float:
@@ -175,6 +175,22 @@ def evaluate(symbol: str,
     if atr_pips < 2.0:
         return None
 
+    # ── v2.1: HARD gate — only trade in trending markets ──────
+    # TREND_CONTINUATION was generating 73 trades at +0.055R avg.
+    # Root cause: firing in ranging/choppy markets where trends don't
+    # continue. This gate restricts entries to confirmed trends only.
+    market_state = (master_report or {}).get('market_state', 'BALANCED')
+    allowed_states = ('TRENDING_STRONG', 'TRENDING_EXTENDED', 'BREAKOUT_ACCEPTED')
+    if market_state not in allowed_states:
+        return None
+
+    # ── v2.1: HARD gate — reject choppy markets ──────────────
+    # Previously choppy was just a -15 penalty (could still fire at score 87+).
+    # Now it's a hard block — no trend continuation in choppy conditions.
+    momentum_data = (master_report or {}).get('momentum', {})
+    if momentum_data.get('is_choppy', False):
+        return None
+
     score = 0
     confluence = []
 
@@ -287,11 +303,9 @@ def evaluate(symbol: str,
                (direction == "SELL" and h4_bias == "BEARISH"):
                 score += 8; confluence.append("HTF_ALIGNED")
 
-    # ── Choppy market penalty ───────────────────────────────
-    if master_report:
-        momentum = master_report.get('momentum', {})
-        if momentum.get('is_choppy', False):
-            score -= 15; confluence.append("CHOPPY_PENALTY")
+    # ── Choppy market check (hard gate above already blocks) ─
+    # No penalty needed — blocked at the top of evaluate()
+    # confluence stays cleaner without CHOPPY_PENALTY noise
 
     # ── Fibonacci confluence bonus ──────────────────────────
     try:
@@ -304,7 +318,7 @@ def evaluate(symbol: str,
     except Exception:
         pass
 
-    if len(confluence) < 5:
+    if len(confluence) < 6:
         return None
 
     # ── Score threshold ─────────────────────────────────────
