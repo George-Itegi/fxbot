@@ -414,16 +414,13 @@ def run_backtest(config: BacktestConfig) -> dict:
 
                     if recommendation == 'SKIP':
                         model_blocked_count += 1
-                        if model_blocked_count <= 5 or model_blocked_count % 10 == 0:
-                            log.info(f"  [ML_GATE] SKIP {best_strat_name} "
-                                     f"{best_signal['direction']} "
-                                     f"R={predicted_r:.2f}")
-                        continue
 
-                    # ── CAUTION → SHADOW trade (simulate, don't execute) ──
-                    # Model is unsure (0.0 <= R < 0.5). Track outcome for
-                    # training data without affecting real P&L or balance.
-                    if recommendation == 'CAUTION':
+                    # ── CAUTION or SKIP → SHADOW trade (simulate, don't execute) ──
+                    # v3.3: ALL non-TAKE signals are shadowed for training data.
+                    # - CAUTION (0.0 <= R < 0.5): model is unsure
+                    # - SKIP (R < 0.0): model predicts loss — but shadow verifies
+                    # This gives the model learning signal from its rejections too.
+                    if recommendation in ('CAUTION', 'SKIP'):
                         if shadow_tracker is not None:
                             sl_p = best_signal.get('sl_pips', 0)
                             tp_p = best_signal.get('tp1_pips', 0) or best_signal.get('tp_pips', 0)
@@ -465,11 +462,13 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
                                 }
-                        if model_blocked_count <= 3 or model_blocked_count % 20 == 0:
-                            log.info(f"  [ML_GATE] SHADOW {best_strat_name} "
+                        # Log sparingly to avoid spam
+                        log_limit = 3 if recommendation == 'CAUTION' else 5
+                        if shadow_count <= log_limit or shadow_count % 25 == 0:
+                            log.info(f"  [ML_GATE] SHADOW ({recommendation}) {best_strat_name} "
                                      f"{best_signal['direction']} "
                                      f"R={predicted_r:.2f}")
-                        continue  # Don't execute CAUTION as real trade
+                        continue  # Don't execute as real trade
 
                     # Model says TAKE — proceed with real execution
                     if model_blocked_count % 20 == 0 or model_blocked_count <= 3:
@@ -1072,10 +1071,9 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                     best['model_predicted_r'] = predicted_r
                     if rec == 'SKIP':
                         stats['model_blocked'] += 1
-                        continue
 
-                    # CAUTION → SHADOW trade (simulate, don't execute)
-                    if rec == 'CAUTION':
+                    # v3.3: ALL non-TAKE signals → SHADOW (CAUTION + SKIP)
+                    if rec in ('CAUTION', 'SKIP'):
                         if sym in symbol_shadow_trackers:
                             sl_p = best.get('sl_pips', 0)
                             tp_p = best.get('tp1_pips', 0) or best.get('tp_pips', 0)
@@ -1118,7 +1116,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
                                 }
-                        continue  # Don't execute CAUTION as real trade
+                        continue  # Don't execute as real trade
                 except Exception:
                     pass
 
