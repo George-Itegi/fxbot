@@ -296,6 +296,13 @@ def evaluate(symbol: str,
         full_delta.get('delta', 0),
     ]
     
+    # Initialize feature defaults for conditional blocks
+    stoch_k = 50.0
+    stoch_turning = False
+    pd_zone = ''
+    m5_body_ratio = 0.0
+    surge_absorption = False
+
     score = 0
     confluence = []
     
@@ -376,9 +383,11 @@ def evaluate(symbol: str,
             # Surge is buying but we want to sell = institutional absorption
             score += 5
             confluence.append("SURGE_ABSORPTION")
+            surge_absorption = True
         elif direction == "BUY" and surge_dir == "SELL":
             score += 5
             confluence.append("SURGE_ABSORPTION")
+            surge_absorption = True
     
     # ── Order Flow Imbalance ───────────────────────────────
     imb = of_imbalance.get('imbalance', 0)
@@ -409,12 +418,14 @@ def evaluate(symbol: str,
             if prev_k > stoch_k:
                 score += 5
                 confluence.append("STOCHRSI_TURNING_DOWN")
+                stoch_turning = True
         elif direction == "BUY" and stoch_k < 30:
             score += 10
             confluence.append("STOCHRSI_OVERSOLD")
             if prev_k < stoch_k:
                 score += 5
                 confluence.append("STOCHRSI_TURNING_UP")
+                stoch_turning = True
     
     # ── Premium/Discount Confluence ────────────────────────
     if smc_report:
@@ -436,8 +447,8 @@ def evaluate(symbol: str,
         m5_range = m5_last['high'] - m5_last['low']
         
         if m5_range > 0:
-            body_ratio = abs(m5_body) / m5_range
-            if body_ratio > 0.6:
+            m5_body_ratio = abs(m5_body) / m5_range
+            if m5_body_ratio > 0.6:
                 aligned = (direction == "SELL" and m5_body < 0) or \
                           (direction == "BUY" and m5_body > 0)
                 if aligned:
@@ -521,4 +532,21 @@ def evaluate(symbol: str,
         "confluence":  confluence,
         "divergence":  divergence,
         "spread":      0,
+        "_delta_div_features": {
+            'div_type': divergence.get('type', ''),
+            'div_strength': div_strength,
+            'swing_range_pips': swing_pips,
+            'delta_value': current_delta,
+            'delta_bias': delta_bias,
+            'of_imbalance': imb,
+            'of_strength': imb_strength,
+            'vol_surge': 1 if volume_surge.get('surge_detected') else 0,
+            'surge_ratio': volume_surge.get('surge_ratio', 1.0),
+            'surge_absorption': 1 if surge_absorption else 0,
+            'stoch_rsi_k': stoch_k,
+            'stoch_rsi_turning': 1 if stoch_turning else 0,
+            'pd_zone': pd_zone,
+            'm5_body_ratio': m5_body_ratio,
+            'atr_pips': atr_pips,
+        },
     }

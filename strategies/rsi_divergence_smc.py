@@ -230,6 +230,16 @@ def evaluate(symbol: str,
     score = 0
     confluence = []
 
+    # Initialize feature defaults for conditional blocks
+    smc_bias = 'NEUTRAL'
+    delta_bias = 'NEUTRAL'
+    of_imb_value = 0.0
+    stoch_rsi_k = 50.0
+    pd_zone = ''
+    is_choppy = False
+    ob_distance_pips = 0.0
+    fvg_distance_pips = 0.0
+
     # ── Score: Divergence strength ──────────────────────
     if div_strength == 'EXTREME':
         score += 30
@@ -320,9 +330,11 @@ def evaluate(symbol: str,
                 continue
 
             if direction == "BUY" and 'BULL' in ob_type.upper():
+                ob_distance_pips = dist
                 score += 8
                 confluence.append(f"OB_BULL_NEAR({dist:.1f}p)")
             elif direction == "SELL" and 'BEAR' in ob_type.upper():
+                ob_distance_pips = dist
                 score += 8
                 confluence.append(f"OB_BEAR_NEAR({dist:.1f}p)")
 
@@ -338,9 +350,11 @@ def evaluate(symbol: str,
                 continue
 
             if direction == "BUY" and 'BULL' in fvg_type.upper():
+                fvg_distance_pips = dist
                 score += 6
                 confluence.append(f"FVG_BULL_NEAR({dist:.1f}p)")
             elif direction == "SELL" and 'BEAR' in fvg_type.upper():
+                fvg_distance_pips = dist
                 score += 6
                 confluence.append(f"FVG_BEAR_NEAR({dist:.1f}p)")
 
@@ -367,6 +381,7 @@ def evaluate(symbol: str,
     if market_report:
         of_imb = market_report.get('order_flow_imbalance', {})
         imb = of_imb.get('imbalance', 0)
+        of_imb_value = imb
         imb_strength = of_imb.get('strength', 'NONE')
 
         if direction == "BUY" and imb > 0.15:
@@ -378,19 +393,19 @@ def evaluate(symbol: str,
 
     # ── StochRSI at extremes (bonus) ────────────────────
     if df_m15 is not None and len(df_m15) >= 3:
-        stoch_k = float(df_m15.iloc[-1].get('stoch_rsi_k', 50))
+        stoch_rsi_k = float(df_m15.iloc[-1].get('stoch_rsi_k', 50))
         prev_k = float(df_m15.iloc[-2].get('stoch_rsi_k', 50))
 
-        if direction == "SELL" and stoch_k > 70:
+        if direction == "SELL" and stoch_rsi_k > 70:
             score += 8
             confluence.append("STOCHRSI_OVERBOUGHT")
-            if prev_k > stoch_k:
+            if prev_k > stoch_rsi_k:
                 score += 4
                 confluence.append("STOCHRSI_TURNING_DOWN")
-        elif direction == "BUY" and stoch_k < 30:
+        elif direction == "BUY" and stoch_rsi_k < 30:
             score += 8
             confluence.append("STOCHRSI_OVERSOLD")
-            if prev_k < stoch_k:
+            if prev_k < stoch_rsi_k:
                 score += 4
                 confluence.append("STOCHRSI_TURNING_UP")
 
@@ -410,6 +425,7 @@ def evaluate(symbol: str,
     if master_report:
         momentum = master_report.get('momentum', {})
         if momentum.get('is_choppy', False):
+            is_choppy = True
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
@@ -459,4 +475,22 @@ def evaluate(symbol: str,
         "score":       score,
         "confluence":  confluence,
         "spread":      0,
+        "_rsi_div_features": {
+            'div_type': divergence.get('type', ''),
+            'div_strength': div_strength,
+            'rsi_diff': rsi_diff,
+            'curr_rsi': divergence['curr_rsi'],
+            'prev_rsi': divergence['prev_rsi'],
+            'price_range_pips': divergence['price_range_pips'],
+            'smc_confirmed': 1 if smc_confirmed else 0,
+            'smc_bias': smc_bias,
+            'ob_distance_pips': ob_distance_pips,
+            'fvg_distance_pips': fvg_distance_pips,
+            'delta_bias': delta_bias,
+            'of_imbalance': of_imb_value,
+            'stoch_rsi_k': stoch_rsi_k,
+            'pd_zone': pd_zone,
+            'is_choppy': 1 if is_choppy else 0,
+            'atr_pips': atr_pips,
+        },
     }

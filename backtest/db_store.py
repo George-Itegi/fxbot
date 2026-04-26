@@ -265,6 +265,214 @@ def _ensure_tables(conn):
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # ── SMC OB-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_smc_ob_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            ob_type             VARCHAR(20),
+            ob_dist_pips        DOUBLE,
+            price_at_ob         INT,
+            trend               VARCHAR(15),
+            delta_bias          VARCHAR(15),
+            delta_strength      VARCHAR(15),
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            stoch_rsi_k         DOUBLE,
+            supertrend_dir_h1   INT,
+            htf_ok              INT,
+            smc_bias            VARCHAR(15),
+            pd_zone             VARCHAR(20),
+            atr_pips            DOUBLE,
+            has_bos             INT,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Liquidity Sweep-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_liq_sweep_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            sweep_bias          VARCHAR(15),
+            reversal_pips       DOUBLE,
+            swept_level_dist    DOUBLE,
+            delta_bias          VARCHAR(15),
+            delta_strength      VARCHAR(15),
+            has_bos             INT,
+            bos_type            VARCHAR(20),
+            stoch_rsi_k         DOUBLE,
+            supertrend_dir_h1   INT,
+            htf_ok              INT,
+            smc_bias            VARCHAR(15),
+            pd_zone             VARCHAR(20),
+            vol_surge           INT,
+            of_imbalance        DOUBLE,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Delta Divergence-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_delta_div_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            div_type            VARCHAR(15),
+            div_strength        VARCHAR(15),
+            swing_range_pips    DOUBLE,
+            delta_value         DOUBLE,
+            delta_bias          VARCHAR(15),
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            vol_surge           INT,
+            surge_ratio         DOUBLE,
+            surge_absorption    INT,
+            stoch_rsi_k         DOUBLE,
+            stoch_rsi_turning   INT,
+            pd_zone             VARCHAR(20),
+            m5_body_ratio       DOUBLE,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Trend Continuation-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_trend_cont_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            h4_trend_score      INT,
+            pullback_ema_type   VARCHAR(20),
+            pullback_dist_pips  DOUBLE,
+            h1_ema_aligned      INT,
+            h1_supertrend_dir   INT,
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            delta_confirms      INT,
+            rejection_type      VARCHAR(20),
+            velocity_pips       DOUBLE,
+            velocity_dir        VARCHAR(10),
+            is_scalpable        INT,
+            market_state        VARCHAR(30),
+            is_choppy           INT,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── FVG Reversion-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_fvg_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            fvg_type            VARCHAR(15),
+            fvg_quality_score   INT,
+            fvg_gap_pips        DOUBLE,
+            fvg_distance_pips   DOUBLE,
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            vol_surge           INT,
+            vol_surge_ratio     DOUBLE,
+            stoch_rsi_k         DOUBLE,
+            stoch_rsi_turning   INT,
+            m5_wick_rejection   INT,
+            ob_fvg_confluence   INT,
+            ob_fvg_distance     DOUBLE,
+            pd_zone             VARCHAR(20),
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── EMA Cross Momentum-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_ema_cross_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            h4_cross_bars_ago   INT,
+            h4_cross_strength   INT,
+            h4_alignment_score  INT,
+            h1_rsi              DOUBLE,
+            m15_adx             DOUBLE,
+            delta_bias          VARCHAR(15),
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            h1_supertrend_dir   INT,
+            h4_supertrend_dir   INT,
+            h4_ema_spread_9_21  DOUBLE,
+            is_choppy           INT,
+            vol_surge           INT,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── RSI Divergence SMC-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_rsi_div_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            div_type            VARCHAR(15),
+            div_strength        VARCHAR(15),
+            rsi_diff            DOUBLE,
+            curr_rsi            DOUBLE,
+            prev_rsi            DOUBLE,
+            price_range_pips    DOUBLE,
+            smc_confirmed       INT,
+            smc_bias            VARCHAR(15),
+            ob_distance_pips    DOUBLE,
+            fvg_distance_pips   DOUBLE,
+            delta_bias          VARCHAR(15),
+            of_imbalance        DOUBLE,
+            stoch_rsi_k         DOUBLE,
+            pd_zone             VARCHAR(20),
+            is_choppy           INT,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Structure Alignment-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_structure_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            bos_direction       VARCHAR(15),
+            bos_count           INT,
+            h1_ema_aligned      INT,
+            h1_full_ema_aligned INT,
+            h1_supertrend_dir   INT,
+            delta_value         DOUBLE,
+            delta_bias          VARCHAR(15),
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            has_opposing_fvg    INT,
+            pd_zone             VARCHAR(20),
+            h4_trend_aligned    INT,
+            vol_surge           INT,
+            is_choppy           INT,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
     # Note: backtest_signals table no longer populated (blocked signals removed)
     # Only backtest_trades is active for ML training
     _auto_migrate_trades(c, conn)
@@ -369,6 +577,279 @@ def _auto_migrate_trades(cursor, conn):
             log.info("[DB_STORE] Created backtest_breakout_features table")
     except Exception as e:
         log.warning(f"[DB_STORE] backtest_breakout_features creation check: {e}")
+
+    # ── Auto-create backtest_smc_ob_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_smc_ob_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_smc_ob_features (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id        INT NOT NULL,
+                    ob_type         VARCHAR(20),
+                    ob_dist_pips    DOUBLE,
+                    price_at_ob     INT,
+                    trend           VARCHAR(15),
+                    delta_bias      VARCHAR(15),
+                    delta_strength  VARCHAR(15),
+                    of_imbalance    DOUBLE,
+                    of_strength     VARCHAR(20),
+                    stoch_rsi_k     DOUBLE,
+                    supertrend_dir_h1 INT,
+                    htf_ok          INT,
+                    smc_bias        VARCHAR(15),
+                    pd_zone         VARCHAR(20),
+                    atr_pips        DOUBLE,
+                    has_bos         INT,
+                    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_smc_ob_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_smc_ob_features creation check: {e}")
+
+    # ── Auto-create backtest_liq_sweep_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_liq_sweep_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_liq_sweep_features (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id        INT NOT NULL,
+                    sweep_bias      VARCHAR(15),
+                    reversal_pips   DOUBLE,
+                    swept_level_dist DOUBLE,
+                    delta_bias      VARCHAR(15),
+                    delta_strength  VARCHAR(15),
+                    has_bos         INT,
+                    bos_type        VARCHAR(20),
+                    stoch_rsi_k     DOUBLE,
+                    supertrend_dir_h1 INT,
+                    htf_ok          INT,
+                    smc_bias        VARCHAR(15),
+                    pd_zone         VARCHAR(20),
+                    vol_surge       INT,
+                    of_imbalance    DOUBLE,
+                    atr_pips        DOUBLE,
+                    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_liq_sweep_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_liq_sweep_features creation check: {e}")
+
+    # ── Auto-create backtest_delta_div_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_delta_div_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_delta_div_features (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id            INT NOT NULL,
+                    div_type            VARCHAR(15),
+                    div_strength        VARCHAR(15),
+                    swing_range_pips    DOUBLE,
+                    delta_value         DOUBLE,
+                    delta_bias          VARCHAR(15),
+                    of_imbalance        DOUBLE,
+                    of_strength         VARCHAR(20),
+                    vol_surge           INT,
+                    surge_ratio         DOUBLE,
+                    surge_absorption    INT,
+                    stoch_rsi_k         DOUBLE,
+                    stoch_rsi_turning   INT,
+                    pd_zone             VARCHAR(20),
+                    m5_body_ratio       DOUBLE,
+                    atr_pips            DOUBLE,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_delta_div_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_delta_div_features creation check: {e}")
+
+    # ── Auto-create backtest_trend_cont_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_trend_cont_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_trend_cont_features (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id            INT NOT NULL,
+                    h4_trend_score      INT,
+                    pullback_ema_type   VARCHAR(20),
+                    pullback_dist_pips  DOUBLE,
+                    h1_ema_aligned      INT,
+                    h1_supertrend_dir   INT,
+                    of_imbalance        DOUBLE,
+                    of_strength         VARCHAR(20),
+                    delta_confirms      INT,
+                    rejection_type      VARCHAR(20),
+                    velocity_pips       DOUBLE,
+                    velocity_dir        VARCHAR(10),
+                    is_scalpable        INT,
+                    market_state        VARCHAR(30),
+                    is_choppy           INT,
+                    atr_pips            DOUBLE,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_trend_cont_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_trend_cont_features creation check: {e}")
+
+    # ── Auto-create backtest_fvg_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_fvg_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_fvg_features (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id            INT NOT NULL,
+                    fvg_type            VARCHAR(15),
+                    fvg_quality_score   INT,
+                    fvg_gap_pips        DOUBLE,
+                    fvg_distance_pips   DOUBLE,
+                    of_imbalance        DOUBLE,
+                    of_strength         VARCHAR(20),
+                    vol_surge           INT,
+                    vol_surge_ratio     DOUBLE,
+                    stoch_rsi_k         DOUBLE,
+                    stoch_rsi_turning   INT,
+                    m5_wick_rejection   INT,
+                    ob_fvg_confluence   INT,
+                    ob_fvg_distance     DOUBLE,
+                    pd_zone             VARCHAR(20),
+                    atr_pips            DOUBLE,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_fvg_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_fvg_features creation check: {e}")
+
+    # ── Auto-create backtest_ema_cross_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_ema_cross_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_ema_cross_features (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id            INT NOT NULL,
+                    h4_cross_bars_ago   INT,
+                    h4_cross_strength   INT,
+                    h4_alignment_score  INT,
+                    h1_rsi              DOUBLE,
+                    m15_adx             DOUBLE,
+                    delta_bias          VARCHAR(15),
+                    of_imbalance        DOUBLE,
+                    of_strength         VARCHAR(20),
+                    h1_supertrend_dir   INT,
+                    h4_supertrend_dir   INT,
+                    h4_ema_spread_9_21  DOUBLE,
+                    is_choppy           INT,
+                    vol_surge           INT,
+                    atr_pips            DOUBLE,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_ema_cross_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_ema_cross_features creation check: {e}")
+
+    # ── Auto-create backtest_rsi_div_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_rsi_div_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_rsi_div_features (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id            INT NOT NULL,
+                    div_type            VARCHAR(15),
+                    div_strength        VARCHAR(15),
+                    rsi_diff            DOUBLE,
+                    curr_rsi            DOUBLE,
+                    prev_rsi            DOUBLE,
+                    price_range_pips    DOUBLE,
+                    smc_confirmed       INT,
+                    smc_bias            VARCHAR(15),
+                    ob_distance_pips    DOUBLE,
+                    fvg_distance_pips   DOUBLE,
+                    delta_bias          VARCHAR(15),
+                    of_imbalance        DOUBLE,
+                    stoch_rsi_k         DOUBLE,
+                    pd_zone             VARCHAR(20),
+                    is_choppy           INT,
+                    atr_pips            DOUBLE,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_rsi_div_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_rsi_div_features creation check: {e}")
+
+    # ── Auto-create backtest_structure_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_structure_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_structure_features (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id            INT NOT NULL,
+                    bos_direction       VARCHAR(15),
+                    bos_count           INT,
+                    h1_ema_aligned      INT,
+                    h1_full_ema_aligned INT,
+                    h1_supertrend_dir   INT,
+                    delta_value         DOUBLE,
+                    delta_bias          VARCHAR(15),
+                    of_imbalance        DOUBLE,
+                    of_strength         VARCHAR(20),
+                    has_opposing_fvg    INT,
+                    pd_zone             VARCHAR(20),
+                    h4_trend_aligned    INT,
+                    vol_surge           INT,
+                    is_choppy           INT,
+                    atr_pips            DOUBLE,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_structure_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_structure_features creation check: {e}")
+
     for table, col, col_def in migrations:
         try:
             cursor.execute(f"SELECT {col} FROM {table} LIMIT 1")
@@ -514,6 +995,305 @@ def store_breakout_features(cursor, trade_id: int, breakout_features: dict):
         log.warning(f"[DB_STORE] Failed to store Breakout features for trade {trade_id}: {e}")
 
 
+def store_smc_ob_features(cursor, trade_id: int, smc_ob_features: dict):
+    """Store SMC OB Reversal-specific strategy features for a trade."""
+    if not smc_ob_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_smc_ob_features
+                (trade_id, ob_type, ob_dist_pips, price_at_ob, trend,
+                 delta_bias, delta_strength, of_imbalance, of_strength,
+                 stoch_rsi_k, supertrend_dir_h1, htf_ok, smc_bias,
+                 pd_zone, atr_pips, has_bos)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            smc_ob_features.get('ob_type'),
+            smc_ob_features.get('ob_dist_pips'),
+            smc_ob_features.get('price_at_ob'),
+            smc_ob_features.get('trend'),
+            smc_ob_features.get('delta_bias'),
+            smc_ob_features.get('delta_strength'),
+            smc_ob_features.get('of_imbalance'),
+            smc_ob_features.get('of_strength'),
+            smc_ob_features.get('stoch_rsi_k'),
+            smc_ob_features.get('supertrend_dir_h1'),
+            smc_ob_features.get('htf_ok'),
+            smc_ob_features.get('smc_bias'),
+            smc_ob_features.get('pd_zone'),
+            smc_ob_features.get('atr_pips'),
+            smc_ob_features.get('has_bos'),
+        ))
+        log.info(f"[DB_STORE] Stored SMC OB features for trade {trade_id}: "
+                 f"ob_type={smc_ob_features.get('ob_type','')} "
+                 f"trend={smc_ob_features.get('trend','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store SMC OB features for trade {trade_id}: {e}")
+
+
+def store_liq_sweep_features(cursor, trade_id: int, liq_sweep_features: dict):
+    """Store Liquidity Sweep-specific strategy features for a trade."""
+    if not liq_sweep_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_liq_sweep_features
+                (trade_id, sweep_bias, reversal_pips, swept_level_dist,
+                 delta_bias, delta_strength, has_bos, bos_type,
+                 stoch_rsi_k, supertrend_dir_h1, htf_ok, smc_bias,
+                 pd_zone, vol_surge, of_imbalance, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            liq_sweep_features.get('sweep_bias'),
+            liq_sweep_features.get('reversal_pips'),
+            liq_sweep_features.get('swept_level_dist'),
+            liq_sweep_features.get('delta_bias'),
+            liq_sweep_features.get('delta_strength'),
+            liq_sweep_features.get('has_bos'),
+            liq_sweep_features.get('bos_type'),
+            liq_sweep_features.get('stoch_rsi_k'),
+            liq_sweep_features.get('supertrend_dir_h1'),
+            liq_sweep_features.get('htf_ok'),
+            liq_sweep_features.get('smc_bias'),
+            liq_sweep_features.get('pd_zone'),
+            liq_sweep_features.get('vol_surge'),
+            liq_sweep_features.get('of_imbalance'),
+            liq_sweep_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored Liquidity Sweep features for trade {trade_id}: "
+                 f"sweep_bias={liq_sweep_features.get('sweep_bias','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store Liquidity Sweep features for trade {trade_id}: {e}")
+
+
+def store_delta_div_features(cursor, trade_id: int, delta_div_features: dict):
+    """Store Delta Divergence-specific strategy features for a trade."""
+    if not delta_div_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_delta_div_features
+                (trade_id, div_type, div_strength, swing_range_pips,
+                 delta_value, delta_bias, of_imbalance, of_strength,
+                 vol_surge, surge_ratio, surge_absorption,
+                 stoch_rsi_k, stoch_rsi_turning, pd_zone,
+                 m5_body_ratio, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            delta_div_features.get('div_type'),
+            delta_div_features.get('div_strength'),
+            delta_div_features.get('swing_range_pips'),
+            delta_div_features.get('delta_value'),
+            delta_div_features.get('delta_bias'),
+            delta_div_features.get('of_imbalance'),
+            delta_div_features.get('of_strength'),
+            delta_div_features.get('vol_surge'),
+            delta_div_features.get('surge_ratio'),
+            delta_div_features.get('surge_absorption'),
+            delta_div_features.get('stoch_rsi_k'),
+            delta_div_features.get('stoch_rsi_turning'),
+            delta_div_features.get('pd_zone'),
+            delta_div_features.get('m5_body_ratio'),
+            delta_div_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored Delta Divergence features for trade {trade_id}: "
+                 f"div_type={delta_div_features.get('div_type','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store Delta Divergence features for trade {trade_id}: {e}")
+
+
+def store_trend_cont_features(cursor, trade_id: int, trend_cont_features: dict):
+    """Store Trend Continuation-specific strategy features for a trade."""
+    if not trend_cont_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_trend_cont_features
+                (trade_id, h4_trend_score, pullback_ema_type, pullback_dist_pips,
+                 h1_ema_aligned, h1_supertrend_dir, of_imbalance, of_strength,
+                 delta_confirms, rejection_type, velocity_pips, velocity_dir,
+                 is_scalpable, market_state, is_choppy, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            trend_cont_features.get('h4_trend_score'),
+            trend_cont_features.get('pullback_ema_type'),
+            trend_cont_features.get('pullback_dist_pips'),
+            trend_cont_features.get('h1_ema_aligned'),
+            trend_cont_features.get('h1_supertrend_dir'),
+            trend_cont_features.get('of_imbalance'),
+            trend_cont_features.get('of_strength'),
+            trend_cont_features.get('delta_confirms'),
+            trend_cont_features.get('rejection_type'),
+            trend_cont_features.get('velocity_pips'),
+            trend_cont_features.get('velocity_dir'),
+            trend_cont_features.get('is_scalpable'),
+            trend_cont_features.get('market_state'),
+            trend_cont_features.get('is_choppy'),
+            trend_cont_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored Trend Continuation features for trade {trade_id}: "
+                 f"h4_score={trend_cont_features.get('h4_trend_score',0)}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store Trend Continuation features for trade {trade_id}: {e}")
+
+
+def store_fvg_features(cursor, trade_id: int, fvg_features: dict):
+    """Store FVG Reversion-specific strategy features for a trade."""
+    if not fvg_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_fvg_features
+                (trade_id, fvg_type, fvg_quality_score, fvg_gap_pips,
+                 fvg_distance_pips, of_imbalance, of_strength, vol_surge,
+                 vol_surge_ratio, stoch_rsi_k, stoch_rsi_turning,
+                 m5_wick_rejection, ob_fvg_confluence, ob_fvg_distance,
+                 pd_zone, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            fvg_features.get('fvg_type'),
+            fvg_features.get('fvg_quality_score'),
+            fvg_features.get('fvg_gap_pips'),
+            fvg_features.get('fvg_distance_pips'),
+            fvg_features.get('of_imbalance'),
+            fvg_features.get('of_strength'),
+            fvg_features.get('vol_surge'),
+            fvg_features.get('vol_surge_ratio'),
+            fvg_features.get('stoch_rsi_k'),
+            fvg_features.get('stoch_rsi_turning'),
+            fvg_features.get('m5_wick_rejection'),
+            fvg_features.get('ob_fvg_confluence'),
+            fvg_features.get('ob_fvg_distance'),
+            fvg_features.get('pd_zone'),
+            fvg_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored FVG features for trade {trade_id}: "
+                 f"fvg_type={fvg_features.get('fvg_type','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store FVG features for trade {trade_id}: {e}")
+
+
+def store_ema_cross_features(cursor, trade_id: int, ema_cross_features: dict):
+    """Store EMA Cross Momentum-specific strategy features for a trade."""
+    if not ema_cross_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_ema_cross_features
+                (trade_id, h4_cross_bars_ago, h4_cross_strength, h4_alignment_score,
+                 h1_rsi, m15_adx, delta_bias, of_imbalance, of_strength,
+                 h1_supertrend_dir, h4_supertrend_dir, h4_ema_spread_9_21,
+                 is_choppy, vol_surge, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            ema_cross_features.get('h4_cross_bars_ago'),
+            ema_cross_features.get('h4_cross_strength'),
+            ema_cross_features.get('h4_alignment_score'),
+            ema_cross_features.get('h1_rsi'),
+            ema_cross_features.get('m15_adx'),
+            ema_cross_features.get('delta_bias'),
+            ema_cross_features.get('of_imbalance'),
+            ema_cross_features.get('of_strength'),
+            ema_cross_features.get('h1_supertrend_dir'),
+            ema_cross_features.get('h4_supertrend_dir'),
+            ema_cross_features.get('h4_ema_spread_9_21'),
+            ema_cross_features.get('is_choppy'),
+            ema_cross_features.get('vol_surge'),
+            ema_cross_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored EMA Cross features for trade {trade_id}: "
+                 f"h4_cross_bars_ago={ema_cross_features.get('h4_cross_bars_ago',0)}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store EMA Cross features for trade {trade_id}: {e}")
+
+
+def store_rsi_div_features(cursor, trade_id: int, rsi_div_features: dict):
+    """Store RSI Divergence SMC-specific strategy features for a trade."""
+    if not rsi_div_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_rsi_div_features
+                (trade_id, div_type, div_strength, rsi_diff, curr_rsi,
+                 prev_rsi, price_range_pips, smc_confirmed, smc_bias,
+                 ob_distance_pips, fvg_distance_pips, delta_bias,
+                 of_imbalance, stoch_rsi_k, pd_zone, is_choppy, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            rsi_div_features.get('div_type'),
+            rsi_div_features.get('div_strength'),
+            rsi_div_features.get('rsi_diff'),
+            rsi_div_features.get('curr_rsi'),
+            rsi_div_features.get('prev_rsi'),
+            rsi_div_features.get('price_range_pips'),
+            rsi_div_features.get('smc_confirmed'),
+            rsi_div_features.get('smc_bias'),
+            rsi_div_features.get('ob_distance_pips'),
+            rsi_div_features.get('fvg_distance_pips'),
+            rsi_div_features.get('delta_bias'),
+            rsi_div_features.get('of_imbalance'),
+            rsi_div_features.get('stoch_rsi_k'),
+            rsi_div_features.get('pd_zone'),
+            rsi_div_features.get('is_choppy'),
+            rsi_div_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored RSI Divergence features for trade {trade_id}: "
+                 f"div_type={rsi_div_features.get('div_type','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store RSI Divergence features for trade {trade_id}: {e}")
+
+
+def store_structure_features(cursor, trade_id: int, structure_features: dict):
+    """Store Structure Alignment-specific strategy features for a trade."""
+    if not structure_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_structure_features
+                (trade_id, bos_direction, bos_count, h1_ema_aligned,
+                 h1_full_ema_aligned, h1_supertrend_dir, delta_value,
+                 delta_bias, of_imbalance, of_strength, has_opposing_fvg,
+                 pd_zone, h4_trend_aligned, vol_surge, is_choppy, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            structure_features.get('bos_direction'),
+            structure_features.get('bos_count'),
+            structure_features.get('h1_ema_aligned'),
+            structure_features.get('h1_full_ema_aligned'),
+            structure_features.get('h1_supertrend_dir'),
+            structure_features.get('delta_value'),
+            structure_features.get('delta_bias'),
+            structure_features.get('of_imbalance'),
+            structure_features.get('of_strength'),
+            structure_features.get('has_opposing_fvg'),
+            structure_features.get('pd_zone'),
+            structure_features.get('h4_trend_aligned'),
+            structure_features.get('vol_surge'),
+            structure_features.get('is_choppy'),
+            structure_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored Structure Alignment features for trade {trade_id}: "
+                 f"bos_dir={structure_features.get('bos_direction','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store Structure Alignment features for trade {trade_id}: {e}")
+
+
 def store_trade(trade, master_report: dict = None,
                 market_report: dict = None, smc_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
@@ -523,7 +1303,15 @@ def store_trade(trade, master_report: dict = None,
                 strategy_model_verdict: str = None,
                 strategy_model_predicted_r: float = None,
                 vwap_features: dict = None,
-                breakout_features: dict = None):
+                breakout_features: dict = None,
+                smc_ob_features: dict = None,
+                liq_sweep_features: dict = None,
+                delta_div_features: dict = None,
+                trend_cont_features: dict = None,
+                fvg_features: dict = None,
+                ema_cross_features: dict = None,
+                rsi_div_features: dict = None,
+                structure_features: dict = None):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
@@ -632,6 +1420,78 @@ def store_trade(trade, master_report: dict = None,
                         log.info(f"[DB_STORE] Backfilled breakout features for existing trade {existing_id}")
                 except Exception as e:
                     log.warning(f"[DB_STORE] Breakout backfill error: {e}")
+            if smc_ob_features and trade.strategy == 'SMC_OB_REVERSAL':
+                try:
+                    c.execute("SELECT id FROM backtest_smc_ob_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_smc_ob_features(c, existing_id, smc_ob_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled SMC OB features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] SMC OB backfill error: {e}")
+            if liq_sweep_features and trade.strategy == 'LIQUIDITY_SWEEP_ENTRY':
+                try:
+                    c.execute("SELECT id FROM backtest_liq_sweep_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_liq_sweep_features(c, existing_id, liq_sweep_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled Liquidity Sweep features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] Liquidity Sweep backfill error: {e}")
+            if delta_div_features and trade.strategy == 'DELTA_DIVERGENCE':
+                try:
+                    c.execute("SELECT id FROM backtest_delta_div_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_delta_div_features(c, existing_id, delta_div_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled Delta Divergence features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] Delta Divergence backfill error: {e}")
+            if trend_cont_features and trade.strategy == 'TREND_CONTINUATION':
+                try:
+                    c.execute("SELECT id FROM backtest_trend_cont_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_trend_cont_features(c, existing_id, trend_cont_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled Trend Continuation features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] Trend Continuation backfill error: {e}")
+            if fvg_features and trade.strategy == 'FVG_REVERSION':
+                try:
+                    c.execute("SELECT id FROM backtest_fvg_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_fvg_features(c, existing_id, fvg_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled FVG features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] FVG backfill error: {e}")
+            if ema_cross_features and trade.strategy == 'EMA_CROSS_MOMENTUM':
+                try:
+                    c.execute("SELECT id FROM backtest_ema_cross_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_ema_cross_features(c, existing_id, ema_cross_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled EMA Cross features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] EMA Cross backfill error: {e}")
+            if rsi_div_features and trade.strategy == 'RSI_DIVERGENCE_SMC':
+                try:
+                    c.execute("SELECT id FROM backtest_rsi_div_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_rsi_div_features(c, existing_id, rsi_div_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled RSI Divergence features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] RSI Divergence backfill error: {e}")
+            if structure_features and trade.strategy == 'STRUCTURE_ALIGNMENT':
+                try:
+                    c.execute("SELECT id FROM backtest_structure_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_structure_features(c, existing_id, structure_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled Structure Alignment features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] Structure Alignment backfill error: {e}")
             c.close()
             conn.close()
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
@@ -760,6 +1620,30 @@ def store_trade(trade, master_report: dict = None,
             store_vwap_features(c, trade_id, vwap_features)
         if breakout_features and trade.strategy == 'BREAKOUT_MOMENTUM':
             store_breakout_features(c, trade_id, breakout_features)
+            conn.commit()
+        if smc_ob_features and trade.strategy == 'SMC_OB_REVERSAL':
+            store_smc_ob_features(c, trade_id, smc_ob_features)
+            conn.commit()
+        if liq_sweep_features and trade.strategy == 'LIQUIDITY_SWEEP_ENTRY':
+            store_liq_sweep_features(c, trade_id, liq_sweep_features)
+            conn.commit()
+        if delta_div_features and trade.strategy == 'DELTA_DIVERGENCE':
+            store_delta_div_features(c, trade_id, delta_div_features)
+            conn.commit()
+        if trend_cont_features and trade.strategy == 'TREND_CONTINUATION':
+            store_trend_cont_features(c, trade_id, trend_cont_features)
+            conn.commit()
+        if fvg_features and trade.strategy == 'FVG_REVERSION':
+            store_fvg_features(c, trade_id, fvg_features)
+            conn.commit()
+        if ema_cross_features and trade.strategy == 'EMA_CROSS_MOMENTUM':
+            store_ema_cross_features(c, trade_id, ema_cross_features)
+            conn.commit()
+        if rsi_div_features and trade.strategy == 'RSI_DIVERGENCE_SMC':
+            store_rsi_div_features(c, trade_id, rsi_div_features)
+            conn.commit()
+        if structure_features and trade.strategy == 'STRUCTURE_ALIGNMENT':
+            store_structure_features(c, trade_id, structure_features)
             conn.commit()
 
         c.close()

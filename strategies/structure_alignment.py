@@ -160,6 +160,13 @@ def evaluate(symbol: str,
     score = 0
     confluence = []
 
+    # Initialize feature defaults for conditional blocks
+    pd_zone = ''
+    h4_trend_aligned = False
+    vol_surge_detected = False
+    is_choppy = False
+    h1_full_ema_aligned = False
+
     # ── Score: BOS strength ─────────────────────────────
     bos_count = bos_info['count']
     if bos_count >= 3:
@@ -189,6 +196,7 @@ def evaluate(symbol: str,
             score += 15
             confluence.append("H1_EMA_BULL")
         if h1_ema9 > h1_ema21 > h1_ema50:
+            h1_full_ema_aligned = True
             score += 5
             confluence.append("H1_FULL_BULL_ALIGN")
     elif direction == "SELL":
@@ -197,6 +205,7 @@ def evaluate(symbol: str,
             score += 15
             confluence.append("H1_EMA_BEAR")
         if h1_ema9 < h1_ema21 < h1_ema50:
+            h1_full_ema_aligned = True
             score += 5
             confluence.append("H1_FULL_BEAR_ALIGN")
 
@@ -292,9 +301,11 @@ def evaluate(symbol: str,
         h4_ema21 = float(h4.get('ema_21', 0))
 
         if direction == "BUY" and h4_ema9 > h4_ema21:
+            h4_trend_aligned = True
             score += 8
             confluence.append("H4_TREND_BULL")
         elif direction == "SELL" and h4_ema9 < h4_ema21:
+            h4_trend_aligned = True
             score += 8
             confluence.append("H4_TREND_BEAR")
 
@@ -302,6 +313,7 @@ def evaluate(symbol: str,
     if market_report:
         surge = market_report.get('volume_surge', {})
         if surge.get('surge_detected', False):
+            vol_surge_detected = True
             score += 5
             confluence.append("VOLUME_SURGE")
 
@@ -318,6 +330,7 @@ def evaluate(symbol: str,
     if master_report:
         momentum = master_report.get('momentum', {})
         if momentum.get('is_choppy', False):
+            is_choppy = True
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
@@ -375,4 +388,21 @@ def evaluate(symbol: str,
         "score":       score,
         "confluence":  confluence,
         "spread":      0,
+        "_structure_features": {
+            'bos_direction': bos_info['direction'],
+            'bos_count': bos_count,
+            'h1_ema_aligned': 1 if h1_confirms else 0,
+            'h1_full_ema_aligned': 1 if h1_full_ema_aligned else 0,
+            'h1_supertrend_dir': h1_st,
+            'delta_value': delta_value,
+            'delta_bias': delta_bias,
+            'of_imbalance': imb,
+            'of_strength': imb_strength,
+            'has_opposing_fvg': 1 if has_opposing else 0,
+            'pd_zone': pd_zone,
+            'h4_trend_aligned': 1 if h4_trend_aligned else 0,
+            'vol_surge': 1 if vol_surge_detected else 0,
+            'is_choppy': 1 if is_choppy else 0,
+            'atr_pips': atr_pips,
+        },
     }

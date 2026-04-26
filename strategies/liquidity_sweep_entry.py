@@ -91,6 +91,9 @@ def evaluate(symbol: str,
     # Order flow and volume from market report
     of_imb = market_report.get('order_flow_imbalance', {})
     volume_surge = market_report.get('volume_surge', {})
+    of_imb_value = of_imb.get('imbalance', 0)
+    vol_surge_detected = volume_surge.get('surge_detected', False)
+    price_vs_swept_level = (current_price - float(swept_level)) / pip_size
 
     # Must have a recent sweep
     if last_sweep_bias == "NONE":
@@ -208,6 +211,9 @@ def evaluate(symbol: str,
             log.info(f"[{STRATEGY_NAME} v{VERSION}] BUY {symbol}"
                      f" entry={entry_price:.5f} Score:{score} | "
                      f"{', '.join(confluence)}")
+            supertrend_dir = int(h1_data.get('supertrend_dir', 0))
+            has_bos = bool(bos and 'BULLISH' in bos.get('type', ''))
+            bos_type = bos.get('type', '') if bos else 'NONE'
             return {
                 "direction":   "BUY",
                 "entry_price": entry_price,
@@ -222,6 +228,23 @@ def evaluate(symbol: str,
                 "score":        score,
                 "confluence":   confluence,
                 "swept_level":  swept_level,
+                "_liq_sweep_features": {
+                    'sweep_bias': last_sweep_bias,
+                    'reversal_pips': last_sweep_reversal,
+                    'swept_level_dist': price_vs_swept_level,
+                    'delta_bias': delta_bias,
+                    'delta_strength': delta_strength,
+                    'has_bos': 1 if has_bos else 0,
+                    'bos_type': bos_type,
+                    'stoch_rsi_k': stoch_k,
+                    'supertrend_dir_h1': supertrend_dir,
+                    'htf_ok': 1 if htf_ok else 0,
+                    'smc_bias': smc_bias,
+                    'pd_zone': pd_zone,
+                    'vol_surge': 1 if vol_surge_detected else 0,
+                    'of_imbalance': of_imb_value,
+                    'atr_pips': atr_pips,
+                },
             }
 
     # ── BEARISH SWEEP ENTRY (SELL) ─────────────────────────
@@ -299,6 +322,9 @@ def evaluate(symbol: str,
             log.info(f"[{STRATEGY_NAME} v{VERSION}] SELL {symbol}"
                      f" entry={entry_price:.5f} Score:{score} | "
                      f"{', '.join(confluence)}")
+            supertrend_dir = int(h1_data.get('supertrend_dir', 0))
+            has_bos = bool(bos and 'BEARISH' in bos.get('type', ''))
+            bos_type = bos.get('type', '') if bos else 'NONE'
             return {
                 "direction":   "SELL",
                 "entry_price": entry_price,
@@ -313,6 +339,23 @@ def evaluate(symbol: str,
                 "score":        score,
                 "confluence":   confluence,
                 "swept_level":  swept_level,
+                "_liq_sweep_features": {
+                    'sweep_bias': last_sweep_bias,
+                    'reversal_pips': last_sweep_reversal,
+                    'swept_level_dist': price_vs_swept_level,
+                    'delta_bias': delta_bias,
+                    'delta_strength': delta_strength,
+                    'has_bos': 1 if has_bos else 0,
+                    'bos_type': bos_type,
+                    'stoch_rsi_k': stoch_k,
+                    'supertrend_dir_h1': supertrend_dir,
+                    'htf_ok': 1 if htf_ok else 0,
+                    'smc_bias': smc_bias,
+                    'pd_zone': pd_zone,
+                    'vol_surge': 1 if vol_surge_detected else 0,
+                    'of_imbalance': of_imb_value,
+                    'atr_pips': atr_pips,
+                },
             }
 
     return None

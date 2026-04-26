@@ -200,10 +200,12 @@ def evaluate(symbol: str,
 
     if h4_bull['strength'] > h4_bear['strength'] and h4_bull['aligned']:
         direction = "BUY"
+        h4_trend_score = h4_bull['strength']
         score += h4_bull['strength']
         confluence.append(f"H4_BULL_TREND({h4_bull['strength']}pts)")
     elif h4_bear['strength'] > h4_bull['strength'] and h4_bear['aligned']:
         direction = "SELL"
+        h4_trend_score = h4_bear['strength']
         score += h4_bear['strength']
         confluence.append(f"H4_BEAR_TREND({h4_bear['strength']}pts)")
     else:
@@ -216,10 +218,13 @@ def evaluate(symbol: str,
     h1_st = int(h1.get('supertrend_dir', 0))
 
     if direction == "BUY" and h1_ema_bull:
+        h1_ema_aligned = True
         score += 15; confluence.append("H1_STRUCTURE_BULL")
     elif direction == "SELL" and h1_ema_bear:
+        h1_ema_aligned = True
         score += 15; confluence.append("H1_STRUCTURE_BEAR")
     else:
+        h1_ema_aligned = False
         return None
 
     if (direction == "BUY" and h1_st == 1) or (direction == "SELL" and h1_st == -1):
@@ -275,6 +280,9 @@ def evaluate(symbol: str,
                 score += 5; confluence.append("M5_DIRECTIONAL")
 
     # ── Step 6: Momentum velocity (bonus) ──────────────────
+    velocity = 0
+    vel_dir = 'FLAT'
+    is_scalpable = False
     if master_report:
         momentum = master_report.get('momentum', {})
         velocity = momentum.get('velocity_pips_min', 0)
@@ -366,4 +374,21 @@ def evaluate(symbol: str,
         "score":       score,
         "confluence":  confluence,
         "spread":      0,
+        "_trend_cont_features": {
+            'h4_trend_score': h4_trend_score,
+            'pullback_ema_type': pullback['ema_type'],
+            'pullback_dist_pips': pullback['dist_pips'],
+            'h1_ema_aligned': 1 if h1_ema_aligned else 0,
+            'h1_supertrend_dir': h1_st,
+            'of_imbalance': imb,
+            'of_strength': of_strength,
+            'delta_confirms': 1 if of_confirms else 0,
+            'rejection_type': rejection,
+            'velocity_pips': velocity,
+            'velocity_dir': vel_dir,
+            'is_scalpable': 1 if is_scalpable else 0,
+            'market_state': market_state,
+            'is_choppy': 1 if momentum_data.get('is_choppy', False) else 0,
+            'atr_pips': atr_pips,
+        },
     }

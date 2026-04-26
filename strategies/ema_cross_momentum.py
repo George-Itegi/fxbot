@@ -161,16 +161,26 @@ def evaluate(symbol: str,
     score = 0
     confluence = []
 
+    # Initialize feature defaults for conditional blocks
+    is_choppy = False
+    vol_surge_detected = False
+    h4_cross_bars_ago = 999
+    h4_cross_strength = 0
+
     # ── Step 1: Detect H4 EMA crossover (mandatory) ──────
     h4_bull_cross = _detect_recent_cross(df_h4, "BUY")
     h4_bear_cross = _detect_recent_cross(df_h4, "SELL")
 
     if h4_bull_cross['crossed'] and h4_bull_cross['strength'] >= h4_bear_cross['strength']:
         direction = "BUY"
+        h4_cross_bars_ago = h4_bull_cross['bars_ago']
+        h4_cross_strength = h4_bull_cross['strength']
         score += h4_bull_cross['strength']
         confluence.append(f"H4_BULL_CROSS({h4_bull_cross['bars_ago']}bars)")
     elif h4_bear_cross['crossed'] and h4_bear_cross['strength'] >= h4_bull_cross['strength']:
         direction = "SELL"
+        h4_cross_bars_ago = h4_bear_cross['bars_ago']
+        h4_cross_strength = h4_bear_cross['strength']
         score += h4_bear_cross['strength']
         confluence.append(f"H4_BEAR_CROSS({h4_bear_cross['bars_ago']}bars)")
     else:
@@ -284,6 +294,7 @@ def evaluate(symbol: str,
     if market_report:
         surge = market_report.get('volume_surge', {})
         if surge.get('surge_detected', False):
+            vol_surge_detected = True
             score += 5
             confluence.append("VOLUME_SURGE")
 
@@ -301,6 +312,7 @@ def evaluate(symbol: str,
     if master_report:
         momentum = master_report.get('momentum', {})
         if momentum.get('is_choppy', False):
+            is_choppy = True
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
@@ -323,6 +335,13 @@ def evaluate(symbol: str,
         return None
 
     # ── Calculate SL/TP ──────────────────────────────────
+    # Compute H4 feature values
+    h4_last = df_h4.iloc[-1]
+    h4_supertrend_dir = int(h4_last.get('supertrend_dir', 0))
+    h4_ema9 = float(h4_last.get('ema_9', 0))
+    h4_ema21 = float(h4_last.get('ema_21', 0))
+    h4_ema_spread_9_21 = round((h4_ema9 - h4_ema21) / pip_size, 2) if h4_ema21 > 0 else 0.0
+
     entry = close_price
 
     sl_pips = round(atr_pips * 1.5, 1)
@@ -358,4 +377,20 @@ def evaluate(symbol: str,
         "score":       score,
         "confluence":  confluence,
         "spread":      0,
+        "_ema_cross_features": {
+            'h4_cross_bars_ago': h4_cross_bars_ago,
+            'h4_cross_strength': h4_cross_strength,
+            'h4_alignment_score': h4_align['score'],
+            'h1_rsi': h1_rsi,
+            'm15_adx': adx,
+            'delta_bias': delta_bias,
+            'of_imbalance': imb,
+            'of_strength': of_strength,
+            'h1_supertrend_dir': h1_st,
+            'h4_supertrend_dir': h4_supertrend_dir,
+            'h4_ema_spread_9_21': h4_ema_spread_9_21,
+            'is_choppy': 1 if is_choppy else 0,
+            'vol_surge': 1 if vol_surge_detected else 0,
+            'atr_pips': atr_pips,
+        },
     }

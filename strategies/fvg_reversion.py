@@ -210,8 +210,22 @@ def evaluate(symbol: str,
         return None
 
     direction = _fvg_direction(best_fvg)
+    fvg_type = best_fvg.get('type', '')
+    fvg_quality_score = best_fvg.get('quality_score', 0)
+    fvg_gap_pips = best_fvg.get('gap_pips', 0)
+    fvg_distance_pips = abs(close_price - best_fvg['mid']) / pip_size
     score = 0
     confluence = []
+
+    # Initialize feature defaults for conditional blocks
+    vol_surge_detected = False
+    vol_surge_ratio = 1.0
+    stoch_rsi_k = 50.0
+    stoch_rsi_turning = False
+    m5_wick_rejection = False
+    ob_fvg_confluence = False
+    ob_fvg_distance = 0.0
+    pd_zone = ''
 
     # ── Score: FVG Quality ─────────────────────────────────
     fvg_quality = best_fvg.get('quality_score', 0)
@@ -269,6 +283,8 @@ def evaluate(symbol: str,
 
         # Volume surge bonus
         if volume_surge.get('surge_detected', False):
+            vol_surge_detected = True
+            vol_surge_ratio = volume_surge.get('surge_ratio', 1.0)
             score += 8
             confluence.append(f"VOL_SURGE_{volume_surge.get('surge_ratio', 0)}x")
 
@@ -286,21 +302,23 @@ def evaluate(symbol: str,
 
     # ── Score: StochRSI at FVG Zone ────────────────────────
     if df_m15 is not None and len(df_m15) >= 3:
-        stoch_k = float(df_m15.iloc[-1].get('stoch_rsi_k', 50))
+        stoch_rsi_k = float(df_m15.iloc[-1].get('stoch_rsi_k', 50))
         prev_k  = float(df_m15.iloc[-2].get('stoch_rsi_k', 50))
 
-        if direction == "SELL" and stoch_k > 65:
+        if direction == "SELL" and stoch_rsi_k > 65:
             score += 10
             confluence.append("STOCHRSI_OVERBOUGHT")
-            if prev_k > stoch_k:
+            if prev_k > stoch_rsi_k:
                 score += 5
                 confluence.append("STOCHRSI_TURNING_DOWN")
-        elif direction == "BUY" and stoch_k < 35:
+                stoch_rsi_turning = True
+        elif direction == "BUY" and stoch_rsi_k < 35:
             score += 10
             confluence.append("STOCHRSI_OVERSOLD")
-            if prev_k < stoch_k:
+            if prev_k < stoch_rsi_k:
                 score += 5
                 confluence.append("STOCHRSI_TURNING_UP")
+                stoch_rsi_turning = True
 
     # ── Score: M5 Candle Rejection at FVG ──────────────────
     # Look for wick into FVG with body rejecting = strongest entry
@@ -315,6 +333,7 @@ def evaluate(symbol: str,
             # Bullish: look for lower wick dipping into FVG zone
             wick_into_fvg = m5_last['low'] <= best_fvg['top']
             if wick_into_fvg and m5_body > 0:
+                m5_wick_rejection = True
                 # Hammer/rejection candle at FVG
                 if m5_wick_dn > abs(m5_body) * 0.5:
                     score += 10
@@ -326,6 +345,7 @@ def evaluate(symbol: str,
             # Bearish: look for upper wick poking into FVG zone
             wick_into_fvg = m5_last['high'] >= best_fvg['bottom']
             if wick_into_fvg and m5_body < 0:
+                m5_wick_rejection = True
                 # Shooting star/rejection candle at FVG
                 if m5_wick_up > abs(m5_body) * 0.5:
                     score += 10
@@ -353,16 +373,18 @@ def evaluate(symbol: str,
         if nearest_ob:
             ob_mid = (nearest_ob.get('top', 0) + nearest_ob.get('bottom', 0)) / 2
             fvg_mid = best_fvg['mid']
-            ob_fvg_dist = abs(ob_mid - fvg_mid) / pip_size
-            if ob_fvg_dist < 20:
+            ob_fvg_distance = abs(ob_mid - fvg_mid) / pip_size
+            if ob_fvg_distance < 20:
                 # OB and FVG confluence = very strong zone
                 ob_type = nearest_ob.get('type', '')
                 if direction == "BUY" and "BULLISH" in ob_type:
+                    ob_fvg_confluence = True
                     score += 10
-                    confluence.append(f"OB+FVG_CONFLUENCE_{ob_fvg_dist:.0f}p")
+                    confluence.append(f"OB+FVG_CONFLUENCE_{ob_fvg_distance:.0f}p")
                 elif direction == "SELL" and "BEARISH" in ob_type:
+                    ob_fvg_confluence = True
                     score += 10
-                    confluence.append(f"OB+FVG_CONFLUENCE_{ob_fvg_dist:.0f}p")
+                    confluence.append(f"OB+FVG_CONFLUENCE_{ob_fvg_distance:.0f}p")
 
     # ── Score: Momentum at FVG (price slowing into zone) ──
     if master_report:
@@ -420,4 +442,21 @@ def evaluate(symbol: str,
         "confluence":  confluence,
         "fvg":         best_fvg,
         "spread":      0,
+        "_fvg_features": {
+            'fvg_type': fvg_type,
+            'fvg_quality_score': fvg_quality_score,
+            'fvg_gap_pips': fvg_gap_pips,
+            'fvg_distance_pips': fvg_distance_pips,
+            'of_imbalance': imb if 'imb' in dir() else 0,
+            'of_strength': imb_strength if 'imb_strength' in dir() else 'NONE',
+            'vol_surge': 1 if vol_surge_detected else 0,
+            'vol_surge_ratio': vol_surge_ratio,
+            'stoch_rsi_k': stoch_rsi_k,
+            'stoch_rsi_turning': 1 if stoch_rsi_turning else 0,
+            'm5_wick_rejection': 1 if m5_wick_rejection else 0,
+            'ob_fvg_confluence': 1 if ob_fvg_confluence else 0,
+            'ob_fvg_distance': ob_fvg_distance,
+            'pd_zone': pd_zone,
+            'atr_pips': atr_pips,
+        },
     }

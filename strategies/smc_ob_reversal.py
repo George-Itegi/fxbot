@@ -75,6 +75,7 @@ def evaluate(symbol: str,
     htf_ok     = smc_report.get('htf_alignment', {}).get('approved', True)
     smc_bias   = smc_report.get('smc_bias', 'NEUTRAL')
     last_sweep = smc_report.get('last_sweep')
+    supertrend_dir = int(h1.get('supertrend_dir', 0))
 
     # Need a clear trend + active OB
     if trend == 'RANGING' or nearest_ob is None:
@@ -115,6 +116,7 @@ def evaluate(symbol: str,
     of_imb = market_report.get('order_flow_imbalance', {})
     of_dir = of_imb.get('direction', 'NEUTRAL')
     of_strength = of_imb.get('strength', 'NONE')
+    of_imb_value = of_imb.get('imbalance', 0)
 
     score      = 0
     confluence = []
@@ -207,6 +209,7 @@ def evaluate(symbol: str,
             log.info(f"[{STRATEGY_NAME} v{VERSION}] BUY {symbol}"
                      f" entry={entry_price:.5f} Score:{score} | "
                      f"{', '.join(confluence)}")
+            has_bos = bool(bos and 'BULLISH' in bos.get('type', ''))
             return {
                 "direction":   "BUY",
                 "entry_price": entry_price,
@@ -221,6 +224,23 @@ def evaluate(symbol: str,
                 "score":       score,
                 "confluence":  confluence,
                 "ob_zone":     f"{ob_bottom}—{ob_top}",
+                "_smc_ob_features": {
+                    'ob_type': ob_type,
+                    'ob_dist_pips': ob_dist,
+                    'price_at_ob': 1 if price_at_ob else 0,
+                    'trend': trend,
+                    'delta_bias': delta_bias,
+                    'delta_strength': delta_strength,
+                    'of_imbalance': of_imb_value,
+                    'of_strength': of_strength,
+                    'stoch_rsi_k': stoch_k,
+                    'supertrend_dir_h1': supertrend_dir,
+                    'htf_ok': 1 if htf_ok else 0,
+                    'smc_bias': smc_bias,
+                    'pd_zone': pd_zone,
+                    'atr_pips': atr_pips,
+                    'has_bos': 1 if has_bos else 0,
+                },
             }
 
     # ── BEARISH OB REVERSAL (SELL) ────────────────────────
@@ -303,6 +323,7 @@ def evaluate(symbol: str,
             log.info(f"[{STRATEGY_NAME} v{VERSION}] SELL {symbol}"
                      f" entry={entry_price:.5f} Score:{score} | "
                      f"{', '.join(confluence)}")
+            has_bos = bool(bos and 'BEARISH' in bos.get('type', ''))
             return {
                 "direction":   "SELL",
                 "entry_price": entry_price,
@@ -317,6 +338,23 @@ def evaluate(symbol: str,
                 "score":       score,
                 "confluence":  confluence,
                 "ob_zone":     f"{ob_bottom}—{ob_top}",
+                "_smc_ob_features": {
+                    'ob_type': ob_type,
+                    'ob_dist_pips': ob_dist,
+                    'price_at_ob': 1 if price_at_ob else 0,
+                    'trend': trend,
+                    'delta_bias': delta_bias,
+                    'delta_strength': delta_strength,
+                    'of_imbalance': of_imb_value,
+                    'of_strength': of_strength,
+                    'stoch_rsi_k': stoch_k,
+                    'supertrend_dir_h1': supertrend_dir,
+                    'htf_ok': 1 if htf_ok else 0,
+                    'smc_bias': smc_bias,
+                    'pd_zone': pd_zone,
+                    'atr_pips': atr_pips,
+                    'has_bos': 1 if has_bos else 0,
+                },
             }
 
     return None
