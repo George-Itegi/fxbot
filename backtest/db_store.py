@@ -1618,6 +1618,7 @@ def store_trade(trade, master_report: dict = None,
         # ── Store strategy-specific features if present ──
         if vwap_features and trade.strategy == 'VWAP_MEAN_REVERSION':
             store_vwap_features(c, trade_id, vwap_features)
+            conn.commit()
         if breakout_features and trade.strategy == 'BREAKOUT_MOMENTUM':
             store_breakout_features(c, trade_id, breakout_features)
             conn.commit()
