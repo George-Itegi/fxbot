@@ -132,6 +132,24 @@ Examples:
         '--model-status', action='store_true',
         help='Show model training status and exit.')
 
+    # ── Layer 1 Strategy Model commands ──────────────────
+    strat_model_group = parser.add_argument_group(
+        'Layer 1 Strategy Models',
+        'Per-strategy XGBoost models that replace hard-coded gates inside each strategy')
+    strat_model_group.add_argument(
+        '--use-strategy-models', action='store_true',
+        help='Activate Layer 1 per-strategy models (PASS/REJECT before ML Gate). '
+             'Requires trained strategy models (use ai_engine/train_strategy_model.py).')
+    strat_model_group.add_argument(
+        '--strategy-model-status', action='store_true',
+        help='Show Layer 1 strategy model status and exit.')
+    strat_model_group.add_argument(
+        '--train-strategy-model', action='store_true',
+        help='Train Layer 1 strategy model from backtest DB and exit.')
+    strat_model_group.add_argument(
+        '--train-strategy', type=str, default='VWAP_MEAN_REVERSION',
+        help='Strategy to train for --train-strategy-model (default: VWAP_MEAN_REVERSION).')
+
     return parser.parse_args()
 
 
@@ -354,6 +372,16 @@ def main():
         _clear_backtest_data()
         return
 
+    if args.strategy_model_status:
+        from ai_engine.train_strategy_model import _print_strategy_status
+        _print_strategy_status()
+        return
+
+    if args.train_strategy_model:
+        from ai_engine.train_strategy_model import _train_strategy
+        _train_strategy(args.train_strategy)
+        return
+
     # ── Backtest execution ────────────────────────────────
     # Apply CLI overrides to config
     from backtest import config as bt_config
@@ -396,6 +424,20 @@ def main():
         else:
             model_loaded = True
 
+    # Check strategy model status if --use-strategy-models
+    use_strategy_models = args.use_strategy_models
+    strat_models_loaded = False
+    if use_strategy_models:
+        from ai_engine.strategy_model import get_strategy_model_manager
+        mgr = get_strategy_model_manager()
+        if mgr._active:
+            strat_models_loaded = True
+        else:
+            print("\n  WARNING: --use-strategy-models but no trained strategy models found!")
+            print("  Run --train-strategy-model first.")
+            print("  Continuing WITHOUT strategy model filtering...\n")
+            use_strategy_models = False
+
     # Date range
     end_date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
     start_date = end_date - datetime.timedelta(days=args.days)
@@ -426,9 +468,12 @@ def main():
     if args.relaxed:
         print(f"  (Relaxed mode: PartialTP/Trail/ExtTP auto-disabled for full trade testing)")
     print(f"  Mode: {mode_label} | Store DB: {args.store_db} "
-          f"| Model: {'ACTIVE' if model_loaded else 'OFF'}")
+          f"| Model: {'ACTIVE' if model_loaded else 'OFF'}"
+          f" | Strategy Models: {'ACTIVE' if strat_models_loaded else 'OFF'}")
     if model_loaded:
-        print(f"  (Model will filter trades — SKIP recommendation = trade blocked)")
+        print(f"  (ML Gate will filter trades — SKIP recommendation = trade blocked)")
+    if strat_models_loaded:
+        print(f"  (Layer 1 strategy models will filter signals before ML Gate)")
     print("="*65 + "\n")
 
     # Connect to MT5 for historical data
@@ -473,6 +518,7 @@ def main():
                     relaxed_mode=args.relaxed,
                     store_db=args.store_db,
                     use_model=use_model,
+                    use_strategy_models=use_strategy_models,
                     run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                     unlimited_positions=args.no_limit,
                 )
@@ -491,12 +537,21 @@ def main():
                 r.get('model_blocked', 0) for r in all_results)
             total_shadow = sum(
                 r.get('shadow_trades', 0) for r in all_results)
+            total_strat_rejected = sum(
+                r.get('strat_model_rejected', 0) for r in all_results)
+            total_strat_shadow = sum(
+                r.get('strat_model_shadow_trades', 0) for r in all_results)
             if model_loaded and (total_model_blocked > 0 or total_shadow > 0):
                 print(f"\n{'='*65}")
                 print(f"  MODEL FILTERING SUMMARY")
                 print(f"{'='*65}")
-                print(f"  Trades SKIPPED by model (R < 0.0):   {total_model_blocked}")
-                print(f"  Trades SHADOWED by model (0.0 <= R < 0.5): {total_shadow}")
+                print(f"  ML Gate (Layer 2):")
+                print(f"    Trades SKIPPED by model (R < 0.0):   {total_model_blocked}")
+                print(f"    Trades SHADOWED by model (0.0 <= R < 0.5): {total_shadow}")
+                if strat_models_loaded and (total_strat_rejected > 0 or total_strat_shadow > 0):
+                    print(f"  Strategy Models (Layer 1):")
+                    print(f"    Signals REJECTED by strategy model: {total_strat_rejected}")
+                    print(f"    L1 shadow trades simulated: {total_strat_shadow}")
                 print(f"  Shadow trades are simulated and stored for ML training")
                 print(f"{'='*65}")
 

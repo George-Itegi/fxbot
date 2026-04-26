@@ -55,6 +55,7 @@ class BacktestConfig:
     store_db: bool = False         # Store trades/signals in MySQL
     run_id: str = 'default'       # Run identifier for DB grouping
     use_model: bool = False        # Use trained XGBoost model as additional gate
+    use_strategy_models: bool = False  # Use Layer 1 per-strategy models
     unlimited_positions: bool = False  # Remove max open position limits
 
 
@@ -231,6 +232,13 @@ def run_backtest(config: BacktestConfig) -> dict:
     shadow_reports = {}
     shadow_count = 0
 
+    # ── Layer 1 Strategy Model system ────────────────────
+    strat_model_mgr = None
+    strat_model_shadow_tracker = None
+    strat_model_shadow_reports = {}
+    strat_model_shadow_count = 0
+    strat_model_reject_count = 0
+
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
     model_blocked_count = 0
@@ -264,6 +272,34 @@ def run_backtest(config: BacktestConfig) -> dict:
             base_risk_percent=BASE_RISK_PERCENT,
         )
 
+    # ── Load Layer 1 Strategy Models if --use-strategy-models ──
+    if config.use_strategy_models:
+        try:
+            from ai_engine.strategy_model import get_strategy_model_manager
+            strat_model_mgr = get_strategy_model_manager()
+            if strat_model_mgr._active:
+                active_list = list(strat_model_mgr._active)
+                log.info(f"  [L1_STRAT_MODEL] Loaded {len(active_list)} strategy models: "
+                         f"{', '.join(active_list)}")
+                # Create shadow tracker for L1 rejections
+                if config.store_db:
+                    strat_model_shadow_tracker = TradeTracker(
+                        starting_balance=STARTING_BALANCE,
+                        pip_value_per_lot=pip_value,
+                        max_open=9999, max_per_symbol=9999,
+                        partial_tp_enabled=PARTIAL_TP_ENABLED,
+                        atr_trail_enabled=ATR_TRAIL_ENABLED,
+                        dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+                        dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
+                        base_risk_percent=BASE_RISK_PERCENT,
+                    )
+            else:
+                log.info(f"  [L1_STRAT_MODEL] No trained strategy models found — skipping L1")
+                strat_model_mgr = None
+        except Exception as e:
+            log.warning(f"  [L1_STRAT_MODEL] Failed to load: {e}")
+            strat_model_mgr = None
+
     scan_bar = config.scan_every_n_bars
 
     for bar_idx in range(scan_bar, total_m1_bars):
@@ -284,6 +320,16 @@ def run_backtest(config: BacktestConfig) -> dict:
             # Also check shadow trade exits
             if shadow_tracker is not None:
                 shadow_tracker.check_exits(
+                    current_time,
+                    float(current_bar['high']),
+                    float(current_bar['low']),
+                    float(current_bar['close']),
+                    pip_size,
+                    pip_value,
+                )
+            # Also check L1 strategy model shadow exits
+            if strat_model_shadow_tracker is not None:
+                strat_model_shadow_tracker.check_exits(
                     current_time,
                     float(current_bar['high']),
                     float(current_bar['low']),
@@ -395,7 +441,87 @@ def run_backtest(config: BacktestConfig) -> dict:
 
                 signals_found += 1
 
-                # ── ML Gate: score the signal ──────────────
+                # ── Layer 1 Strategy Model: per-strategy PASS/REJECT ──
+                strat_model_verdict = None
+                strat_model_predicted_r = None
+                if strat_model_mgr is not None and strat_model_mgr.has_model(best_strat_name):
+                    try:
+                        from ai_engine.ml_gate import extract_features
+                        l1_features = extract_features(
+                            best_signal, master_report, market_report,
+                            smc_report, flow, all_scores, symbol, spread)
+                        if l1_features is not None:
+                            l1_result = strat_model_mgr.evaluate_signal(
+                                best_strat_name, l1_features)
+                            strat_model_verdict = l1_result.get('verdict', 'NO_MODEL')
+                            strat_model_predicted_r = l1_result.get('predicted_r', 0.0)
+
+                            if strat_model_verdict == 'REJECT':
+                                strat_model_reject_count += 1
+                                best_signal['strategy_model_verdict'] = strat_model_verdict
+                                best_signal['strategy_model_predicted_r'] = strat_model_predicted_r
+
+                                # Shadow simulate the L1 rejection
+                                if strat_model_shadow_tracker is not None:
+                                    sl_p = best_signal.get('sl_pips', 0)
+                                    tp_p = (best_signal.get('tp1_pips', 0)
+                                            or best_signal.get('tp_pips', 0))
+                                    if sl_p > 0 and tp_p > 0:
+                                        sh_entry = float(current_bar['close'])
+                                        if best_signal['direction'] == 'BUY':
+                                            sh_entry += total_slippage * pip_size
+                                        else:
+                                            sh_entry -= total_slippage * pip_size
+                                        strat_model_shadow_tracker.open_trade(
+                                            symbol=symbol,
+                                            direction=best_signal['direction'],
+                                            strategy=best_strat_name,
+                                            entry_time=current_time,
+                                            entry_price=sh_entry,
+                                            sl_price=0, tp_price=0,
+                                            sl_pips=sl_p, tp_pips=tp_p,
+                                            score=best_signal.get('score', 0),
+                                            confluence=best_signal.get('confluence', []),
+                                            session=market_report.get('session', 'UNKNOWN'),
+                                            market_state=market_state,
+                                            agreement_groups=1,
+                                            atr_value=0.0,
+                                        )
+                                        st = strat_model_shadow_tracker.open_trades[-1]
+                                        if best_signal['direction'] == 'BUY':
+                                            st.sl_price = st.entry_price - st.sl_pips * pip_size
+                                            st.tp_price = st.entry_price + st.tp_pips * pip_size
+                                        else:
+                                            st.sl_price = st.entry_price + st.sl_pips * pip_size
+                                            st.tp_price = st.entry_price - st.tp_pips * pip_size
+                                        strat_model_shadow_count += 1
+                                        strat_model_shadow_reports[
+                                            strat_model_shadow_tracker.ticket_counter] = {
+                                            'master_report': master_report,
+                                            'market_report': market_report,
+                                            'smc_report': smc_report,
+                                            'flow': flow,
+                                            'strategy_scores': all_scores or {},
+                                            'predicted_r': predicted_r if 'predicted_r' in dir() else None,
+                                            'strategy_model_verdict': strat_model_verdict,
+                                            'strategy_model_predicted_r': strat_model_predicted_r,
+                                        }
+
+                                if strat_model_shadow_count <= 3 or strat_model_shadow_count % 25 == 0:
+                                    log.info(f"  [L1_STRAT_MODEL] REJECT {best_strat_name} "
+                                             f"{best_signal['direction']} "
+                                             f"R={strat_model_predicted_r:.2f}")
+                                continue  # L1 REJECT → shadow, don't proceed to L2
+
+                            # L1 PASS → proceed to Layer 2 ML Gate
+                            if strat_model_reject_count <= 3 or strat_model_reject_count % 50 == 0:
+                                log.info(f"  [L1_STRAT_MODEL] PASS {best_strat_name} "
+                                         f"{best_signal['direction']} "
+                                         f"R={strat_model_predicted_r:.2f}")
+                    except Exception as e:
+                        log.debug(f"  [L1_STRAT_MODEL] Error: {e}")
+
+                # ── ML Gate (Layer 2): score the signal ──────────────
                 try:
                     from ai_engine.ml_gate import score_signal
                     ml_result = score_signal(
@@ -668,6 +794,8 @@ def run_backtest(config: BacktestConfig) -> dict:
             'flow': flow,
             'strategy_scores': all_scores,
             'predicted_r': best.get('model_predicted_r'),
+            'strategy_model_verdict': strat_model_verdict,
+            'strategy_model_predicted_r': strat_model_predicted_r,
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -692,6 +820,12 @@ def run_backtest(config: BacktestConfig) -> dict:
         shadow_tracker.close_remaining_at_end(
             last_bar['time'], float(last_bar['close']), pip_size, pip_value)
 
+    # ── Close remaining L1 strategy model shadow trades at end ──
+    if strat_model_shadow_tracker and strat_model_shadow_tracker.open_trades:
+        last_bar = df_m1.iloc[-1]
+        strat_model_shadow_tracker.close_remaining_at_end(
+            last_bar['time'], float(last_bar['close']), pip_size, pip_value)
+
     elapsed = time_mod.time() - start_time
     summary = tracker.get_summary()
     summary['symbol'] = symbol
@@ -706,6 +840,8 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['run_id'] = config.run_id
     summary['model_blocked'] = model_blocked_count
     summary['shadow_trades'] = shadow_count
+    summary['strat_model_rejected'] = strat_model_reject_count
+    summary['strat_model_shadow_trades'] = strat_model_shadow_count
 
     # ── Store all completed trades to DB ─
     if config.store_db:
@@ -727,6 +863,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
                     model_predicted_r=reports.get('predicted_r'),
+                    strategy_model_verdict=reports.get('strategy_model_verdict'),
+                    strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
@@ -752,6 +890,30 @@ def run_backtest(config: BacktestConfig) -> dict:
                     shadow_stored += 1
                 if shadow_stored > 0:
                     log.info(f"  [DB] Stored {shadow_stored} shadow trades in MySQL")
+
+            # ── Store L1 strategy model shadow trades to DB ──
+            if strat_model_shadow_tracker and strat_model_shadow_tracker.closed_trades:
+                l1_shadow_stored = 0
+                for trade in strat_model_shadow_tracker.closed_trades:
+                    reports = strat_model_shadow_reports.get(trade.ticket, {})
+                    store_trade(
+                        trade=trade,
+                        master_report=reports.get('master_report'),
+                        market_report=reports.get('market_report'),
+                        smc_report=reports.get('smc_report'),
+                        flow_data=reports.get('flow'),
+                        run_id=config.run_id,
+                        spread_pips=spread,
+                        slippage_pips=SLIPPAGE_PIPS,
+                        strategy_scores=reports.get('strategy_scores'),
+                        source='SHADOW',
+                        model_predicted_r=reports.get('predicted_r'),
+                        strategy_model_verdict=reports.get('strategy_model_verdict'),
+                        strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
+                    )
+                    l1_shadow_stored += 1
+                if l1_shadow_stored > 0:
+                    log.info(f"  [DB] Stored {l1_shadow_stored} L1 strategy model shadow trades in MySQL")
         except Exception as e:
             log.warning(f"  [DB] Could not store trades: {e}")
 
