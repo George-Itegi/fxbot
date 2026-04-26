@@ -292,7 +292,7 @@ def store_trade(trade, master_report: dict = None,
                 market_report: dict = None, smc_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
                 spread_pips: float = 0.0, slippage_pips: float = 0.0,
-                strategy_scores: dict = None):
+                strategy_scores: dict = None, source: str = 'BACKTEST'):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
@@ -414,7 +414,7 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s
-                , 'BACKTEST'
+                , %s
             )
         """, (
             run_id, trade.ticket, trade.symbol, trade.direction,
@@ -482,6 +482,8 @@ def store_trade(trade, master_report: dict = None,
             ss_breakout_momentum, ss_structure_align,
             # ── Fibonacci confluence (3 features for ML Gate v3.1) ──
             fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
+            # ── Source: BACKTEST (real) or SHADOW (simulated) ──
+            source,
         ))
 
         conn.commit()
@@ -539,7 +541,7 @@ def get_training_data(min_trades: int = 50) -> list:
 
 
 def get_stats() -> dict:
-    """Get quick stats about stored backtest data."""
+    """Get quick stats about stored backtest data (real + shadow)."""
     try:
         conn = _get_or_create_conn()
         c = conn.cursor(dictionary=True)
@@ -549,6 +551,12 @@ def get_stats() -> dict:
 
         c.execute("SELECT COUNT(*) as total FROM backtest_trades WHERE source='BACKTEST' AND win=1")
         wins = c.fetchone()['total']
+
+        c.execute("SELECT COUNT(*) as total FROM backtest_trades WHERE source='SHADOW'")
+        shadow_total = c.fetchone()['total']
+
+        c.execute("SELECT COUNT(*) as total FROM backtest_trades WHERE source='SHADOW' AND win=1")
+        shadow_wins = c.fetchone()['total']
 
         c.execute("SELECT COUNT(*) as total FROM backtest_signals WHERE was_executed=0")
         blocked = c.fetchone()['total']
@@ -562,7 +570,7 @@ def get_stats() -> dict:
                    ROUND(AVG(profit_r),3) as avg_r,
                    ROUND(AVG(score),1) as avg_score
             FROM backtest_trades
-            WHERE source='BACKTEST'
+            WHERE source IN ('BACKTEST', 'SHADOW')
             GROUP BY strategy
         """)
         strat_rows = c.fetchall()
@@ -603,6 +611,8 @@ def get_stats() -> dict:
         return {
             'total_trades': total,
             'total_wins': wins,
+            'shadow_trades': shadow_total,
+            'shadow_wins': shadow_wins,
             'total_blocked_signals': blocked,
             'total_executed_signals': executed_signals,
             'win_rate': round(wins / total * 100, 1) if total > 0 else 0,

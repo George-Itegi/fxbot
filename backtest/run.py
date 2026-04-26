@@ -489,12 +489,15 @@ def main():
             # ── Model filtering stats ──────────────────────────
             total_model_blocked = sum(
                 r.get('model_blocked', 0) for r in all_results)
-            if model_loaded and total_model_blocked > 0:
+            total_shadow = sum(
+                r.get('shadow_trades', 0) for r in all_results)
+            if model_loaded and (total_model_blocked > 0 or total_shadow > 0):
                 print(f"\n{'='*65}")
                 print(f"  MODEL FILTERING SUMMARY")
                 print(f"{'='*65}")
-                print(f"  Trades blocked by XGBoost model: {total_model_blocked}")
-                print(f"  These trades had low win probability (SKIP recommendation)")
+                print(f"  Trades SKIPPED by model (R < 0.0):   {total_model_blocked}")
+                print(f"  Trades SHADOWED by model (0.0 <= R < 0.5): {total_shadow}")
+                print(f"  Shadow trades are simulated and stored for ML training")
                 print(f"{'='*65}")
 
             # Print DB stats if --store-db was used
@@ -505,11 +508,11 @@ def main():
                     print(f"\n{'='*65}")
                     print(f"  DATABASE STORAGE SUMMARY")
                     print(f"{'='*65}")
-                    print(f"  Total trades stored:  {stats.get('total_trades', 0)}")
-                    print(f"  Total wins:          {stats.get('total_wins', 0)}")
-                    print(f"  Blocked signals:     {stats.get('total_blocked_signals', 0)}")
-                    print(f"  Executed signals:    {stats.get('total_executed_signals', 0)}")
-                    print(f"  Win rate:            {stats.get('win_rate', 0)}%")
+                    print(f"  Real trades stored:  {stats.get('total_trades', 0)}")
+                    print(f"  Real trade wins:     {stats.get('total_wins', 0)}")
+                    print(f"  Shadow trades stored: {stats.get('shadow_trades', 0)}")
+                    print(f"  Shadow trade wins:    {stats.get('shadow_wins', 0)}")
+                    print(f"  Total for training:   {stats.get('total_trades', 0) + stats.get('shadow_trades', 0)}")
                     if stats.get('by_strategy'):
                         print(f"\n  BY STRATEGY:")
                         for s in stats['by_strategy']:
