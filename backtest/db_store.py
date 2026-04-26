@@ -146,6 +146,9 @@ def _ensure_tables(conn):
             -- Flag: is this a backtest trade?
             source              VARCHAR(20) DEFAULT 'BACKTEST',
 
+            -- ML Gate model prediction (for self-calibration)
+            model_predicted_r   DOUBLE DEFAULT NULL,
+
             INDEX idx_symbol (symbol),
             INDEX idx_strategy (strategy),
             INDEX idx_outcome (outcome),
@@ -236,6 +239,8 @@ def _auto_migrate_trades(cursor, conn):
         ('backtest_trades', 'fib_bias_aligned',     'TINYINT DEFAULT 0'),
         # ── Shadow trade system ──
         ('backtest_trades', 'source',               "VARCHAR(20) DEFAULT 'BACKTEST'"),
+        # ── ML Gate self-calibration ──
+        ('backtest_trades', 'model_predicted_r',    'DOUBLE DEFAULT NULL'),
     ]
     for table, col, col_def in migrations:
         try:
@@ -294,7 +299,8 @@ def store_trade(trade, master_report: dict = None,
                 market_report: dict = None, smc_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
                 spread_pips: float = 0.0, slippage_pips: float = 0.0,
-                strategy_scores: dict = None, source: str = 'BACKTEST'):
+                strategy_scores: dict = None, source: str = 'BACKTEST',
+                model_predicted_r: float = None):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
@@ -381,7 +387,7 @@ def store_trade(trade, master_report: dict = None,
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
             return
 
-        # 81 columns = 80 %s + 1 literal 'BACKTEST'
+        # 82 columns = 81 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -406,7 +412,8 @@ def store_trade(trade, master_report: dict = None,
                 ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
                 ss_breakout_momentum, ss_structure_align,
                 fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
-                source
+                source,
+                model_predicted_r
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
@@ -415,8 +422,8 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s
-                , %s
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s, %s
             )
         """, (
             run_id, trade.ticket, trade.symbol, trade.direction,
@@ -486,6 +493,8 @@ def store_trade(trade, master_report: dict = None,
             fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
             # ── Source: BACKTEST (real) or SHADOW (simulated) ──
             source,
+            # ── ML Gate model prediction (self-calibration) ──
+            model_predicted_r,
         ))
 
         conn.commit()

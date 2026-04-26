@@ -247,17 +247,20 @@ def run_backtest(config: BacktestConfig) -> dict:
         except Exception as e:
             log.warning(f"  [ML_GATE] Failed to load: {e}")
 
-    # ── Shadow trade system (v3.2) ─────────────────────
+    # ── Shadow trade system (v3.3) ─────────────────────
     # Simulate CAUTION signals (0.0 <= R < 0.5) without executing.
-    # These trades get tracked to SL/TP and stored as SHADOW in DB.
+    # Uses FULL TradeTracker (same partial TP, trailing, TP extension
+    # as real trades) so shadow outcomes match real-world outcomes.
     # Only active when model is loaded AND we're storing to DB.
     if config.store_db and ml_gate_active:
         shadow_tracker = TradeTracker(
             starting_balance=STARTING_BALANCE,
             pip_value_per_lot=pip_value,
             max_open=9999, max_per_symbol=9999,
-            partial_tp_enabled=False, atr_trail_enabled=False,
-            dynamic_tp_enabled=False, dynamic_sizing_enabled=False,
+            partial_tp_enabled=PARTIAL_TP_ENABLED,
+            atr_trail_enabled=ATR_TRAIL_ENABLED,
+            dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+            dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
             base_risk_percent=BASE_RISK_PERCENT,
         )
 
@@ -665,6 +668,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             'smc_report': smc_report,
             'flow': flow,
             'strategy_scores': all_scores,
+            'predicted_r': best.get('model_predicted_r'),
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -723,6 +727,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     spread_pips=spread,
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
+                    model_predicted_r=reports.get('predicted_r'),
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
@@ -743,6 +748,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
                         source='SHADOW',
+                        model_predicted_r=reports.get('predicted_r'),
                     )
                     shadow_stored += 1
                 if shadow_stored > 0:
@@ -852,13 +858,16 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             'executed': 0, 'model_blocked': 0, 'shadow_trades': 0,
         }
         # Shadow tracker for this symbol (only if store_db + model)
+        # v3.3: Uses FULL TradeTracker (same features as real trades)
         if store_db and ml_gate_active:
             symbol_shadow_trackers[sym] = TradeTracker(
                 starting_balance=STARTING_BALANCE,
                 pip_value_per_lot=pip_value,
                 max_open=9999, max_per_symbol=9999,
-                partial_tp_enabled=False, atr_trail_enabled=False,
-                dynamic_tp_enabled=False, dynamic_sizing_enabled=False,
+                partial_tp_enabled=PARTIAL_TP_ENABLED,
+                atr_trail_enabled=ATR_TRAIL_ENABLED,
+                dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+                dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
                 base_risk_percent=BASE_RISK_PERCENT,
             )
             symbol_shadow_reports[sym] = {}
@@ -1184,6 +1193,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 # _fib_data dict value was causing fib data to be dropped
                 # when fib_data_snap was {} (empty dict is falsy in Python).
                 'strategy_scores': snap_scores if store_db else (all_scores if ml_gate_active else None),
+                'predicted_r': best.get('model_predicted_r'),
             }
 
             # Trade metadata saved (no DB write for signals)
@@ -1250,6 +1260,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         spread_pips=spread,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
+                        model_predicted_r=reports.get('predicted_r'),
                     )
                     stored += 1
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
@@ -1270,6 +1281,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             slippage_pips=SLIPPAGE_PIPS,
                             strategy_scores=reports.get('strategy_scores'),
                             source='SHADOW',
+                            model_predicted_r=reports.get('predicted_r'),
                         )
                         shadow_stored += 1
                     if shadow_stored > 0:
