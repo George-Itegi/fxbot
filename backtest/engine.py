@@ -686,6 +686,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             'flow': flow,
             'strategy_scores': all_scores,
             'predicted_r': best.get('model_predicted_r'),
+            'breakout_features': best.get('_breakout_features'),
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -757,6 +758,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
                     model_predicted_r=reports.get('predicted_r'),
+                    breakout_features=reports.get('breakout_features'),
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
@@ -778,6 +780,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strategy_scores=reports.get('strategy_scores'),
                         source='SHADOW',
                         model_predicted_r=reports.get('predicted_r'),
+                        breakout_features=reports.get('breakout_features'),
                     )
                     shadow_stored += 1
                 if shadow_stored > 0:
@@ -1162,6 +1165,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                     'flow': flow,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
+                                    'breakout_features': best.get('_breakout_features'),
                                 }
                         continue  # Don't execute as real trade
                 except Exception:
@@ -1239,6 +1243,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 # when fib_data_snap was {} (empty dict is falsy in Python).
                 'strategy_scores': snap_scores if store_db else (all_scores if ml_gate_active else None),
                 'predicted_r': best.get('model_predicted_r'),
+                'breakout_features': best.get('_breakout_features'),
             }
 
             # Trade metadata saved (no DB write for signals)
@@ -1306,6 +1311,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
                         model_predicted_r=reports.get('predicted_r'),
+                        breakout_features=reports.get('breakout_features'),
                     )
                     stored += 1
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
@@ -1327,6 +1333,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             strategy_scores=reports.get('strategy_scores'),
                             source='SHADOW',
                             model_predicted_r=reports.get('predicted_r'),
+                            breakout_features=reports.get('breakout_features'),
                         )
                         shadow_stored += 1
                     if shadow_stored > 0:

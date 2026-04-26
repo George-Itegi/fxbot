@@ -303,7 +303,8 @@ def evaluate(symbol: str,
         score -= 8
         confluence.append("NO_VOLUME_SURGE_PENALTY")
 
-    # ── Step 5: ATR expansion check ─────────────────────
+    # ── ATR expansion check ─────────────────────
+    atr_ratio = 1.0
     if len(df_m15) >= 20:
         atr_now = float(df_m15.iloc[-1].get('atr', 0))
         atr_prev = float(df_m15.iloc[-20].get('atr', 0))
@@ -316,53 +317,61 @@ def evaluate(symbol: str,
                 score -= 3
                 confluence.append("ATR_NOT_EXPANDING")
 
-    # ── Step 6: H4 trend alignment (bonus) ─────────────
+    # ── H4 trend alignment (bonus) ─────────────
+    h4_trend_aligned = False
+    h4_supertrend = False
     if df_h4 is not None and len(df_h4) >= 20:
         h4 = df_h4.iloc[-1]
         h4_ema9  = float(h4.get('ema_9', 0))
         h4_ema21 = float(h4.get('ema_21', 0))
         h4_st = int(h4.get('supertrend_dir', 0))
 
-        if direction == "BUY" and h4_ema9 > h4_ema21:
+        if (direction == "BUY" and h4_ema9 > h4_ema21) or \
+           (direction == "SELL" and h4_ema9 < h4_ema21):
+            h4_trend_aligned = True
             score += 8
-            confluence.append("H4_BULL_ALIGN")
-        elif direction == "SELL" and h4_ema9 < h4_ema21:
-            score += 8
-            confluence.append("H4_BEAR_ALIGN")
-
+            confluence.append("H4_BULL_ALIGN" if direction == "BUY" else "H4_BEAR_ALIGN")
         if (direction == "BUY" and h4_st == 1) or \
            (direction == "SELL" and h4_st == -1):
+            h4_supertrend = True
             score += 5
             confluence.append("H4_SUPERTREND")
 
-    # ── Step 7: M5 momentum candle (bonus) ─────────────
+    # ── M5 momentum candle (bonus) ─────────────
+    m5_momentum = False
     if df_m5 is not None and len(df_m5) >= 3:
         m5_last = df_m5.iloc[-1]
         m5_body = m5_last['close'] - m5_last['open']
         if (direction == "BUY" and m5_body > 0) or \
            (direction == "SELL" and m5_body < 0):
+            m5_momentum = True
             score += 5
             confluence.append("M5_MOMENTUM")
 
-    # ── Step 8: SMC structure confirmation (bonus) ──────
+    # ── SMC structure confirmation (bonus) ──────
+    bos_aligned = False
     if smc_report:
         _bos = smc_report.get('structure', {}).get('bos')
         bos_list = [_bos] if _bos and isinstance(_bos, dict) else []
         for bos in bos_list:
             bos_type = bos.get('type', '').upper()
             if direction == "BUY" and 'BULL' in bos_type:
+                bos_aligned = True
                 score += 8
                 confluence.append("BOS_BULL_BREAKOUT")
                 break
             elif direction == "SELL" and 'BEAR' in bos_type:
+                bos_aligned = True
                 score += 8
                 confluence.append("BOS_BEAR_BREAKOUT")
                 break
 
-    # ── Choppy market penalty ───────────────────────────
+    # ── Choppy market penalty ───────────────────
+    is_choppy = False
     if master_report:
         momentum = master_report.get('momentum', {})
         if momentum.get('is_choppy', False):
+            is_choppy = True
             score -= 15
             confluence.append("CHOPPY_PENALTY")
 
@@ -403,6 +412,27 @@ def evaluate(symbol: str,
         tp1_price = round(entry - tp1_pips * pip_size, 5)
         tp2_price = round(entry - tp2_pips * pip_size, 5)
 
+    # ── Collect breakout features for DB storage / Layer 1 model ──
+    _breakout_features = {
+        'consol_type': consol['type'],
+        'range_pips': consol['range_pips'],
+        'adx': consol['adx'],
+        'atr_pips': atr_pips,
+        'atr_ratio': atr_ratio,
+        'retest': 1 if retest else 0,
+        'dist_to_level': breakout.get('dist_to_level_pips', 0),
+        'delta_confirms': 1 if delta_confirms else 0,
+        'of_imbalance': imb,
+        'of_strength': of_strength,
+        'vol_surge': 1 if surge.get('surge_detected', False) else 0,
+        'vol_surge_ratio': surge.get('surge_ratio', 1.0),
+        'h4_trend_aligned': 1 if h4_trend_aligned else 0,
+        'h4_supertrend': 1 if h4_supertrend else 0,
+        'm5_momentum': 1 if m5_momentum else 0,
+        'bos_aligned': 1 if bos_aligned else 0,
+        'is_choppy': 1 if is_choppy else 0,
+    }
+
     log.info(f"[{STRATEGY_NAME} v{VERSION}] {direction} {symbol}"
              f" entry={entry:.5f} Score:{score} | "
              f"{', '.join(confluence)}")
@@ -421,4 +451,5 @@ def evaluate(symbol: str,
         "score":       score,
         "confluence":  confluence,
         "spread":      0,
+        "_breakout_features": _breakout_features,
     }
