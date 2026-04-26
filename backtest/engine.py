@@ -238,6 +238,8 @@ def run_backtest(config: BacktestConfig) -> dict:
     strat_model_shadow_reports = {}
     strat_model_shadow_count = 0
     strat_model_reject_count = 0
+    strat_model_verdict = None
+    strat_model_predicted_r = None
 
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
