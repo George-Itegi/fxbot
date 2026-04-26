@@ -770,18 +770,38 @@ def train_model(source: str = 'auto') -> dict:
             X, y, test_size=0.2, random_state=42)
 
         # ── XGBoost Regressor ──
+        # Overfitting control: with 63 features and ~250-500 samples,
+        # we use conservative depth + strong regularization.
+        # As data grows past 1000 trades, these can be relaxed.
+        n_trades = len(y)
+        if n_trades < 500:
+            # Small data — very conservative
+            depth, eta, child_w = 3, 0.03, 10
+            alpha, lam = 1.0, 5.0
+            cols = 0.5
+        elif n_trades < 1000:
+            # Medium data — moderate
+            depth, eta, child_w = 4, 0.04, 7
+            alpha, lam = 0.5, 3.0
+            cols = 0.6
+        else:
+            # Large data — standard
+            depth, eta, child_w = 5, 0.05, 5
+            alpha, lam = 0.1, 1.0
+            cols = 0.7
+
         model = xgb.XGBRegressor(
-            n_estimators=300,
-            max_depth=5,
-            learning_rate=0.05,
+            n_estimators=500,
+            max_depth=depth,
+            learning_rate=eta,
             objective='reg:squarederror',
             random_state=42,
-            min_child_weight=5,
+            min_child_weight=child_w,
             subsample=0.8,
-            colsample_bytree=0.7,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            early_stopping_rounds=30,
+            colsample_bytree=cols,
+            reg_alpha=alpha,
+            reg_lambda=lam,
+            early_stopping_rounds=50,
         )
 
         model.fit(X_train, y_train,
@@ -816,18 +836,19 @@ def train_model(source: str = 'auto') -> dict:
         calibration = _check_regression_calibration(val_preds, y_val)
 
         # ── Retrain on full data for production ──
-        best_n = getattr(model, 'best_iteration', 300)
+        # Use same adaptive params as training model
+        best_n = getattr(model, 'best_iteration', 500)
         model_final = xgb.XGBRegressor(
             n_estimators=best_n,
-            max_depth=5,
-            learning_rate=0.05,
+            max_depth=depth,
+            learning_rate=eta,
             objective='reg:squarederror',
             random_state=42,
-            min_child_weight=5,
+            min_child_weight=child_w,
             subsample=0.8,
-            colsample_bytree=0.7,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
+            colsample_bytree=cols,
+            reg_alpha=alpha,
+            reg_lambda=lam,
         )
         model_final.fit(X, y, verbose=False)
 
