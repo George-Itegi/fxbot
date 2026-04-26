@@ -394,6 +394,11 @@ def store_vwap_features(cursor, trade_id: int, vwap_features: dict):
             1 if vwap_features.get('poc_above') else 0,
             1 if vwap_features.get('val_below') else 0,
         ))
+        log.info(f"[DB_STORE] Stored VWAP features for trade {trade_id}: "
+                 f"atr={vwap_features.get('atr_pips',0):.1f} "
+                 f"adx={vwap_features.get('adx',0):.1f} "
+                 f"vwap_pos={vwap_features.get('vwap_pos','')} "
+                 f"htf_ok={vwap_features.get('htf_ok')}")
     except Exception as e:
         log.warning(f"[DB_STORE] Failed to store VWAP features for trade {trade_id}: {e}")
 
@@ -487,7 +492,22 @@ def store_trade(trade, master_report: dict = None,
             LIMIT 1
         """, (trade.symbol, trade.strategy, trade.direction,
                entry_time_str, run_id))
-        if c.fetchone():
+        dup_row = c.fetchone()
+        if dup_row:
+            existing_id = dup_row['id']
+            # Even if trade exists, backfill VWAP features if missing
+            if vwap_features and trade.strategy == 'VWAP_MEAN_REVERSION':
+                try:
+                    c.execute("""
+                        SELECT id FROM backtest_vwap_features
+                        WHERE trade_id = %s LIMIT 1
+                    """, (existing_id,))
+                    if not c.fetchone():
+                        store_vwap_features(c, existing_id, vwap_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled VWAP features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] VWAP backfill error: {e}")
             c.close()
             conn.close()
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
