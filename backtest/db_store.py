@@ -394,6 +394,11 @@ def store_vwap_features(cursor, trade_id: int, vwap_features: dict):
             1 if vwap_features.get('poc_above') else 0,
             1 if vwap_features.get('val_below') else 0,
         ))
+        log.info(f"[DB_STORE] Stored VWAP features for trade {trade_id}: "
+                 f"atr={vwap_features.get('atr_pips',0):.1f} "
+                 f"adx={vwap_features.get('adx',0):.1f} "
+                 f"vwap_pos={vwap_features.get('vwap_pos','')} "
+                 f"htf_ok={vwap_features.get('htf_ok')}")
     except Exception as e:
         log.warning(f"[DB_STORE] Failed to store VWAP features for trade {trade_id}: {e}")
 

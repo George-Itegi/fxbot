@@ -99,7 +99,24 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
                     "sl_price": sl_price, "tp1_price": tp1_price, "tp2_price": tp2_price,
                     "sl_pips": sl_pips, "tp1_pips": tp1_pips, "tp2_pips": tp2_pips,
                     "strategy": STRATEGY_NAME, "version": VERSION,
-                    "score": score, "confluence": confluence}
+                    "score": score, "confluence": confluence,
+                    "_vwap_features": {
+                        'atr_pips': atr_pips,
+                        'adx': adx,
+                        'vix': vix,
+                        'fg_score': fg_score,
+                        'vwap_pos': vwap_pos,
+                        'va_pos': va_pos,
+                        'pd_zone': pd_zone,
+                        'htf_ok': htf_ok,
+                        'master_bias': master_bias,
+                        'stoch_k': stoch_k,
+                        'stoch_d': stoch_d,
+                        'poc_dist': (poc - close_price) / pip_size if poc > 0 else 0,
+                        'supertrend_dir': int(h1.get('supertrend_dir', 0)),
+                        'poc_above': 1 if poc > close_price else 0,
+                        'val_below': 1 if val < close_price else 0,
+                    }}
 
     # SELL SETUP
     if 'ABOVE' in vwap_pos or va_pos == 'ABOVE_VAH':
@@ -147,6 +164,23 @@ def evaluate(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
                     "sl_price": sl_price, "tp1_price": tp1_price, "tp2_price": tp2_price,
                     "sl_pips": sl_pips, "tp1_pips": tp1_pips, "tp2_pips": tp2_pips,
                     "strategy": STRATEGY_NAME, "version": VERSION,
-                    "score": score, "confluence": confluence}
+                    "score": score, "confluence": confluence,
+                    "_vwap_features": {
+                        'atr_pips': atr_pips,
+                        'adx': adx,
+                        'vix': vix,
+                        'fg_score': fg_score,
+                        'vwap_pos': vwap_pos,
+                        'va_pos': va_pos,
+                        'pd_zone': pd_zone,
+                        'htf_ok': htf_ok,
+                        'master_bias': master_bias,
+                        'stoch_k': stoch_k,
+                        'stoch_d': stoch_d,
+                        'poc_dist': (close_price - poc) / pip_size if poc > 0 else 0,
+                        'supertrend_dir': int(h1.get('supertrend_dir', 0)),
+                        'poc_above': 1 if poc < close_price else 0,
+                        'val_below': 1 if val < close_price else 0,
+                    }}
 
     return None
