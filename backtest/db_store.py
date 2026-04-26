@@ -234,6 +234,8 @@ def _auto_migrate_trades(cursor, conn):
         ('backtest_trades', 'fib_confluence_score', 'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'fib_in_golden_zone',   'TINYINT DEFAULT 0'),
         ('backtest_trades', 'fib_bias_aligned',     'TINYINT DEFAULT 0'),
+        # ── Shadow trade system ──
+        ('backtest_trades', 'source',               "VARCHAR(20) DEFAULT 'BACKTEST'"),
     ]
     for table, col, col_def in migrations:
         try:
