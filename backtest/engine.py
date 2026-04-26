@@ -225,21 +225,11 @@ def run_backtest(config: BacktestConfig) -> dict:
     # ── Store feature snapshots per trade (for DB) ─────
     trade_reports = {}  # ticket -> {master_report, market_report, smc_report, flow}
 
-    # ── Shadow trade system (v3.2) ─────────────────────
-    # Simulate CAUTION signals (0.0 <= R < 0.5) without executing.
-    # These trades get tracked to SL/TP and stored as SHADOW in DB.
+    # ── Shadow trade placeholders (v3.2) ─────────────────
+    # Initialized after ML gate check below.
     shadow_tracker = None
     shadow_reports = {}
     shadow_count = 0
-    if config.store_db and ml_gate_active:
-        shadow_tracker = TradeTracker(
-            starting_balance=STARTING_BALANCE,
-            pip_value_per_lot=pip_value,
-            max_open=9999, max_per_symbol=9999,
-            partial_tp_enabled=False, atr_trail_enabled=False,
-            dynamic_tp_enabled=False, dynamic_sizing_enabled=False,
-            base_risk_percent=BASE_RISK_PERCENT,
-        )
 
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
@@ -256,6 +246,20 @@ def run_backtest(config: BacktestConfig) -> dict:
                             f"falling back to rule-based gates")
         except Exception as e:
             log.warning(f"  [ML_GATE] Failed to load: {e}")
+
+    # ── Shadow trade system (v3.2) ─────────────────────
+    # Simulate CAUTION signals (0.0 <= R < 0.5) without executing.
+    # These trades get tracked to SL/TP and stored as SHADOW in DB.
+    # Only active when model is loaded AND we're storing to DB.
+    if config.store_db and ml_gate_active:
+        shadow_tracker = TradeTracker(
+            starting_balance=STARTING_BALANCE,
+            pip_value_per_lot=pip_value,
+            max_open=9999, max_per_symbol=9999,
+            partial_tp_enabled=False, atr_trail_enabled=False,
+            dynamic_tp_enabled=False, dynamic_sizing_enabled=False,
+            base_risk_percent=BASE_RISK_PERCENT,
+        )
 
     scan_bar = config.scan_every_n_bars
 
