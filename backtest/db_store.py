@@ -237,6 +237,34 @@ def _ensure_tables(conn):
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # ── Breakout-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_breakout_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            consol_type         VARCHAR(20),
+            range_pips          DOUBLE,
+            adx                 DOUBLE,
+            atr_pips            DOUBLE,
+            atr_ratio           DOUBLE,
+            retest              INT,
+            dist_to_level       DOUBLE,
+            delta_confirms      INT,
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            vol_surge           INT,
+            vol_surge_ratio     DOUBLE,
+            h4_trend_aligned    INT,
+            h4_supertrend       INT,
+            m5_momentum         INT,
+            bos_aligned         INT,
+            is_choppy           INT,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
     # Note: backtest_signals table no longer populated (blocked signals removed)
     # Only backtest_trades is active for ML training
     _auto_migrate_trades(c, conn)
@@ -305,6 +333,42 @@ def _auto_migrate_trades(cursor, conn):
             log.info("[DB_STORE] Created backtest_vwap_features table")
     except Exception as e:
         log.warning(f"[DB_STORE] backtest_vwap_features creation check: {e}")
+
+    # ── Auto-create backtest_breakout_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_breakout_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_breakout_features (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id            INT NOT NULL,
+                    consol_type         VARCHAR(20),
+                    range_pips          DOUBLE,
+                    adx                 DOUBLE,
+                    atr_pips            DOUBLE,
+                    atr_ratio           DOUBLE,
+                    retest              INT,
+                    dist_to_level       DOUBLE,
+                    delta_confirms      INT,
+                    of_imbalance        DOUBLE,
+                    of_strength         VARCHAR(20),
+                    vol_surge           INT,
+                    vol_surge_ratio     DOUBLE,
+                    h4_trend_aligned    INT,
+                    h4_supertrend       INT,
+                    m5_momentum         INT,
+                    bos_aligned         INT,
+                    is_choppy           INT,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_breakout_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_breakout_features creation check: {e}")
     for table, col, col_def in migrations:
         try:
             cursor.execute(f"SELECT {col} FROM {table} LIMIT 1")
@@ -403,6 +467,53 @@ def store_vwap_features(cursor, trade_id: int, vwap_features: dict):
         log.warning(f"[DB_STORE] Failed to store VWAP features for trade {trade_id}: {e}")
 
 
+def store_breakout_features(cursor, trade_id: int, breakout_features: dict):
+    """Store Breakout-specific strategy features for a trade.
+
+    Args:
+        cursor: Database cursor
+        trade_id: The backtest_trades.id this row links to
+        breakout_features: dict from signal._breakout_features
+    """
+    if not breakout_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_breakout_features
+                (trade_id, consol_type, range_pips, adx, atr_pips, atr_ratio,
+                 retest, dist_to_level, delta_confirms, of_imbalance, of_strength,
+                 vol_surge, vol_surge_ratio, h4_trend_aligned, h4_supertrend,
+                 m5_momentum, bos_aligned, is_choppy)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            breakout_features.get('consol_type'),
+            breakout_features.get('range_pips'),
+            breakout_features.get('adx'),
+            breakout_features.get('atr_pips'),
+            breakout_features.get('atr_ratio'),
+            breakout_features.get('retest'),
+            breakout_features.get('dist_to_level'),
+            breakout_features.get('delta_confirms'),
+            breakout_features.get('of_imbalance'),
+            breakout_features.get('of_strength'),
+            breakout_features.get('vol_surge'),
+            breakout_features.get('vol_surge_ratio'),
+            breakout_features.get('h4_trend_aligned'),
+            breakout_features.get('h4_supertrend'),
+            breakout_features.get('m5_momentum'),
+            breakout_features.get('bos_aligned'),
+            breakout_features.get('is_choppy'),
+        ))
+        log.info(f"[DB_STORE] Stored Breakout features for trade {trade_id}: "
+                 f"consol={breakout_features.get('consol_type','')} "
+                 f"range={breakout_features.get('range_pips',0):.1f}p "
+                 f"retest={breakout_features.get('retest')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store Breakout features for trade {trade_id}: {e}")
+
+
 def store_trade(trade, master_report: dict = None,
                 market_report: dict = None, smc_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
@@ -411,7 +522,8 @@ def store_trade(trade, master_report: dict = None,
                 model_predicted_r: float = None,
                 strategy_model_verdict: str = None,
                 strategy_model_predicted_r: float = None,
-                vwap_features: dict = None):
+                vwap_features: dict = None,
+                breakout_features: dict = None):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
@@ -495,7 +607,7 @@ def store_trade(trade, master_report: dict = None,
         dup_row = c.fetchone()
         if dup_row:
             existing_id = dup_row['id']
-            # Even if trade exists, backfill VWAP features if missing
+            # Even if trade exists, backfill strategy-specific features if missing
             if vwap_features and trade.strategy == 'VWAP_MEAN_REVERSION':
                 try:
                     c.execute("""
@@ -508,6 +620,18 @@ def store_trade(trade, master_report: dict = None,
                         log.info(f"[DB_STORE] Backfilled VWAP features for existing trade {existing_id}")
                 except Exception as e:
                     log.warning(f"[DB_STORE] VWAP backfill error: {e}")
+            if breakout_features and trade.strategy == 'BREAKOUT_MOMENTUM':
+                try:
+                    c.execute("""
+                        SELECT id FROM backtest_breakout_features
+                        WHERE trade_id = %s LIMIT 1
+                    """, (existing_id,))
+                    if not c.fetchone():
+                        store_breakout_features(c, existing_id, breakout_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled breakout features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] Breakout backfill error: {e}")
             c.close()
             conn.close()
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
@@ -631,9 +755,11 @@ def store_trade(trade, master_report: dict = None,
         conn.commit()
         trade_id = c.lastrowid
 
-        # ── Store VWAP-specific features if present ──
+        # ── Store strategy-specific features if present ──
         if vwap_features and trade.strategy == 'VWAP_MEAN_REVERSION':
             store_vwap_features(c, trade_id, vwap_features)
+        if breakout_features and trade.strategy == 'BREAKOUT_MOMENTUM':
+            store_breakout_features(c, trade_id, breakout_features)
             conn.commit()
 
         c.close()

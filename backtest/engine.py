@@ -241,6 +241,9 @@ def run_backtest(config: BacktestConfig) -> dict:
     strat_model_verdict = None
     strat_model_predicted_r = None
 
+    # ── ML Gate prediction tracking ──────────────────────
+    ml_predictions = []  # Track all predictions for distribution analysis
+
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
     model_blocked_count = 0
@@ -508,6 +511,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                                             'strategy_model_verdict': strat_model_verdict,
                                             'strategy_model_predicted_r': strat_model_predicted_r,
                                             'vwap_features': best_signal.get('_vwap_features'),
+                                            'breakout_features': best_signal.get('_breakout_features'),
                                         }
 
                                 if strat_model_shadow_count <= 3 or strat_model_shadow_count % 25 == 0:
@@ -540,6 +544,21 @@ def run_backtest(config: BacktestConfig) -> dict:
 
                     best_signal['model_predicted_r'] = predicted_r
                     best_signal['ml_recommendation'] = recommendation
+
+                    # Track prediction for distribution analysis
+                    ml_predictions.append({
+                        'strategy': best_strat_name,
+                        'direction': best_signal['direction'],
+                        'predicted_r': predicted_r,
+                        'recommendation': recommendation,
+                    })
+
+                    # ── NEUTRAL = features failed → treat as SKIP (shadow) ──
+                    # If the model can't score the signal, don't execute it blind.
+                    if recommendation == 'NEUTRAL':
+                        recommendation = 'SKIP'
+                        log.warning(f"  [ML_GATE] NEUTRAL (features failed) → SKIP+SHADOW "
+                                    f"{best_strat_name} {best_signal['direction']}")
 
                     if recommendation == 'SKIP':
                         model_blocked_count += 1
@@ -591,6 +610,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
                                     'vwap_features': best_signal.get('_vwap_features'),
+                                    'breakout_features': best_signal.get('_breakout_features'),
                                 }
                         # Log sparingly to avoid spam
                         log_limit = 3 if recommendation == 'CAUTION' else 5
@@ -801,6 +821,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             'strategy_model_verdict': strat_model_verdict,
             'strategy_model_predicted_r': strat_model_predicted_r,
             'vwap_features': best.get('_vwap_features'),
+            'breakout_features': best.get('_breakout_features'),
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -848,6 +869,18 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['strat_model_rejected'] = strat_model_reject_count
     summary['strat_model_shadow_trades'] = strat_model_shadow_count
 
+    # ── ML Gate prediction distribution log ─────────────
+    if ml_gate_active and ml_predictions:
+        takes = [p for p in ml_predictions if p['recommendation'] == 'TAKE']
+        cautions = [p for p in ml_predictions if p['recommendation'] == 'CAUTION']
+        skips = [p for p in ml_predictions if p['recommendation'] == 'SKIP']
+        neutrals = [p for p in ml_predictions if p['recommendation'] == 'NEUTRAL']
+        all_r = [p['predicted_r'] for p in ml_predictions]
+        if all_r:
+            log.info(f"  [ML_GATE] Prediction distribution: "
+                     f"TAKE={len(takes)} CAUTION={len(cautions)} SKIP={len(skips)} NEUTRAL={len(neutrals)} | "
+                     f"R: min={min(all_r):.2f} avg={sum(all_r)/len(all_r):.2f} max={max(all_r):.2f}")
+
     # ── Store all completed trades to DB ─
     if config.store_db:
         try:
@@ -871,6 +904,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     strategy_model_verdict=reports.get('strategy_model_verdict'),
                     strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                     vwap_features=reports.get('vwap_features'),
+                    breakout_features=reports.get('breakout_features'),
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
@@ -893,6 +927,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         source='SHADOW',
                         model_predicted_r=reports.get('predicted_r'),
                         vwap_features=reports.get('vwap_features'),
+                        breakout_features=reports.get('breakout_features'),
                     )
                     shadow_stored += 1
                 if shadow_stored > 0:
@@ -918,6 +953,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strategy_model_verdict=reports.get('strategy_model_verdict'),
                         strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                         vwap_features=reports.get('vwap_features'),
+                        breakout_features=reports.get('breakout_features'),
                     )
                     l1_shadow_stored += 1
                 if l1_shadow_stored > 0:
@@ -978,6 +1014,9 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
     symbol_shadow_trackers = {}  # symbol -> TradeTracker for shadow trades
     symbol_shadow_reports = {}   # symbol -> {ticket -> snapshot}
     symbol_shadow_count = {}     # symbol -> int
+
+    # ── ML Gate prediction tracking (for distribution analysis) ──
+    ml_predictions = []  # Track all predictions across all symbols
 
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
@@ -1239,6 +1278,20 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                     predicted_r = ml_result.get('predicted_r', 0.0)
                     rec = ml_result.get('recommendation', 'SKIP')
                     best['model_predicted_r'] = predicted_r
+
+                    # Track prediction for distribution analysis
+                    ml_predictions.append({
+                        'symbol': sym,
+                        'strategy': best.get('strategy', 'UNKNOWN'),
+                        'direction': best['direction'],
+                        'predicted_r': predicted_r,
+                        'recommendation': rec,
+                    })
+
+                    # ── NEUTRAL = features failed → treat as SKIP (shadow) ──
+                    if rec == 'NEUTRAL':
+                        rec = 'SKIP'
+
                     if rec == 'SKIP':
                         stats['model_blocked'] += 1
 
@@ -1285,6 +1338,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                     'flow': flow,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
+                                    'breakout_features': best.get('_breakout_features'),
                                 }
                         continue  # Don't execute as real trade
                 except Exception:
@@ -1362,6 +1416,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 # when fib_data_snap was {} (empty dict is falsy in Python).
                 'strategy_scores': snap_scores if store_db else (all_scores if ml_gate_active else None),
                 'predicted_r': best.get('model_predicted_r'),
+                'breakout_features': best.get('_breakout_features'),
             }
 
             # Trade metadata saved (no DB write for signals)
@@ -1429,6 +1484,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
                         model_predicted_r=reports.get('predicted_r'),
+                        breakout_features=reports.get('breakout_features'),
                     )
                     stored += 1
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
@@ -1450,6 +1506,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             strategy_scores=reports.get('strategy_scores'),
                             source='SHADOW',
                             model_predicted_r=reports.get('predicted_r'),
+                            breakout_features=reports.get('breakout_features'),
                         )
                         shadow_stored += 1
                     if shadow_stored > 0:
@@ -1460,4 +1517,17 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         all_results.append(summary)
 
     log.info(f"\n  Parallel backtest completed in {elapsed:.1f}s")
+
+    # ── ML Gate prediction distribution (across all symbols) ──
+    if ml_gate_active and ml_predictions:
+        takes = [p for p in ml_predictions if p['recommendation'] == 'TAKE']
+        cautions = [p for p in ml_predictions if p['recommendation'] == 'CAUTION']
+        skips = [p for p in ml_predictions if p['recommendation'] == 'SKIP']
+        neutrals = [p for p in ml_predictions if p['recommendation'] == 'NEUTRAL']
+        all_r = [p['predicted_r'] for p in ml_predictions]
+        if all_r:
+            log.info(f"  [ML_GATE] Overall prediction distribution: "
+                     f"TAKE={len(takes)} CAUTION={len(cautions)} SKIP={len(skips)} NEUTRAL={len(neutrals)} | "
+                     f"R: min={min(all_r):.2f} avg={sum(all_r)/len(all_r):.2f} max={max(all_r):.2f}")
+
     return all_results
