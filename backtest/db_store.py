@@ -211,6 +211,32 @@ def _ensure_tables(conn):
         )
     """)
 
+    # ── VWAP-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_vwap_features (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id        INT NOT NULL,
+            atr_pips        DOUBLE,
+            adx             DOUBLE,
+            vix             DOUBLE,
+            fg_score        DOUBLE,
+            vwap_pos        VARCHAR(20),
+            va_pos          VARCHAR(20),
+            pd_zone         VARCHAR(20),
+            htf_ok          INT,
+            master_bias     VARCHAR(10),
+            stoch_k         DOUBLE,
+            stoch_d         DOUBLE,
+            poc_dist        DOUBLE,
+            supertrend_dir  INT,
+            poc_above       INT,
+            val_below       INT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
     # Note: backtest_signals table no longer populated (blocked signals removed)
     # Only backtest_trades is active for ML training
     _auto_migrate_trades(c, conn)
@@ -245,6 +271,40 @@ def _auto_migrate_trades(cursor, conn):
         ('backtest_trades', 'strategy_model_verdict',      "VARCHAR(10) DEFAULT NULL"),
         ('backtest_trades', 'strategy_model_predicted_r',  'DOUBLE DEFAULT NULL'),
     ]
+
+    # ── Auto-create backtest_vwap_features if missing ──
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_vwap_features'
+        """)
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_vwap_features (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    trade_id        INT NOT NULL,
+                    atr_pips        DOUBLE,
+                    adx             DOUBLE,
+                    vix             DOUBLE,
+                    fg_score        DOUBLE,
+                    vwap_pos        VARCHAR(20),
+                    va_pos          VARCHAR(20),
+                    pd_zone         VARCHAR(20),
+                    htf_ok          INT,
+                    master_bias     VARCHAR(10),
+                    stoch_k         DOUBLE,
+                    stoch_d         DOUBLE,
+                    poc_dist        DOUBLE,
+                    supertrend_dir  INT,
+                    poc_above       INT,
+                    val_below       INT,
+                    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            conn.commit()
+            log.info("[DB_STORE] Created backtest_vwap_features table")
+    except Exception as e:
+        log.warning(f"[DB_STORE] backtest_vwap_features creation check: {e}")
     for table, col, col_def in migrations:
         try:
             cursor.execute(f"SELECT {col} FROM {table} LIMIT 1")
@@ -298,6 +358,46 @@ def _safe_int(val, default=0) -> int:
         return default
 
 
+def store_vwap_features(cursor, trade_id: int, vwap_features: dict):
+    """Store VWAP-specific strategy features for a trade.
+
+    Args:
+        cursor: Database cursor
+        trade_id: The backtest_trades.id this row links to
+        vwap_features: dict from signal._vwap_features
+    """
+    if not vwap_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_vwap_features
+                (trade_id, atr_pips, adx, vix, fg_score, vwap_pos, va_pos,
+                 pd_zone, htf_ok, master_bias, stoch_k, stoch_d,
+                 poc_dist, supertrend_dir, poc_above, val_below)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            vwap_features.get('atr_pips'),
+            vwap_features.get('adx'),
+            vwap_features.get('vix'),
+            vwap_features.get('fg_score'),
+            vwap_features.get('vwap_pos'),
+            vwap_features.get('va_pos'),
+            vwap_features.get('pd_zone'),
+            1 if vwap_features.get('htf_ok') else 0,
+            vwap_features.get('master_bias'),
+            vwap_features.get('stoch_k'),
+            vwap_features.get('stoch_d'),
+            vwap_features.get('poc_dist'),
+            vwap_features.get('supertrend_dir'),
+            1 if vwap_features.get('poc_above') else 0,
+            1 if vwap_features.get('val_below') else 0,
+        ))
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store VWAP features for trade {trade_id}: {e}")
+
+
 def store_trade(trade, master_report: dict = None,
                 market_report: dict = None, smc_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
@@ -305,7 +405,8 @@ def store_trade(trade, master_report: dict = None,
                 strategy_scores: dict = None, source: str = 'BACKTEST',
                 model_predicted_r: float = None,
                 strategy_model_verdict: str = None,
-                strategy_model_predicted_r: float = None):
+                strategy_model_predicted_r: float = None,
+                vwap_features: dict = None):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
@@ -508,8 +609,16 @@ def store_trade(trade, master_report: dict = None,
         ))
 
         conn.commit()
+        trade_id = c.lastrowid
+
+        # ── Store VWAP-specific features if present ──
+        if vwap_features and trade.strategy == 'VWAP_MEAN_REVERSION':
+            store_vwap_features(c, trade_id, vwap_features)
+            conn.commit()
+
         c.close()
         conn.close()
+        return trade_id
 
     except Exception as e:
         log.warning(f"[DB_STORE] store_trade error: {e}")

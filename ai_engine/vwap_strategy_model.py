@@ -301,28 +301,100 @@ def evaluate_no_gates(symbol, df_m1=None, df_m5=None, df_m15=None, df_h1=None,
 def extract_vwap_features_from_db(row: dict) -> dict:
     """
     Extract VWAP-specific features from a backtest_trades DB row.
-    These are features NOT captured in the base 63-feature ML Gate set.
-    Returns a dict of additional features for VWAP-specific training.
+
+    Joins backtest_trades with backtest_vwap_features to get real VWAP
+    internal features (ADX, VIX, StochRSI, etc.). Falls back to
+    computed defaults for trades without VWAP feature rows (older data).
+
+    Returns a dict of VWAP-specific features for model training.
     """
-    # Most VWAP features are already in the base 63 (pip_from_vwap, etc.)
-    # But some strategy-internal features are lost:
-    #   - ADX at entry (not in DB)
-    #   - VIX at entry (not in DB)
-    #   - Fear/Greed at entry (not in DB)
-    #   - StochRSI values (not in DB)
-    #   - POC distance (derived from pip_to_poc)
-    #
-    # For DB-based training, we use what's available:
-    vwap_features = {
-        'pip_from_vwap': float(row.get('pip_from_vwap', 0) or 0),
-        'pip_to_poc': float(row.get('pip_to_poc', 50) or 50),
-        'atr': float(row.get('atr', 0) or 0),
-        'price_position': str(row.get('price_position', 'INSIDE_VA')),
-        'pd_zone': str(row.get('pd_zone', 'NEUTRAL')),
-        'htf_approved': 1 if row.get('htf_approved') else 0,
-        'combined_bias': str(row.get('combined_bias', 'NEUTRAL')),
-        'score': float(row.get('score', 0) or 0),
-        'sl_pips': float(row.get('sl_pips', 10) or 10),
-        'tp_pips': float(row.get('tp_pips', 15) or 15),
-    }
+    # If the row has VWAP features (from JOIN), use them directly
+    if row.get('atr_pips') is not None and row.get('atr_pips') != 0:
+        vwap_features = {
+            'atr_pips': float(row.get('atr_pips', 0)),
+            'adx': float(row.get('adx', 50) or 50),
+            'vix': float(row.get('vix', 20) or 20),
+            'fg_score': float(row.get('fg_score', 50) or 50),
+            'pip_from_vwap': abs(float(row.get('pip_from_vwap', 0) or 0)),
+            'vwap_pos': str(row.get('vwap_pos', 'neutral')),
+            'va_pos': str(row.get('va_pos', 'neutral')),
+            'pd_zone': str(row.get('pd_zone', 'NEUTRAL')),
+            'htf_ok': bool(row.get('htf_ok', 0)),
+            'master_bias': str(row.get('master_bias', '')),
+            'stoch_k': float(row.get('stoch_k', 50) or 50),
+            'stoch_d': float(row.get('stoch_d', 50) or 50),
+            'poc_dist': abs(float(row.get('pip_to_poc', 0) or 0)),
+            'supertrend_dir': int(row.get('supertrend_dir', 0) or 0),
+            'poc_above': int(row.get('poc_above', 0) or 0),
+            'val_below': int(row.get('val_below', 0) or 0),
+        }
+    else:
+        # Fallback for older trades without backtest_vwap_features rows
+        vwap_features = {
+            'pip_from_vwap': float(row.get('pip_from_vwap', 0) or 0),
+            'pip_to_poc': float(row.get('pip_to_poc', 50) or 50),
+            'atr': float(row.get('atr', 0) or 0),
+            'price_position': str(row.get('price_position', 'INSIDE_VA')),
+            'pd_zone': str(row.get('pd_zone', 'NEUTRAL')),
+            'htf_approved': 1 if row.get('htf_approved') else 0,
+            'combined_bias': str(row.get('combined_bias', 'NEUTRAL')),
+            'score': float(row.get('score', 0) or 0),
+            'sl_pips': float(row.get('sl_pips', 10) or 10),
+            'tp_pips': float(row.get('tp_pips', 15) or 15),
+        }
     return vwap_features
+
+
+def build_vwap_feature_vector(row: dict) -> list:
+    """Build VWAP model feature vector from a DB row (with JOINed VWAP features).
+
+    Returns a list of numeric features for the VWAP Layer 1 model.
+    Uses real VWAP features when available, falls back to derived values.
+    """
+    vf = extract_vwap_features_from_db(row)
+
+    # Normalize values
+    atr_val = vf.get('atr_pips', vf.get('atr', 0)) or 0
+    features = [
+        # ── VWAP-specific internal features (16) ──
+        atr_val / max(atr_val, 1),  # self-normalized
+        vf.get('adx', 50) / 100.0,
+        vf.get('vix', 20) / 50.0,
+        vf.get('fg_score', 50) / 100.0,
+        # Encode vwap_pos
+        1.0 if 'ABOVE' in str(vf.get('vwap_pos', '')) else (-1.0 if 'BELOW' in str(vf.get('vwap_pos', '')) else 0.0),
+        # Encode va_pos
+        1.0 if 'ABOVE' in str(vf.get('va_pos', '')) else (-1.0 if 'BELOW' in str(vf.get('va_pos', '')) else 0.0),
+        # Encode pd_zone
+        1.0 if 'PREMIUM' in str(vf.get('pd_zone', '')) else (-1.0 if 'DISCOUNT' in str(vf.get('pd_zone', '')) else 0.0),
+        1.0 if vf.get('htf_ok') or vf.get('htf_approved') else 0.0,
+        # Encode master_bias
+        1.0 if str(vf.get('master_bias', '') or vf.get('combined_bias', '')) == 'BULLISH' else (-1.0 if str(vf.get('master_bias', '') or vf.get('combined_bias', '')) == 'BEARISH' else 0.0),
+        vf.get('stoch_k', 50) / 100.0,
+        vf.get('stoch_d', 50) / 100.0,
+        abs(vf.get('poc_dist', vf.get('pip_to_poc', 0))) / 50.0,
+        float(vf.get('supertrend_dir', 0)),
+        float(vf.get('poc_above', 0)),
+        float(vf.get('val_below', 0)),
+
+        # ── General VWAP features from backtest_trades (4) ──
+        abs(float(row.get('pip_from_vwap', 0) or 0)) / 50.0,
+        _encode_price_position(str(row.get('price_position', 'INSIDE_VA'))),
+        abs(float(row.get('pip_to_poc', 0) or 0)) / 50.0,
+        float(row.get('va_width_pips', 20) or 20) / 50.0,
+
+        # ── Cross-strategy confluence (5) from strategy score columns ──
+        float(row.get('ss_smc_ob', 0) or 0) / 100.0,
+        float(row.get('ss_ema_cross', 0) or 0) / 100.0,
+        float(row.get('ss_breakout_momentum', 0) or 0) / 100.0,
+        float(row.get('ss_fvg_reversion', 0) or 0) / 100.0,
+        float(row.get('ss_trend_continuation', 0) or 0) / 100.0,
+    ]
+    return features
+
+
+def _encode_price_position(pp: str) -> float:
+    """Encode price_position into numeric value."""
+    pp_map = {'ABOVE_VAH': 2.0, 'ABOVE_VA': 1.0, 'INSIDE_VA': 0.0,
+              'BELOW_VA': -1.0, 'BELOW_VAL': -2.0}
+    return pp_map.get(pp.upper(), 0.0)

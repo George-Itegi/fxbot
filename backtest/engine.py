@@ -507,6 +507,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                                             'predicted_r': predicted_r if 'predicted_r' in dir() else None,
                                             'strategy_model_verdict': strat_model_verdict,
                                             'strategy_model_predicted_r': strat_model_predicted_r,
+                                            'vwap_features': best_signal.get('_vwap_features'),
                                         }
 
                                 if strat_model_shadow_count <= 3 or strat_model_shadow_count % 25 == 0:
@@ -589,6 +590,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     'flow': flow,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
+                                    'vwap_features': best_signal.get('_vwap_features'),
                                 }
                         # Log sparingly to avoid spam
                         log_limit = 3 if recommendation == 'CAUTION' else 5
@@ -798,6 +800,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             'predicted_r': best.get('model_predicted_r'),
             'strategy_model_verdict': strat_model_verdict,
             'strategy_model_predicted_r': strat_model_predicted_r,
+            'vwap_features': best.get('_vwap_features'),
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -867,6 +870,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     model_predicted_r=reports.get('predicted_r'),
                     strategy_model_verdict=reports.get('strategy_model_verdict'),
                     strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
+                    vwap_features=reports.get('vwap_features'),
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
@@ -888,6 +892,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strategy_scores=reports.get('strategy_scores'),
                         source='SHADOW',
                         model_predicted_r=reports.get('predicted_r'),
+                        vwap_features=reports.get('vwap_features'),
                     )
                     shadow_stored += 1
                 if shadow_stored > 0:
@@ -912,6 +917,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         model_predicted_r=reports.get('predicted_r'),
                         strategy_model_verdict=reports.get('strategy_model_verdict'),
                         strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
+                        vwap_features=reports.get('vwap_features'),
                     )
                     l1_shadow_stored += 1
                 if l1_shadow_stored > 0:
