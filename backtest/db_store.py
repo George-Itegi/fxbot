@@ -146,6 +146,9 @@ def _ensure_tables(conn):
             -- Flag: is this a backtest trade?
             source              VARCHAR(20) DEFAULT 'BACKTEST',
 
+            -- ML Gate model prediction (for self-calibration)
+            model_predicted_r   DOUBLE DEFAULT NULL,
+
             INDEX idx_symbol (symbol),
             INDEX idx_strategy (strategy),
             INDEX idx_outcome (outcome),
@@ -234,12 +237,10 @@ def _auto_migrate_trades(cursor, conn):
         ('backtest_trades', 'fib_confluence_score', 'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'fib_in_golden_zone',   'TINYINT DEFAULT 0'),
         ('backtest_trades', 'fib_bias_aligned',     'TINYINT DEFAULT 0'),
-        # ── v3.3: Source tracking + model self-calibration ──
-        ('backtest_trades', 'source',                "VARCHAR(20) DEFAULT 'BACKTEST'"),
-        ('backtest_trades', 'model_predicted_r',     'DOUBLE DEFAULT NULL'),
-        # ── Layer 1: Strategy model verdict ──
-        ('backtest_trades', 'strategy_model_verdict',     "VARCHAR(10) DEFAULT NULL"),
-        ('backtest_trades', 'strategy_model_predicted_r', 'DOUBLE DEFAULT NULL'),
+        # ── Shadow trade system ──
+        ('backtest_trades', 'source',               "VARCHAR(20) DEFAULT 'BACKTEST'"),
+        # ── ML Gate self-calibration ──
+        ('backtest_trades', 'model_predicted_r',    'DOUBLE DEFAULT NULL'),
     ]
     for table, col, col_def in migrations:
         try:
@@ -299,9 +300,7 @@ def store_trade(trade, master_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
                 spread_pips: float = 0.0, slippage_pips: float = 0.0,
                 strategy_scores: dict = None, source: str = 'BACKTEST',
-                model_predicted_r: float = None,
-                strategy_model_verdict: str = None,
-                strategy_model_predicted_r: float = None):
+                model_predicted_r: float = None):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
@@ -388,7 +387,7 @@ def store_trade(trade, master_report: dict = None,
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
             return
 
-        # 81 columns = 80 %s + 1 literal 'BACKTEST'
+        # 82 columns = 81 %s + 1 literal 'BACKTEST'
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -414,9 +413,7 @@ def store_trade(trade, master_report: dict = None,
                 ss_breakout_momentum, ss_structure_align,
                 fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
                 source,
-                model_predicted_r,
-                strategy_model_verdict,
-                strategy_model_predicted_r
+                model_predicted_r
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
@@ -426,7 +423,7 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s, %s, %s, %s
+                %s, %s
             )
         """, (
             run_id, trade.ticket, trade.symbol, trade.direction,
@@ -497,10 +494,7 @@ def store_trade(trade, master_report: dict = None,
             # ── Source: BACKTEST (real) or SHADOW (simulated) ──
             source,
             # ── ML Gate model prediction (self-calibration) ──
-            _safe_float(model_predicted_r) if model_predicted_r is not None else None,
-            # ── Layer 1 strategy model verdict ──
-            strategy_model_verdict,
-            _safe_float(strategy_model_predicted_r) if strategy_model_predicted_r is not None else None,
+            model_predicted_r,
         ))
 
         conn.commit()
@@ -558,7 +552,7 @@ def get_training_data(min_trades: int = 50) -> list:
 
 
 def get_stats() -> dict:
-    """Get quick stats about stored backtest data."""
+    """Get quick stats about stored backtest data (real + shadow)."""
     try:
         conn = _get_or_create_conn()
         c = conn.cursor(dictionary=True)
@@ -568,6 +562,12 @@ def get_stats() -> dict:
 
         c.execute("SELECT COUNT(*) as total FROM backtest_trades WHERE source='BACKTEST' AND win=1")
         wins = c.fetchone()['total']
+
+        c.execute("SELECT COUNT(*) as total FROM backtest_trades WHERE source='SHADOW'")
+        shadow_total = c.fetchone()['total']
+
+        c.execute("SELECT COUNT(*) as total FROM backtest_trades WHERE source='SHADOW' AND win=1")
+        shadow_wins = c.fetchone()['total']
 
         c.execute("SELECT COUNT(*) as total FROM backtest_signals WHERE was_executed=0")
         blocked = c.fetchone()['total']
@@ -581,7 +581,7 @@ def get_stats() -> dict:
                    ROUND(AVG(profit_r),3) as avg_r,
                    ROUND(AVG(score),1) as avg_score
             FROM backtest_trades
-            WHERE source='BACKTEST'
+            WHERE source IN ('BACKTEST', 'SHADOW')
             GROUP BY strategy
         """)
         strat_rows = c.fetchall()
@@ -622,6 +622,8 @@ def get_stats() -> dict:
         return {
             'total_trades': total,
             'total_wins': wins,
+            'shadow_trades': shadow_total,
+            'shadow_wins': shadow_wins,
             'total_blocked_signals': blocked,
             'total_executed_signals': executed_signals,
             'win_rate': round(wins / total * 100, 1) if total > 0 else 0,

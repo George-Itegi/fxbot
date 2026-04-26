@@ -15,6 +15,10 @@ SYMBOLS = [
     "GBPJPY", "EURJPY", "AUDJPY", "CADJPY", "NZDJPY",
     # Popular crosses (3)
     "EURGBP", "GBPAUD", "GBPNZD",
+    # Additional crosses (5) — added for model diversity
+    "EURCAD", "GBPCHF", "AUDNZD", "AUDCAD", "NZDCAD",
+    # CHF crosses (2)
+    "CHFJPY", "EURCHF",
     # Commodities (2)
     "XAUUSD",  # Gold
     "XAGUSD",  # Silver
@@ -40,6 +44,7 @@ AVG_SPREAD_PIPS = {
     "EURGBP": 0.6,  "GBPAUD": 1.2,  "GBPNZD": 2.5,
     # Other crosses
     "EURCAD": 0.8,  "GBPCHF": 0.9,  "AUDNZD": 1.2,
+    "AUDCAD": 0.8,  "NZDCAD": 0.8,  "EURCHF": 0.7,
     # Commodities
     "XAUUSD": 2.0,  "XAGUSD": 3.0,
     # Default
@@ -115,6 +120,7 @@ PIP_VALUE_PER_LOT = {
     "CHFJPY": 6.50,
     "EURGBP": 13.00, "GBPAUD": 15.00, "GBPNZD": 6.00,
     "EURCAD": 7.50,  "GBPCHF": 11.00, "AUDNZD": 6.00,
+    "AUDCAD": 7.50,  "NZDCAD": 7.50,  "EURCHF": 11.00,
     "XAUUSD": 1.0,   "XAGUSD": 50.0,
     "DEFAULT": 10.0,
 }

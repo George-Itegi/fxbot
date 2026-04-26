@@ -1,5 +1,5 @@
 # =============================================================
-# ai_engine/ml_gate.py  v3.1 — Strategy-Informed ML Gate (Regression)
+# ai_engine/ml_gate.py  v3.3 — Strategy-Informed ML Gate (Regression)
 #
 # PURPOSE: Replace ALL 7 hardcoded gates with a single ML model
 # that learns which combinations of strategy scores + market features
@@ -7,7 +7,7 @@
 # instead of classification (predict win/loss).
 #
 # ARCHITECTURE:
-#   Layer 1 — Feature Engineering (63 features):
+#   Layer 1 — Feature Engineering (66 features):
 #     - 8  market quality features (score, delta, OF, volume)
 #     - 4  VWAP features
 #     - 8  SMC features (BOS, OBs, FVGs, sweeps, P/D zone)
@@ -19,17 +19,21 @@
 #     - 6  volatility/state features
 #     - 3  symbol type features
 #     - 3  self-improvement features (recent win rates)
-#     = 63 total features
+#     - 3  Fibonacci confluence features
+#     - 1  price context (spread)
+#     - 3  self-calibration features (v3.3: source, predicted_r, error)
+#     = 66 total features
 #
 #   Layer 2 — ML Model (XGBoost Regressor):
-#     Input:  63-feature vector
+#     Input:  66-feature vector
 #     Output: Predicted R-multiple (continuous float) per trade
-#     Trained on: backtest_trades with profit_r as target
+#     Trained on: backtest_trades + shadow_trades with profit_r as target
 #     v3.1: Switched from XGBClassifier (binary) to XGBRegressor
+#     v3.3: SHADOW trades now included (full TradeTracker simulation)
 #
 #   Layer 3 — Execution Filter (R-based thresholds):
 #     >= R:0.5 → TAKE trade (good edge expected)
-#     0.0-0.5   → CAUTION (marginal edge)
+#     0.0-0.5   → CAUTION (marginal edge → SHADOW simulate)
 #     < 0.0     → SKIP (negative or zero expected R)
 #
 #   Layer 4 — Self-Improvement Loop:
@@ -215,6 +219,17 @@ _STATE_MAP = {
 _TREND_MAP = {'BULLISH': 2.0, 'RANGING': 0.0, 'BEARISH': -2.0, 'NEUTRAL': 0.0}
 
 
+def _safe_calc_prediction_error(actual_r: float, predicted_r) -> float:
+    """Calculate prediction error (actual - predicted). Returns 0.0 if no prediction."""
+    if predicted_r is None or predicted_r == '' or predicted_r == 0:
+        return 0.0
+    try:
+        pred = float(predicted_r)
+        return actual_r - pred
+    except (TypeError, ValueError):
+        return 0.0
+
+
 # ════════════════════════════════════════════════════════════════
 # LAYER 1: FEATURE EXTRACTION
 # ════════════════════════════════════════════════════════════════
@@ -229,7 +244,7 @@ def extract_features(signal: dict,
                      spread_pips: float = 0.0,
                      self_improvement: dict = None) -> np.ndarray:
     """
-    Extract 63 numerical features from the full market context.
+    Extract 66 numerical features from the full market context.
 
     Args:
         signal:              The best strategy signal dict (with score, direction, SL/TP, etc.)
@@ -244,7 +259,7 @@ def extract_features(signal: dict,
         self_improvement:    Dict with 'recent_wr', 'recent_avg_r', 'strategy_wr'
 
     Returns:
-        np.ndarray of shape (1, 63) or None on error
+        np.ndarray of shape (1, 66) or None on error
     """
     try:
         mr = market_report or {}
@@ -420,6 +435,12 @@ def extract_features(signal: dict,
             float(fib_data.get('confluence_score', 0)),
             1.0 if fib_data.get('in_golden_zone', False) else 0.0,
             1.0 if fib_data.get('fib_bias_aligned', False) else 0.0,
+
+            # Self-calibration (3) — v3.3: always 0.0 for live scoring
+            # (model knows this is a live signal, not historical)
+            0.0,  # source: N/A for live (always 0.0)
+            0.0,  # model_predicted_r: N/A for live (always 0.0)
+            0.0,  # prediction_error: N/A for live (always 0.0)
         ]
 
         return np.array(features, dtype=np.float32).reshape(1, -1)
@@ -431,7 +452,7 @@ def extract_features(signal: dict,
 
 def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.ndarray:
     """
-    Extract 63 features from a backtest_trades DB row.
+    Extract 66 features from a backtest_trades DB row.
     Used for training from stored historical data.
     """
     try:
@@ -528,6 +549,17 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.
             float(row.get('fib_confluence_score', 0) or 0),
             1.0 if row.get('fib_in_golden_zone') else 0.0,
             1.0 if row.get('fib_bias_aligned') else 0.0,
+
+            # Self-calibration (3) — v3.3: model learns from its own past decisions
+            # source: 1.0 if SHADOW (model was unsure), 0.0 if BACKTEST (model was confident)
+            1.0 if str(row.get('source', 'BACKTEST')) == 'SHADOW' else 0.0,
+            # model_predicted_r: what the model predicted for this trade (NULL for older data)
+            float(row.get('model_predicted_r', 0) or 0),
+            # prediction_error: actual R minus predicted R (0.0 if no prediction)
+            _safe_calc_prediction_error(
+                float(row.get('profit_r', 0) or 0),
+                row.get('model_predicted_r')
+            ),
         ]
 
         return np.array(features, dtype=np.float32)
@@ -672,6 +704,9 @@ def train_model(source: str = 'auto') -> dict:
         cursor = conn.cursor(dictionary=True)
 
         # ── Fetch training data ──
+        # v3.3: Include SHADOW trades — they now use the full TradeTracker
+        # so their outcomes are real. The 'source' feature tells the model
+        # the category (EXECUTED vs SHADOW) so it can self-calibrate.
         if source in ('backtest', 'auto'):
             cursor.execute("""
                 SELECT
@@ -689,9 +724,10 @@ def train_model(source: str = 'auto') -> dict:
                     ss_delta_divergence, ss_trend_continuation,
                     ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
                     ss_breakout_momentum, ss_structure_align,
-                    profit_pips, profit_r, win
+                    profit_pips, profit_r, win,
+                    source, model_predicted_r
                 FROM backtest_trades
-                WHERE source = 'BACKTEST'
+                WHERE source IN ('BACKTEST', 'SHADOW')
                   AND outcome IS NOT NULL
                   AND outcome != ''
                   AND win IS NOT NULL
@@ -725,6 +761,8 @@ def train_model(source: str = 'auto') -> dict:
         # ── Build feature matrix + R-multiple target ──
         X = []
         y = []  # R-multiple (continuous target)
+        backtest_count = 0
+        shadow_count = 0
 
         for row in rows:
             try:
@@ -734,6 +772,10 @@ def train_model(source: str = 'auto') -> dict:
                 r_multiple = float(row.get('profit_r', 0) or 0)
                 X.append(features)
                 y.append(r_multiple)
+                if str(row.get('source', 'BACKTEST')) == 'SHADOW':
+                    shadow_count += 1
+                else:
+                    backtest_count += 1
             except Exception:
                 continue
 
@@ -761,6 +803,7 @@ def train_model(source: str = 'auto') -> dict:
         negative_mean = float(np.mean(y_raw[y_raw <= 0])) if loss_count > 0 else 0.0
 
         log.info(f"[ML_GATE] Regression training: {len(y)} trades "
+                 f"({backtest_count} real + {shadow_count} shadow) "
                  f"({win_count}W / {loss_count}L = {wr:.1f}% WR, "
                  f"mean_R={mean_r:.3f}, median_R={median_r:.3f})")
 
@@ -770,18 +813,38 @@ def train_model(source: str = 'auto') -> dict:
             X, y, test_size=0.2, random_state=42)
 
         # ── XGBoost Regressor ──
+        # Overfitting control: with 63 features and ~250-500 samples,
+        # we use conservative depth + strong regularization.
+        # As data grows past 1000 trades, these can be relaxed.
+        n_trades = len(y)
+        if n_trades < 500:
+            # Small data — very conservative
+            depth, eta, child_w = 3, 0.03, 10
+            alpha, lam = 1.0, 5.0
+            cols = 0.5
+        elif n_trades < 1000:
+            # Medium data — moderate
+            depth, eta, child_w = 4, 0.04, 7
+            alpha, lam = 0.5, 3.0
+            cols = 0.6
+        else:
+            # Large data — standard
+            depth, eta, child_w = 5, 0.05, 5
+            alpha, lam = 0.1, 1.0
+            cols = 0.7
+
         model = xgb.XGBRegressor(
-            n_estimators=300,
-            max_depth=5,
-            learning_rate=0.05,
+            n_estimators=500,
+            max_depth=depth,
+            learning_rate=eta,
             objective='reg:squarederror',
             random_state=42,
-            min_child_weight=5,
+            min_child_weight=child_w,
             subsample=0.8,
-            colsample_bytree=0.7,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            early_stopping_rounds=30,
+            colsample_bytree=cols,
+            reg_alpha=alpha,
+            reg_lambda=lam,
+            early_stopping_rounds=50,
         )
 
         model.fit(X_train, y_train,
@@ -816,18 +879,19 @@ def train_model(source: str = 'auto') -> dict:
         calibration = _check_regression_calibration(val_preds, y_val)
 
         # ── Retrain on full data for production ──
-        best_n = getattr(model, 'best_iteration', 300)
+        # Use same adaptive params as training model
+        best_n = getattr(model, 'best_iteration', 500)
         model_final = xgb.XGBRegressor(
             n_estimators=best_n,
-            max_depth=5,
-            learning_rate=0.05,
+            max_depth=depth,
+            learning_rate=eta,
             objective='reg:squarederror',
             random_state=42,
-            min_child_weight=5,
+            min_child_weight=child_w,
             subsample=0.8,
-            colsample_bytree=0.7,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
+            colsample_bytree=cols,
+            reg_alpha=alpha,
+            reg_lambda=lam,
         )
         model_final.fit(X, y, verbose=False)
 

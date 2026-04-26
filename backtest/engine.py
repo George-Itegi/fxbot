@@ -225,9 +225,11 @@ def run_backtest(config: BacktestConfig) -> dict:
     # ── Store feature snapshots per trade (for DB) ─────
     trade_reports = {}  # ticket -> {master_report, market_report, smc_report, flow}
 
-    # ── Strategy model defaults (Layer 1 — per-strategy PASS/REJECT) ──
-    strat_model_verdict = None
-    strat_model_predicted_r = None
+    # ── Shadow trade placeholders (v3.2) ─────────────────
+    # Initialized after ML gate check below.
+    shadow_tracker = None
+    shadow_reports = {}
+    shadow_count = 0
 
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
@@ -244,6 +246,23 @@ def run_backtest(config: BacktestConfig) -> dict:
                             f"falling back to rule-based gates")
         except Exception as e:
             log.warning(f"  [ML_GATE] Failed to load: {e}")
+
+    # ── Shadow trade system (v3.3) ─────────────────────
+    # Simulate CAUTION signals (0.0 <= R < 0.5) without executing.
+    # Uses FULL TradeTracker (same partial TP, trailing, TP extension
+    # as real trades) so shadow outcomes match real-world outcomes.
+    # Only active when model is loaded AND we're storing to DB.
+    if config.store_db and ml_gate_active:
+        shadow_tracker = TradeTracker(
+            starting_balance=STARTING_BALANCE,
+            pip_value_per_lot=pip_value,
+            max_open=9999, max_per_symbol=9999,
+            partial_tp_enabled=PARTIAL_TP_ENABLED,
+            atr_trail_enabled=ATR_TRAIL_ENABLED,
+            dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+            dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
+            base_risk_percent=BASE_RISK_PERCENT,
+        )
 
     scan_bar = config.scan_every_n_bars
 
@@ -262,6 +281,16 @@ def run_backtest(config: BacktestConfig) -> dict:
                 pip_size,
                 pip_value,
             )
+            # Also check shadow trade exits
+            if shadow_tracker is not None:
+                shadow_tracker.check_exits(
+                    current_time,
+                    float(current_bar['high']),
+                    float(current_bar['low']),
+                    float(current_bar['close']),
+                    pip_size,
+                    pip_value,
+                )
             continue
 
         # ── Skip if we already have too many trades ───────
@@ -385,13 +414,63 @@ def run_backtest(config: BacktestConfig) -> dict:
 
                     if recommendation == 'SKIP':
                         model_blocked_count += 1
-                        if model_blocked_count <= 5 or model_blocked_count % 10 == 0:
-                            log.info(f"  [ML_GATE] SKIP {best_strat_name} "
+
+                    # ── CAUTION or SKIP → SHADOW trade (simulate, don't execute) ──
+                    # v3.3: ALL non-TAKE signals are shadowed for training data.
+                    # - CAUTION (0.0 <= R < 0.5): model is unsure
+                    # - SKIP (R < 0.0): model predicts loss — but shadow verifies
+                    # This gives the model learning signal from its rejections too.
+                    if recommendation in ('CAUTION', 'SKIP'):
+                        if shadow_tracker is not None:
+                            sl_p = best_signal.get('sl_pips', 0)
+                            tp_p = best_signal.get('tp1_pips', 0) or best_signal.get('tp_pips', 0)
+                            if sl_p > 0 and tp_p > 0:
+                                sh_entry = float(current_bar['close'])
+                                if best_signal['direction'] == 'BUY':
+                                    sh_entry += total_slippage * pip_size
+                                else:
+                                    sh_entry -= total_slippage * pip_size
+                                shadow_tracker.open_trade(
+                                    symbol=symbol,
+                                    direction=best_signal['direction'],
+                                    strategy=best_strat_name,
+                                    entry_time=current_time,
+                                    entry_price=sh_entry,
+                                    sl_price=0, tp_price=0,
+                                    sl_pips=sl_p, tp_pips=tp_p,
+                                    score=best_signal.get('score', 0),
+                                    confluence=best_signal.get('confluence', []),
+                                    session=market_report.get('session', 'UNKNOWN'),
+                                    market_state=market_state,
+                                    agreement_groups=1,
+                                    atr_value=0.0,
+                                )
+                                # Fix SL/TP prices after open
+                                st = shadow_tracker.open_trades[-1]
+                                if best_signal['direction'] == 'BUY':
+                                    st.sl_price = st.entry_price - st.sl_pips * pip_size
+                                    st.tp_price = st.entry_price + st.tp_pips * pip_size
+                                else:
+                                    st.sl_price = st.entry_price + st.sl_pips * pip_size
+                                    st.tp_price = st.entry_price - st.tp_pips * pip_size
+                                shadow_count += 1
+                                shadow_reports[shadow_tracker.ticket_counter] = {
+                                    'master_report': master_report,
+                                    'market_report': market_report,
+                                    'smc_report': smc_report,
+                                    'flow': flow,
+                                    'strategy_scores': all_scores or {},
+                                    'predicted_r': predicted_r,
+                                }
+                        # Log sparingly to avoid spam
+                        log_limit = 3 if recommendation == 'CAUTION' else 5
+                        if shadow_count <= log_limit or shadow_count % 25 == 0:
+                            log.info(f"  [ML_GATE] SHADOW ({recommendation}) {best_strat_name} "
                                      f"{best_signal['direction']} "
                                      f"R={predicted_r:.2f}")
-                        continue
+                        continue  # Don't execute as real trade
 
-                    # Model says TAKE or CAUTION — proceed
+                    # Model says TAKE — proceed with real execution
                     if model_blocked_count % 20 == 0 or model_blocked_count <= 3:
                         log.info(f"  [ML_GATE] {recommendation} {best_strat_name} "
                                  f"{best_signal['direction']} "
@@ -589,8 +668,6 @@ def run_backtest(config: BacktestConfig) -> dict:
             'flow': flow,
             'strategy_scores': all_scores,
             'predicted_r': best.get('model_predicted_r'),
-            'strategy_model_verdict': strat_model_verdict,
-            'strategy_model_predicted_r': strat_model_predicted_r,
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -609,6 +686,12 @@ def run_backtest(config: BacktestConfig) -> dict:
         tracker.close_remaining_at_end(
             last_bar['time'], float(last_bar['close']), pip_size, pip_value)
 
+    # ── Close remaining shadow trades at end ────────────
+    if shadow_tracker and shadow_tracker.open_trades:
+        last_bar = df_m1.iloc[-1]
+        shadow_tracker.close_remaining_at_end(
+            last_bar['time'], float(last_bar['close']), pip_size, pip_value)
+
     elapsed = time_mod.time() - start_time
     summary = tracker.get_summary()
     summary['symbol'] = symbol
@@ -622,6 +705,7 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['relaxed_mode'] = config.relaxed_mode
     summary['run_id'] = config.run_id
     summary['model_blocked'] = model_blocked_count
+    summary['shadow_trades'] = shadow_count
 
     # ── Store all completed trades to DB ─
     if config.store_db:
@@ -643,11 +727,31 @@ def run_backtest(config: BacktestConfig) -> dict:
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
                     model_predicted_r=reports.get('predicted_r'),
-                    strategy_model_verdict=reports.get('strategy_model_verdict'),
-                    strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
+
+            # ── Store shadow trades to DB ──
+            if shadow_tracker and shadow_tracker.closed_trades:
+                shadow_stored = 0
+                for trade in shadow_tracker.closed_trades:
+                    reports = shadow_reports.get(trade.ticket, {})
+                    store_trade(
+                        trade=trade,
+                        master_report=reports.get('master_report'),
+                        market_report=reports.get('market_report'),
+                        smc_report=reports.get('smc_report'),
+                        flow_data=reports.get('flow'),
+                        run_id=config.run_id,
+                        spread_pips=spread,
+                        slippage_pips=SLIPPAGE_PIPS,
+                        strategy_scores=reports.get('strategy_scores'),
+                        source='SHADOW',
+                        model_predicted_r=reports.get('predicted_r'),
+                    )
+                    shadow_stored += 1
+                if shadow_stored > 0:
+                    log.info(f"  [DB] Stored {shadow_stored} shadow trades in MySQL")
         except Exception as e:
             log.warning(f"  [DB] Could not store trades: {e}")
 
@@ -701,6 +805,9 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
     symbol_pipval = {}    # symbol -> pip_value
     symbol_spread = {}    # symbol -> total_slippage in pips
     symbol_stats = {}     # symbol -> {signals_found, blocked_gate, blocked_consensus, blocked_score, executed, model_blocked}
+    symbol_shadow_trackers = {}  # symbol -> TradeTracker for shadow trades
+    symbol_shadow_reports = {}   # symbol -> {ticket -> snapshot}
+    symbol_shadow_count = {}     # symbol -> int
 
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
@@ -747,8 +854,23 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         symbol_stats[sym] = {
             'signals_found': 0, 'blocked_gate': 0,
             'blocked_consensus': 0, 'blocked_score': 0,
-            'executed': 0, 'model_blocked': 0,
+            'executed': 0, 'model_blocked': 0, 'shadow_trades': 0,
         }
+        # Shadow tracker for this symbol (only if store_db + model)
+        # v3.3: Uses FULL TradeTracker (same features as real trades)
+        if store_db and ml_gate_active:
+            symbol_shadow_trackers[sym] = TradeTracker(
+                starting_balance=STARTING_BALANCE,
+                pip_value_per_lot=pip_value,
+                max_open=9999, max_per_symbol=9999,
+                partial_tp_enabled=PARTIAL_TP_ENABLED,
+                atr_trail_enabled=ATR_TRAIL_ENABLED,
+                dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+                dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
+                base_risk_percent=BASE_RISK_PERCENT,
+            )
+            symbol_shadow_reports[sym] = {}
+            symbol_shadow_count[sym] = 0
 
         log.info(f"  Loaded {sym}: M1={len(data['M1'])} bars, H1={len(data['H1'])} bars")
 
@@ -779,6 +901,16 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 symbol_pip[sym],
                 symbol_pipval[sym],
             )
+            # Also check shadow trade exits
+            if sym in symbol_shadow_trackers:
+                symbol_shadow_trackers[sym].check_exits(
+                    current_time,
+                    float(bar['high']),
+                    float(bar['low']),
+                    float(bar['close']),
+                    symbol_pip[sym],
+                    symbol_pipval[sym],
+                )
 
         # ── Only run strategy scan every N bars ────────────
         if bar_idx % scan_every != 0:
@@ -939,7 +1071,52 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                     best['model_predicted_r'] = predicted_r
                     if rec == 'SKIP':
                         stats['model_blocked'] += 1
-                        continue
+
+                    # v3.3: ALL non-TAKE signals → SHADOW (CAUTION + SKIP)
+                    if rec in ('CAUTION', 'SKIP'):
+                        if sym in symbol_shadow_trackers:
+                            sl_p = best.get('sl_pips', 0)
+                            tp_p = best.get('tp1_pips', 0) or best.get('tp_pips', 0)
+                            if sl_p > 0 and tp_p > 0:
+                                sh_entry = float(current_bar['close'])
+                                total_slip = symbol_spread[sym]
+                                if best['direction'] == 'BUY':
+                                    sh_entry += total_slip * symbol_pip[sym]
+                                else:
+                                    sh_entry -= total_slip * symbol_pip[sym]
+                                symbol_shadow_trackers[sym].open_trade(
+                                    symbol=sym,
+                                    direction=best['direction'],
+                                    strategy=best.get('strategy', 'UNKNOWN'),
+                                    entry_time=current_time,
+                                    entry_price=sh_entry,
+                                    sl_price=0, tp_price=0,
+                                    sl_pips=sl_p, tp_pips=tp_p,
+                                    score=best.get('score', 0),
+                                    confluence=best.get('confluence', []),
+                                    session=market_report.get('session', 'UNKNOWN'),
+                                    market_state=market_state,
+                                    agreement_groups=1,
+                                    atr_value=0.0,
+                                )
+                                st = symbol_shadow_trackers[sym].open_trades[-1]
+                                if best['direction'] == 'BUY':
+                                    st.sl_price = st.entry_price - st.sl_pips * symbol_pip[sym]
+                                    st.tp_price = st.entry_price + st.tp_pips * symbol_pip[sym]
+                                else:
+                                    st.sl_price = st.entry_price + st.sl_pips * symbol_pip[sym]
+                                    st.tp_price = st.entry_price - st.tp_pips * symbol_pip[sym]
+                                symbol_shadow_count[sym] += 1
+                                stats['shadow_trades'] += 1
+                                symbol_shadow_reports[sym][symbol_shadow_trackers[sym].ticket_counter] = {
+                                    'master_report': master_report,
+                                    'market_report': market_report,
+                                    'smc_report': smc_report,
+                                    'flow': flow,
+                                    'strategy_scores': all_scores or {},
+                                    'predicted_r': predicted_r,
+                                }
+                        continue  # Don't execute as real trade
                 except Exception:
                     pass
 
@@ -1014,6 +1191,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 # _fib_data dict value was causing fib data to be dropped
                 # when fib_data_snap was {} (empty dict is falsy in Python).
                 'strategy_scores': snap_scores if store_db else (all_scores if ml_gate_active else None),
+                'predicted_r': best.get('model_predicted_r'),
             }
 
             # Trade metadata saved (no DB write for signals)
@@ -1030,6 +1208,13 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             data = symbol_data[sym]
             last_bar = data['M1'].iloc[-1]
             tracker.close_remaining_at_end(
+                last_bar['time'], float(last_bar['close']),
+                symbol_pip[sym], symbol_pipval[sym])
+        # Close remaining shadow trades
+        if sym in symbol_shadow_trackers and symbol_shadow_trackers[sym].open_trades:
+            data = symbol_data[sym]
+            last_bar = data['M1'].iloc[-1]
+            symbol_shadow_trackers[sym].close_remaining_at_end(
                 last_bar['time'], float(last_bar['close']),
                 symbol_pip[sym], symbol_pipval[sym])
 
@@ -1053,6 +1238,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         summary['relaxed_mode'] = relaxed_mode
         summary['run_id'] = run_id
         summary['model_blocked'] = stats.get('model_blocked', 0)
+        summary['shadow_trades'] = stats.get('shadow_trades', 0)
 
         # Store trades to DB
         if store_db:
@@ -1073,11 +1259,31 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
                         model_predicted_r=reports.get('predicted_r'),
-                        strategy_model_verdict=reports.get('strategy_model_verdict'),
-                        strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                     )
                     stored += 1
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
+
+                # Store shadow trades
+                if sym in symbol_shadow_trackers and symbol_shadow_trackers[sym].closed_trades:
+                    shadow_stored = 0
+                    for trade in symbol_shadow_trackers[sym].closed_trades:
+                        reports = symbol_shadow_reports.get(sym, {}).get(trade.ticket, {})
+                        store_trade(
+                            trade=trade,
+                            master_report=reports.get('master_report'),
+                            market_report=reports.get('market_report'),
+                            smc_report=reports.get('smc_report'),
+                            flow_data=reports.get('flow'),
+                            run_id=run_id,
+                            spread_pips=spread,
+                            slippage_pips=SLIPPAGE_PIPS,
+                            strategy_scores=reports.get('strategy_scores'),
+                            source='SHADOW',
+                            model_predicted_r=reports.get('predicted_r'),
+                        )
+                        shadow_stored += 1
+                    if shadow_stored > 0:
+                        log.info(f"  [DB] {sym}: Stored {shadow_stored} shadow trades in MySQL")
             except Exception as e:
                 log.warning(f"  [DB] {sym}: Could not store trades: {e}")
 
