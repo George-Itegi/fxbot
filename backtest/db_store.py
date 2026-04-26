@@ -492,7 +492,22 @@ def store_trade(trade, master_report: dict = None,
             LIMIT 1
         """, (trade.symbol, trade.strategy, trade.direction,
                entry_time_str, run_id))
-        if c.fetchone():
+        dup_row = c.fetchone()
+        if dup_row:
+            existing_id = dup_row['id']
+            # Even if trade exists, backfill VWAP features if missing
+            if vwap_features and trade.strategy == 'VWAP_MEAN_REVERSION':
+                try:
+                    c.execute("""
+                        SELECT id FROM backtest_vwap_features
+                        WHERE trade_id = %s LIMIT 1
+                    """, (existing_id,))
+                    if not c.fetchone():
+                        store_vwap_features(c, existing_id, vwap_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled VWAP features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] VWAP backfill error: {e}")
             c.close()
             conn.close()
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
