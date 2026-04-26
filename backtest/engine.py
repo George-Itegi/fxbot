@@ -225,6 +225,10 @@ def run_backtest(config: BacktestConfig) -> dict:
     # ── Store feature snapshots per trade (for DB) ─────
     trade_reports = {}  # ticket -> {master_report, market_report, smc_report, flow}
 
+    # ── Strategy model defaults (Layer 1 — per-strategy PASS/REJECT) ──
+    strat_model_verdict = None
+    strat_model_predicted_r = None
+
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
     model_blocked_count = 0
@@ -584,6 +588,9 @@ def run_backtest(config: BacktestConfig) -> dict:
             'smc_report': smc_report,
             'flow': flow,
             'strategy_scores': all_scores,
+            'predicted_r': best.get('model_predicted_r'),
+            'strategy_model_verdict': strat_model_verdict,
+            'strategy_model_predicted_r': strat_model_predicted_r,
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -635,6 +642,9 @@ def run_backtest(config: BacktestConfig) -> dict:
                     spread_pips=spread,
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
+                    model_predicted_r=reports.get('predicted_r'),
+                    strategy_model_verdict=reports.get('strategy_model_verdict'),
+                    strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
@@ -1062,6 +1072,9 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         spread_pips=spread,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
+                        model_predicted_r=reports.get('predicted_r'),
+                        strategy_model_verdict=reports.get('strategy_model_verdict'),
+                        strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                     )
                     stored += 1
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
