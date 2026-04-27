@@ -116,6 +116,51 @@ def _log_shadow_results(trades, label: str, log_fn=None):
 log = get_logger(__name__)
 
 
+def _open_signal_shadow(tracker, signal, symbol, current_time,
+                        bar_close, pip_size, total_slippage,
+                        market_report, market_state):
+    """
+    Open a shadow trade from a signal dict.
+    Returns True if the shadow trade was successfully opened.
+    """
+    sl_p = signal.get('sl_pips', 0)
+    tp_p = signal.get('tp1_pips', 0) or signal.get('tp_pips', 0)
+    if sl_p <= 0 or tp_p <= 0:
+        return False
+
+    sh_entry = float(bar_close)
+    if signal['direction'] == 'BUY':
+        sh_entry += total_slippage * pip_size
+    else:
+        sh_entry -= total_slippage * pip_size
+
+    tracker.open_trade(
+        symbol=symbol,
+        direction=signal['direction'],
+        strategy=signal.get('strategy', 'UNKNOWN'),
+        entry_time=current_time,
+        entry_price=sh_entry,
+        sl_price=0, tp_price=0,
+        sl_pips=sl_p, tp_pips=tp_p,
+        score=signal.get('score', 0),
+        confluence=signal.get('confluence', []),
+        session=market_report.get('session', 'UNKNOWN'),
+        market_state=market_state,
+        agreement_groups=1,
+        atr_value=0.0,
+    )
+
+    st = tracker.open_trades[-1]
+    if signal['direction'] == 'BUY':
+        st.sl_price = st.entry_price - st.sl_pips * pip_size
+        st.tp_price = st.entry_price + st.tp_pips * pip_size
+    else:
+        st.sl_price = st.entry_price + st.sl_pips * pip_size
+        st.tp_price = st.entry_price - st.tp_pips * pip_size
+
+    return True
+
+
 @dataclass
 class BacktestConfig:
     """Configuration for a single backtest run."""
@@ -377,6 +422,26 @@ def run_backtest(config: BacktestConfig) -> dict:
             log.warning(f"  [L1_STRAT_MODEL] Failed to load: {e}")
             strat_model_mgr = None
 
+    # ── All-Signals Shadow Tracker ─────────────────────────
+    # Shadows ALL qualifying signals (not just model rejects) so
+    # both L1 and L2 models can learn from every signal's outcome.
+    all_signals_shadow_tracker = None
+    all_signals_shadow_reports = {}
+    all_signals_shadow_count = 0
+
+    if config.store_db:
+        all_signals_shadow_tracker = TradeTracker(
+            starting_balance=STARTING_BALANCE,
+            pip_value_per_lot=pip_value,
+            max_open=9999, max_per_symbol=9999,
+            partial_tp_enabled=PARTIAL_TP_ENABLED,
+            atr_trail_enabled=ATR_TRAIL_ENABLED,
+            dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+            dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
+            base_risk_percent=BASE_RISK_PERCENT,
+        )
+        log.info(f"  [ALL_SIGNALS_SHADOW] Tracking all qualifying signals for training data")
+
     scan_bar = config.scan_every_n_bars
 
     for bar_idx in range(scan_bar, total_m1_bars):
@@ -521,6 +586,42 @@ def run_backtest(config: BacktestConfig) -> dict:
                     continue
 
                 signals_found += 1
+
+                # ── Shadow ALL qualifying strategy signals (not just best) ──
+                # This gives both L1 and L2 models maximum training data.
+                # The best signal will be handled separately (real trade or model shadow).
+                if all_signals_shadow_tracker is not None:
+                    for strat_name, score in all_scores.items():
+                        if score <= 0 or strat_name == best_strat_name:
+                            continue
+                        try:
+                            sig = _run_one_strategy(
+                                strat_name, symbol,
+                                s_m1, s_m5, s_m15, s_h1, s_h4,
+                                smc_report, market_report,
+                                market_state, session, master_report,
+                                relaxed=config.relaxed_mode)
+                            if sig is None:
+                                continue
+                            if _open_signal_shadow(
+                                    all_signals_shadow_tracker, sig,
+                                    symbol, current_time,
+                                    current_bar['close'], pip_size,
+                                    total_slippage, market_report,
+                                    market_state):
+                                all_signals_shadow_count += 1
+                                all_signals_shadow_reports[
+                                    all_signals_shadow_tracker.ticket_counter] = {
+                                    'master_report': master_report,
+                                    'market_report': market_report,
+                                    'smc_report': smc_report,
+                                    'flow': flow,
+                                    'strategy_scores': all_scores,
+                                    'predicted_r': None,
+                                    'signal': sig,
+                                }
+                        except Exception:
+                            pass
 
                 # ── Layer 1 Strategy Model: per-strategy PASS/REJECT ──
                 if strat_model_mgr is not None and strat_model_mgr.has_model(best_strat_name):
@@ -806,6 +907,29 @@ def run_backtest(config: BacktestConfig) -> dict:
             else:
                 all_scores = None
 
+            # ── Shadow ALL non-best signals from this scan bar ──
+            if all_signals_shadow_tracker is not None:
+                for sig in final_signals:
+                    if sig is best:
+                        continue  # Best signal handled separately
+                    if _open_signal_shadow(
+                            all_signals_shadow_tracker, sig,
+                            symbol, current_time,
+                            current_bar['close'], pip_size,
+                            total_slippage, market_report,
+                            market_state):
+                        all_signals_shadow_count += 1
+                        all_signals_shadow_reports[
+                            all_signals_shadow_tracker.ticket_counter] = {
+                            'master_report': master_report,
+                            'market_report': market_report,
+                            'smc_report': smc_report,
+                            'flow': flow,
+                            'strategy_scores': all_scores or {},
+                            'predicted_r': None,
+                            'signal': sig,
+                        }
+
             # ── Layer 1 Strategy Model: filter best signal ──
             best_strat_name = best.get('strategy', '')
             if strat_model_mgr is not None and strat_model_mgr.has_model(best_strat_name):
@@ -1003,6 +1127,12 @@ def run_backtest(config: BacktestConfig) -> dict:
         strat_model_shadow_tracker.close_remaining_at_end(
             last_bar['time'], float(last_bar['close']), pip_size, pip_value)
 
+    # ── Close remaining all-signals shadow trades at end ──
+    if all_signals_shadow_tracker and all_signals_shadow_tracker.open_trades:
+        last_bar = df_m1.iloc[-1]
+        all_signals_shadow_tracker.close_remaining_at_end(
+            last_bar['time'], float(last_bar['close']), pip_size, pip_value)
+
     # ── Log shadow trade results ─────────────────────────
     if shadow_tracker and shadow_tracker.closed_trades:
         _log_shadow_results(shadow_tracker.closed_trades,
@@ -1010,6 +1140,9 @@ def run_backtest(config: BacktestConfig) -> dict:
     if strat_model_shadow_tracker and strat_model_shadow_tracker.closed_trades:
         _log_shadow_results(strat_model_shadow_tracker.closed_trades,
                             f"{symbol} L1_SHADOW")
+    if all_signals_shadow_tracker and all_signals_shadow_tracker.closed_trades:
+        _log_shadow_results(all_signals_shadow_tracker.closed_trades,
+                            f"{symbol} ALL_SIGNALS_SHADOW")
 
     elapsed = time_mod.time() - start_time
     summary = tracker.get_summary()
@@ -1027,6 +1160,7 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['shadow_trades'] = shadow_count
     summary['strat_model_rejected'] = strat_model_reject_count
     summary['strat_model_shadow_trades'] = strat_model_shadow_count
+    summary['all_signals_shadow_trades'] = all_signals_shadow_count
 
     # ── ML Gate prediction distribution log ─────────────
     if ml_gate_active and ml_predictions:
@@ -1121,6 +1255,30 @@ def run_backtest(config: BacktestConfig) -> dict:
                     l1_shadow_stored += 1
                 if l1_shadow_stored > 0:
                     log.info(f"  [DB] Stored {l1_shadow_stored} L1 strategy model shadow trades in MySQL")
+
+            # ── Store all-signals shadow trades to DB ──
+            if all_signals_shadow_tracker and all_signals_shadow_tracker.closed_trades:
+                all_sig_stored = 0
+                for trade in all_signals_shadow_tracker.closed_trades:
+                    reports = all_signals_shadow_reports.get(trade.ticket, {})
+                    strat_feat = _extract_strategy_features(reports.get('signal'))
+                    store_trade(
+                        trade=trade,
+                        master_report=reports.get('master_report'),
+                        market_report=reports.get('market_report'),
+                        smc_report=reports.get('smc_report'),
+                        flow_data=reports.get('flow'),
+                        run_id=config.run_id,
+                        spread_pips=spread,
+                        slippage_pips=SLIPPAGE_PIPS,
+                        strategy_scores=reports.get('strategy_scores'),
+                        source='SHADOW',
+                        model_predicted_r=reports.get('predicted_r'),
+                        **strat_feat,
+                    )
+                    all_sig_stored += 1
+                if all_sig_stored > 0:
+                    log.info(f"  [DB] Stored {all_sig_stored} all-signals shadow trades in MySQL")
         except Exception as e:
             log.warning(f"  [DB] Could not store trades: {e}")
 
@@ -1177,6 +1335,9 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
     symbol_shadow_trackers = {}  # symbol -> TradeTracker for shadow trades
     symbol_shadow_reports = {}   # symbol -> {ticket -> snapshot}
     symbol_shadow_count = {}     # symbol -> int
+    all_sig_shadow_trackers = {}  # symbol -> TradeTracker for all-signals shadows
+    all_sig_shadow_reports = {}   # symbol -> {ticket -> snapshot}
+    all_sig_shadow_count = {}     # symbol -> int
 
     # ── ML Gate prediction tracking (for distribution analysis) ──
     ml_predictions = []  # Track all predictions across all symbols
@@ -1243,6 +1404,21 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             )
             symbol_shadow_reports[sym] = {}
             symbol_shadow_count[sym] = 0
+
+        # All-signals shadow tracker for this symbol
+        if store_db:
+            all_sig_shadow_trackers[sym] = TradeTracker(
+                starting_balance=STARTING_BALANCE,
+                pip_value_per_lot=pip_value,
+                max_open=9999, max_per_symbol=9999,
+                partial_tp_enabled=PARTIAL_TP_ENABLED,
+                atr_trail_enabled=ATR_TRAIL_ENABLED,
+                dynamic_tp_enabled=DYNAMIC_TP_EXTENSION_ENABLED,
+                dynamic_sizing_enabled=DYNAMIC_SIZING_ENABLED,
+                base_risk_percent=BASE_RISK_PERCENT,
+            )
+            all_sig_shadow_reports[sym] = {}
+            all_sig_shadow_count[sym] = 0
 
         log.info(f"  Loaded {sym}: M1={len(data['M1'])} bars, H1={len(data['H1'])} bars")
 
@@ -1433,6 +1609,40 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         sym, s_m1, s_m5, s_m15, s_h1, s_h4,
                         smc_report, market_report,
                         market_state, session, master_report)
+
+                    # ── Shadow ALL non-best qualifying signals ──
+                    if sym in all_sig_shadow_trackers:
+                        for strat_name, score in all_scores.items():
+                            if score <= 0 or strat_name == best.get('strategy', ''):
+                                continue
+                            try:
+                                sig = _run_one_strategy(
+                                    strat_name, sym,
+                                    s_m1, s_m5, s_m15, s_h1, s_h4,
+                                    smc_report, market_report,
+                                    market_state, session, master_report)
+                                if sig is None:
+                                    continue
+                                if _open_signal_shadow(
+                                        all_sig_shadow_trackers[sym], sig,
+                                        sym, current_time,
+                                        current_bar['close'], symbol_pip[sym],
+                                        symbol_spread[sym], market_report,
+                                        market_state):
+                                    all_sig_shadow_count[sym] += 1
+                                    all_sig_shadow_reports[sym][
+                                        all_sig_shadow_trackers[sym].ticket_counter] = {
+                                        'master_report': master_report,
+                                        'market_report': market_report,
+                                        'smc_report': smc_report,
+                                        'flow': flow,
+                                        'strategy_scores': all_scores,
+                                        'predicted_r': None,
+                                        'signal': sig,
+                                    }
+                            except Exception:
+                                pass
+
                     ml_result = score_signal(
                         best, master_report, market_report,
                         smc_report, flow,
@@ -1605,6 +1815,13 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             symbol_shadow_trackers[sym].close_remaining_at_end(
                 last_bar['time'], float(last_bar['close']),
                 symbol_pip[sym], symbol_pipval[sym])
+        # Close remaining all-signals shadow trades
+        if sym in all_sig_shadow_trackers and all_sig_shadow_trackers[sym].open_trades:
+            data = symbol_data[sym]
+            last_bar = data['M1'].iloc[-1]
+            all_sig_shadow_trackers[sym].close_remaining_at_end(
+                last_bar['time'], float(last_bar['close']),
+                symbol_pip[sym], symbol_pipval[sym])
 
     # ── Build per-symbol summaries + store to DB ────────────
     all_results = []
@@ -1676,6 +1893,30 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         shadow_stored += 1
                     if shadow_stored > 0:
                         log.info(f"  [DB] {sym}: Stored {shadow_stored} shadow trades in MySQL")
+
+                # Store all-signals shadow trades
+                if sym in all_sig_shadow_trackers and all_sig_shadow_trackers[sym].closed_trades:
+                    all_sig_stored = 0
+                    for trade in all_sig_shadow_trackers[sym].closed_trades:
+                        reports = all_sig_shadow_reports.get(sym, {}).get(trade.ticket, {})
+                        strat_feat = _extract_strategy_features(reports.get('signal'))
+                        store_trade(
+                            trade=trade,
+                            master_report=reports.get('master_report'),
+                            market_report=reports.get('market_report'),
+                            smc_report=reports.get('smc_report'),
+                            flow_data=reports.get('flow'),
+                            run_id=run_id,
+                            spread_pips=spread,
+                            slippage_pips=SLIPPAGE_PIPS,
+                            strategy_scores=reports.get('strategy_scores'),
+                            source='SHADOW',
+                            model_predicted_r=reports.get('predicted_r'),
+                            **strat_feat,
+                        )
+                        all_sig_stored += 1
+                    if all_sig_stored > 0:
+                        log.info(f"  [DB] {sym}: Stored {all_sig_stored} all-signals shadow trades in MySQL")
             except Exception as e:
                 log.warning(f"  [DB] {sym}: Could not store trades: {e}")
 
@@ -1683,6 +1924,9 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         if sym in symbol_shadow_trackers and symbol_shadow_trackers[sym].closed_trades:
             _log_shadow_results(symbol_shadow_trackers[sym].closed_trades,
                                 f"{sym} L2_SHADOW")
+        if sym in all_sig_shadow_trackers and all_sig_shadow_trackers[sym].closed_trades:
+            _log_shadow_results(all_sig_shadow_trackers[sym].closed_trades,
+                                f"{sym} ALL_SIGNALS_SHADOW")
 
         all_results.append(summary)
 
