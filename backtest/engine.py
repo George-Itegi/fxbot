@@ -157,6 +157,10 @@ def _open_signal_shadow(tracker, signal, symbol, current_time,
     else:
         st.sl_price = st.entry_price + st.sl_pips * pip_size
         st.tp_price = st.entry_price - st.tp_pips * pip_size
+    # Fix: open_trade() sets original_sl/tp from the passed 0 values;
+    # correct them so dynamic TP extension works properly
+    st.original_sl_price = st.sl_price
+    st.original_tp_price = st.tp_price
 
     return True
 
@@ -479,6 +483,16 @@ def run_backtest(config: BacktestConfig) -> dict:
                     pip_size,
                     pip_value,
                 )
+            # Also check all-signals shadow exits (CRITICAL: was missing)
+            if all_signals_shadow_tracker is not None:
+                all_signals_shadow_tracker.check_exits(
+                    current_time,
+                    float(current_bar['high']),
+                    float(current_bar['low']),
+                    float(current_bar['close']),
+                    pip_size,
+                    pip_value,
+                )
             continue
 
         # ── Skip if we already have too many trades ───────
@@ -674,6 +688,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                                         else:
                                             st.sl_price = st.entry_price + st.sl_pips * pip_size
                                             st.tp_price = st.entry_price - st.tp_pips * pip_size
+                                        st.original_sl_price = st.sl_price
+                                        st.original_tp_price = st.tp_price
                                         strat_model_shadow_count += 1
                                         strat_model_shadow_reports[
                                             strat_model_shadow_tracker.ticket_counter] = {
@@ -982,6 +998,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     else:
                                         st.sl_price = st.entry_price + st.sl_pips * pip_size
                                         st.tp_price = st.entry_price - st.tp_pips * pip_size
+                                    st.original_sl_price = st.sl_price
+                                    st.original_tp_price = st.tp_price
                                     strat_model_shadow_count += 1
                                     strat_model_shadow_reports[
                                         strat_model_shadow_tracker.ticket_counter] = {
@@ -1452,6 +1470,16 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             # Also check shadow trade exits
             if sym in symbol_shadow_trackers:
                 symbol_shadow_trackers[sym].check_exits(
+                    current_time,
+                    float(bar['high']),
+                    float(bar['low']),
+                    float(bar['close']),
+                    symbol_pip[sym],
+                    symbol_pipval[sym],
+                )
+            # Also check all-signals shadow exits (CRITICAL: was missing)
+            if sym in all_sig_shadow_trackers:
+                all_sig_shadow_trackers[sym].check_exits(
                     current_time,
                     float(bar['high']),
                     float(bar['low']),
