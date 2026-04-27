@@ -139,7 +139,7 @@ Examples:
     strat_model_group.add_argument(
         '--use-strategy-models', action='store_true',
         help='Activate Layer 1 per-strategy models (PASS/REJECT before ML Gate). '
-             'Requires trained strategy models (use ai_engine/train_strategy_model.py).')
+             'Requires trained strategy models (use --train-strategy-model first).')
     strat_model_group.add_argument(
         '--strategy-model-status', action='store_true',
         help='Show Layer 1 strategy model status and exit.')
@@ -499,6 +499,7 @@ def main():
                 relaxed_mode=args.relaxed,
                 store_db=args.store_db,
                 use_model=use_model,
+                use_strategy_models=use_strategy_models,
                 run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                 max_trades_per_symbol=args.max_trades if args.max_trades > 0 else 9999,
                 unlimited_positions=args.no_limit,

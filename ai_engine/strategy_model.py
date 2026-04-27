@@ -59,7 +59,7 @@ log = get_logger(__name__)
 MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 
 # ── Thresholds ──
-MIN_TRADES_TO_TRAIN = 80
+MIN_TRADES_TO_TRAIN = 50
 RETRAIN_EVERY_N_TRADES = 50
 
 # ── Regression-specific constants ──

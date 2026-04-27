@@ -39,51 +39,6 @@ RELAXED_MIN_CONFLUENCE = 4
 RELAXED_MIN_RR_RATIO = 1.5
 RELAXED_CONSENSUS_GROUPS = 1  # Only 1 strategy group needed
 
-# ── Dynamic strategy feature extraction ──────────────────
-# Maps strategy names to the feature key they store in the signal dict.
-STRATEGY_FEATURE_KEYS = {
-    'VWAP_MEAN_REVERSION': '_vwap_features',
-    'BREAKOUT_MOMENTUM': '_breakout_features',
-    'SMC_OB_REVERSAL': '_smc_ob_features',
-    'LIQUIDITY_SWEEP_ENTRY': '_liq_sweep_features',
-    'DELTA_DIVERGENCE': '_delta_div_features',
-    'TREND_CONTINUATION': '_trend_cont_features',
-    'FVG_REVERSION': '_fvg_features',
-    'EMA_CROSS_MOMENTUM': '_ema_cross_features',
-    'RSI_DIVERGENCE_SMC': '_rsi_div_features',
-    'STRUCTURE_ALIGNMENT': '_structure_features',
-}
-
-# Maps feature dict keys (no leading underscore) to store_trade() kwarg names.
-FEATURE_KEY_TO_STORE_PARAM = {
-    'vwap_features': 'vwap_features',
-    'breakout_features': 'breakout_features',
-    'smc_ob_features': 'smc_ob_features',
-    'liq_sweep_features': 'liq_sweep_features',
-    'delta_div_features': 'delta_div_features',
-    'trend_cont_features': 'trend_cont_features',
-    'fvg_features': 'fvg_features',
-    'ema_cross_features': 'ema_cross_features',
-    'rsi_div_features': 'rsi_div_features',
-    'structure_features': 'structure_features',
-}
-
-
-def _extract_all_strategy_features(signal_dict):
-    """Extract all strategy-specific features from a signal dict.
-
-    Scans for any ``_xxx_features`` keys present in *signal_dict* and
-    returns a plain dict with the leading underscore stripped so it can
-    be unpacked into report dicts or ``store_trade()`` calls.
-    """
-    features = {}
-    for strategy_name, feature_key in STRATEGY_FEATURE_KEYS.items():
-        if signal_dict.get(feature_key):
-            param_name = feature_key[1:]  # Remove leading underscore
-            features[param_name] = signal_dict[feature_key]
-    return features
-
-
 log = get_logger(__name__)
 
 
@@ -283,8 +238,6 @@ def run_backtest(config: BacktestConfig) -> dict:
     strat_model_shadow_reports = {}
     strat_model_shadow_count = 0
     strat_model_reject_count = 0
-    strat_model_verdict = None
-    strat_model_predicted_r = None
 
     # ── ML Gate prediction tracking ──────────────────────
     ml_predictions = []  # Track all predictions for distribution analysis
@@ -555,7 +508,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                                             'predicted_r': predicted_r if 'predicted_r' in dir() else None,
                                             'strategy_model_verdict': strat_model_verdict,
                                             'strategy_model_predicted_r': strat_model_predicted_r,
-                                            **_extract_all_strategy_features(best_signal),
                                         }
 
                                 if strat_model_shadow_count <= 3 or strat_model_shadow_count % 25 == 0:
@@ -653,7 +605,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     'flow': flow,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
-                                    **_extract_all_strategy_features(best_signal),
                                 }
                         # Log sparingly to avoid spam
                         log_limit = 3 if recommendation == 'CAUTION' else 5
@@ -863,7 +814,6 @@ def run_backtest(config: BacktestConfig) -> dict:
             'predicted_r': best.get('model_predicted_r'),
             'strategy_model_verdict': strat_model_verdict,
             'strategy_model_predicted_r': strat_model_predicted_r,
-            **_extract_all_strategy_features(best),
         }
 
         # ── Store signal metadata for ML training (no DB write) ────────
@@ -922,6 +872,12 @@ def run_backtest(config: BacktestConfig) -> dict:
             log.info(f"  [ML_GATE] Prediction distribution: "
                      f"TAKE={len(takes)} CAUTION={len(cautions)} SKIP={len(skips)} NEUTRAL={len(neutrals)} | "
                      f"R: min={min(all_r):.2f} avg={sum(all_r)/len(all_r):.2f} max={max(all_r):.2f}")
+        if cautions:
+            caution_r = [p['predicted_r'] for p in cautions]
+            log.info(f"  [ML_GATE] CAUTION range: R={min(caution_r):.2f} to {max(caution_r):.2f}")
+        if skips:
+            skip_r = [p['predicted_r'] for p in skips]
+            log.info(f"  [ML_GATE] SKIP range: R={min(skip_r):.2f} to {max(skip_r):.2f}")
 
     # ── Store all completed trades to DB ─
     if config.store_db:
@@ -932,7 +888,6 @@ def run_backtest(config: BacktestConfig) -> dict:
             for trade in tracker.closed_trades:
                 # Use per-trade feature snapshot (captured at entry time)
                 reports = trade_reports.get(trade.ticket, {})
-                _features = {k: reports.get(k) for k in FEATURE_KEY_TO_STORE_PARAM.keys()}
                 store_trade(
                     trade=trade,
                     master_report=reports.get('master_report'),
@@ -944,9 +899,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
                     model_predicted_r=reports.get('predicted_r'),
-                    strategy_model_verdict=reports.get('strategy_model_verdict'),
-                    strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
-                    **_features,
                 )
                 stored += 1
             log.info(f"  [DB] Stored {stored} trades in MySQL")
@@ -956,7 +908,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                 shadow_stored = 0
                 for trade in shadow_tracker.closed_trades:
                     reports = shadow_reports.get(trade.ticket, {})
-                    _features = {k: reports.get(k) for k in FEATURE_KEY_TO_STORE_PARAM.keys()}
                     store_trade(
                         trade=trade,
                         master_report=reports.get('master_report'),
@@ -969,7 +920,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strategy_scores=reports.get('strategy_scores'),
                         source='SHADOW',
                         model_predicted_r=reports.get('predicted_r'),
-                        **_features,
                     )
                     shadow_stored += 1
                 if shadow_stored > 0:
@@ -980,7 +930,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                 l1_shadow_stored = 0
                 for trade in strat_model_shadow_tracker.closed_trades:
                     reports = strat_model_shadow_reports.get(trade.ticket, {})
-                    _features = {k: reports.get(k) for k in FEATURE_KEY_TO_STORE_PARAM.keys()}
                     store_trade(
                         trade=trade,
                         master_report=reports.get('master_report'),
@@ -995,7 +944,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                         model_predicted_r=reports.get('predicted_r'),
                         strategy_model_verdict=reports.get('strategy_model_verdict'),
                         strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
-                        **_features,
                     )
                     l1_shadow_stored += 1
                 if l1_shadow_stored > 0:
@@ -1380,7 +1328,6 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                     'flow': flow,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
-                                    **_extract_all_strategy_features(best),
                                 }
                         continue  # Don't execute as real trade
                 except Exception:
@@ -1458,7 +1405,6 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 # when fib_data_snap was {} (empty dict is falsy in Python).
                 'strategy_scores': snap_scores if store_db else (all_scores if ml_gate_active else None),
                 'predicted_r': best.get('model_predicted_r'),
-                **_extract_all_strategy_features(best),
             }
 
             # Trade metadata saved (no DB write for signals)
@@ -1526,7 +1472,6 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
                         model_predicted_r=reports.get('predicted_r'),
-                        **{k: reports.get(k) for k in FEATURE_KEY_TO_STORE_PARAM.keys()},
                     )
                     stored += 1
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
@@ -1548,7 +1493,6 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             strategy_scores=reports.get('strategy_scores'),
                             source='SHADOW',
                             model_predicted_r=reports.get('predicted_r'),
-                            **{k: reports.get(k) for k in FEATURE_KEY_TO_STORE_PARAM.keys()},
                         )
                         shadow_stored += 1
                     if shadow_stored > 0:

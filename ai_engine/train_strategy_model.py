@@ -96,7 +96,7 @@ def _print_strategy_status():
                     w = r['wins'] or 0
                     wr = round(w/n*100, 1) if n > 0 else 0
                     print(f"  {r['strategy']:30s} {n:>8d} {w:>6d} {wr:>6.1f}% {r['avg_r']:>8s}")
-                    if n >= 80:
+                    if n >= 50:
                         print(f"  {'  ^ MINIMUM FOR TRAINING':>45s}")
                 print()
 
@@ -196,7 +196,7 @@ def _train_strategy(strategy_name: str):
             print(f"  Reason:   {result.get('reason', 'Unknown')}")
             print(f"\n  To fix:")
             print(f"    1. Run: python -m backtest.run --relaxed --store-db --no-limit")
-            print(f"    2. Wait for 80+ trades from {strategy_name}")
+            print(f"    2. Wait for 50+ trades from {strategy_name}")
             print(f"    3. Then re-run this training command")
 
         print("=" * 65 + "\n")
@@ -226,14 +226,14 @@ def _train_all_eligible():
               AND outcome IS NOT NULL
               AND profit_r IS NOT NULL
             GROUP BY strategy
-            HAVING trades >= 80
+            HAVING trades >= 50
             ORDER BY trades ASC
         """)
         eligible = cursor.fetchall()
         conn.close()
 
         if not eligible:
-            print("\n  No strategies have 80+ trades yet.")
+            print("\n  No strategies have 50+ trades yet.")
             print("  Run: python -m backtest.run --relaxed --store-db --no-limit")
             print("=" * 65 + "\n")
             return
@@ -266,7 +266,7 @@ def main():
         help='Show status of all strategy models')
     parser.add_argument(
         '--train-all', action='store_true',
-        help='Train all strategies with 80+ trades in DB')
+        help='Train all strategies with 50+ trades in DB')
 
     args = parser.parse_args()
 
