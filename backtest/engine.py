@@ -486,6 +486,10 @@ def run_backtest(config: BacktestConfig) -> dict:
         combined_bias = master_report.get('combined_bias', 'NEUTRAL')
 
         # ── ML Gate path: collect ALL strategy scores ─────
+        # Initialize L1 model vars (used in both ML Gate and rule-based paths)
+        strat_model_verdict = None
+        strat_model_predicted_r = None
+
         if ml_gate_active:
             try:
                 all_scores = collect_all_strategy_scores(
@@ -519,8 +523,6 @@ def run_backtest(config: BacktestConfig) -> dict:
                 signals_found += 1
 
                 # ── Layer 1 Strategy Model: per-strategy PASS/REJECT ──
-                strat_model_verdict = None
-                strat_model_predicted_r = None
                 if strat_model_mgr is not None and strat_model_mgr.has_model(best_strat_name):
                     try:
                         from ai_engine.ml_gate import extract_features
@@ -803,6 +805,86 @@ def run_backtest(config: BacktestConfig) -> dict:
                     all_scores = None
             else:
                 all_scores = None
+
+            # ── Layer 1 Strategy Model: filter best signal ──
+            best_strat_name = best.get('strategy', '')
+            if strat_model_mgr is not None and strat_model_mgr.has_model(best_strat_name):
+                try:
+                    from ai_engine.ml_gate import extract_features
+                    l1_features = extract_features(
+                        best, master_report, market_report,
+                        smc_report, flow, all_scores or {}, symbol, spread)
+                    if l1_features is not None:
+                        l1_result = strat_model_mgr.evaluate_signal(
+                            best_strat_name, l1_features)
+                        strat_model_verdict = l1_result.get('verdict', 'NO_MODEL')
+                        strat_model_predicted_r = l1_result.get('predicted_r', 0.0)
+
+                        if strat_model_verdict == 'REJECT':
+                            strat_model_reject_count += 1
+                            best['strategy_model_verdict'] = strat_model_verdict
+                            best['strategy_model_predicted_r'] = strat_model_predicted_r
+
+                            # Shadow simulate the L1 rejection
+                            if strat_model_shadow_tracker is not None:
+                                sl_p = best.get('sl_pips', 0)
+                                tp_p = (best.get('tp1_pips', 0)
+                                        or best.get('tp_pips', 0))
+                                if sl_p > 0 and tp_p > 0:
+                                    sh_entry = float(current_bar['close'])
+                                    if best['direction'] == 'BUY':
+                                        sh_entry += total_slippage * pip_size
+                                    else:
+                                        sh_entry -= total_slippage * pip_size
+                                    strat_model_shadow_tracker.open_trade(
+                                        symbol=symbol,
+                                        direction=best['direction'],
+                                        strategy=best_strat_name,
+                                        entry_time=current_time,
+                                        entry_price=sh_entry,
+                                        sl_price=0, tp_price=0,
+                                        sl_pips=sl_p, tp_pips=tp_p,
+                                        score=best.get('score', 0),
+                                        confluence=best.get('confluence', []),
+                                        session=market_report.get('session', 'UNKNOWN'),
+                                        market_state=market_state,
+                                        agreement_groups=1,
+                                        atr_value=0.0,
+                                    )
+                                    st = strat_model_shadow_tracker.open_trades[-1]
+                                    if best['direction'] == 'BUY':
+                                        st.sl_price = st.entry_price - st.sl_pips * pip_size
+                                        st.tp_price = st.entry_price + st.tp_pips * pip_size
+                                    else:
+                                        st.sl_price = st.entry_price + st.sl_pips * pip_size
+                                        st.tp_price = st.entry_price - st.tp_pips * pip_size
+                                    strat_model_shadow_count += 1
+                                    strat_model_shadow_reports[
+                                        strat_model_shadow_tracker.ticket_counter] = {
+                                        'master_report': master_report,
+                                        'market_report': market_report,
+                                        'smc_report': smc_report,
+                                        'flow': flow,
+                                        'strategy_scores': all_scores or {},
+                                        'predicted_r': None,
+                                        'strategy_model_verdict': strat_model_verdict,
+                                        'strategy_model_predicted_r': strat_model_predicted_r,
+                                        'signal': best,
+                                    }
+
+                            if strat_model_shadow_count <= 3 or strat_model_shadow_count % 25 == 0:
+                                log.info(f"  [L1_STRAT_MODEL] REJECT {best_strat_name} "
+                                         f"{best['direction']} "
+                                         f"R={strat_model_predicted_r:.2f}")
+                            continue  # L1 REJECT → shadow, skip execution
+
+                        # L1 PASS
+                        if strat_model_reject_count <= 3 or strat_model_reject_count % 50 == 0:
+                            log.info(f"  [L1_STRAT_MODEL] PASS {best_strat_name} "
+                                     f"{best['direction']} "
+                                     f"R={strat_model_predicted_r:.2f}")
+                except Exception as e:
+                    log.debug(f"  [L1_STRAT_MODEL] Error: {e}")
 
         # ── Check if we can open a trade ─────────────────
         if not tracker.can_open(symbol):
