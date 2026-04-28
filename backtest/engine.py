@@ -180,6 +180,7 @@ class BacktestConfig:
     use_model: bool = False        # Use trained XGBoost model as additional gate
     use_strategy_models: bool = False  # Use Layer 1 per-strategy models
     unlimited_positions: bool = False  # Remove max open position limits
+    no_post_gates: bool = False      # Skip gates 3/4/5, let L1 filter instead
 
 
 def _build_master_report(symbol: str,
@@ -880,7 +881,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             signals_found += 1
 
             # ── Gate 3: Bias direction filter ─────────────
-            if not config.relaxed_mode:
+            if not config.relaxed_mode and not config.no_post_gates:
                 if combined_bias == 'BULLISH':
                     signals = [s for s in signals
                                if s['direction'] == 'BUY']
@@ -892,37 +893,61 @@ def run_backtest(config: BacktestConfig) -> dict:
                     continue
 
             # ── Gate 4: Multi-group consensus ──────────────
-            buy_groups = set(s['group'] for s in signals
-                             if s['direction'] == 'BUY')
-            sell_groups = set(s['group'] for s in signals
-                              if s['direction'] == 'SELL')
+            if not config.no_post_gates:
+                buy_groups = set(s['group'] for s in signals
+                                 if s['direction'] == 'BUY'])
+                sell_groups = set(s['group'] for s in signals
+                                  if s['direction'] == 'SELL'])
 
-            min_groups = (RELAXED_CONSENSUS_GROUPS
-                          if config.relaxed_mode else 2)
+                min_groups = (RELAXED_CONSENSUS_GROUPS
+                              if config.relaxed_mode else 2)
 
-            if (len(buy_groups) >= min_groups
-                    and len(buy_groups) >= len(sell_groups)):
-                final_signals = [s for s in signals
-                                 if s['direction'] == 'BUY']
-                final_groups = buy_groups
-            elif len(sell_groups) >= min_groups:
-                final_signals = [s for s in signals
-                                 if s['direction'] == 'SELL']
-                final_groups = sell_groups
+                if (len(buy_groups) >= min_groups
+                        and len(buy_groups) >= len(sell_groups)):
+                    final_signals = [s for s in signals
+                                     if s['direction'] == 'BUY']
+                    final_groups = buy_groups
+                elif len(sell_groups) >= min_groups:
+                    final_signals = [s for s in signals
+                                     if s['direction'] == 'SELL']
+                    final_groups = sell_groups
+                else:
+                    signals_blocked_consensus += 1
+                    continue
             else:
-                signals_blocked_consensus += 1
-                continue
+                # no_post_gates: pick best BUY or SELL signal by score
+                buy_sigs = [s for s in signals if s['direction'] == 'BUY']
+                sell_sigs = [s for s in signals if s['direction'] == 'SELL']
+                if buy_sigs and sell_sigs:
+                    best_buy = max(buy_sigs, key=lambda s: s['score'])
+                    best_sell = max(sell_sigs, key=lambda s: s['score'])
+                    if best_buy['score'] >= best_sell['score']:
+                        final_signals = [best_buy]
+                        final_groups = {best_buy['group']}
+                    else:
+                        final_signals = [best_sell]
+                        final_groups = {best_sell['group']}
+                elif buy_sigs:
+                    final_signals = buy_sigs
+                    final_groups = set(s['group'] for s in buy_sigs)
+                elif sell_sigs:
+                    final_signals = sell_sigs
+                    final_groups = set(s['group'] for s in sell_sigs)
+                else:
+                    continue
 
             # ── Best signal ──────────────────────────────
             best = max(final_signals, key=lambda s: s['score'])
 
             # ── Gate 5: Confluence check ──────────────────
-            confluence = best.get('confluence', [])
-            min_conv = (RELAXED_MIN_CONFLUENCE
-                        if config.relaxed_mode else MIN_CONFLUENCE)
-            if len(confluence) < min_conv:
-                signals_blocked_confluence += 1
-                continue
+            if not config.no_post_gates:
+                confluence = best.get('confluence', [])
+                min_conv = (RELAXED_MIN_CONFLUENCE
+                            if config.relaxed_mode else MIN_CONFLUENCE)
+                if len(confluence) < min_conv:
+                    signals_blocked_confluence += 1
+                    continue
+
 
             # Collect ALL strategy scores for ML training data
             if config.store_db:
@@ -1332,7 +1357,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                           scan_every: int = 15, relaxed_mode: bool = False,
                           store_db: bool = False, run_id: str = 'default',
                           max_trades_per_symbol: int = 9999,
-                          use_model: bool = False, unlimited_positions: bool = False) -> list:
+                          use_model: bool = False, unlimited_positions: bool = False,
+                          no_post_gates: bool = False) -> list:
     """
     Run all symbols in parallel on the same M1 timeline.
     Each symbol gets its own TradeTracker, strategies scan independently,
@@ -1620,7 +1646,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             stats['signals_found'] += 1
 
             # Gate 3: Bias filter (skip in relaxed)
-            if not relaxed_mode:
+            if not relaxed_mode and not no_post_gates:
                 if combined_bias == 'BULLISH':
                     signals = [s for s in signals if s['direction'] == 'BUY']
                 elif combined_bias == 'BEARISH':
@@ -1630,29 +1656,53 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                     continue
 
             # Gate 4: Consensus
-            buy_groups = set(s['group'] for s in signals if s['direction'] == 'BUY')
-            sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
-            min_groups = RELAXED_CONSENSUS_GROUPS if relaxed_mode else 2
+            if not no_post_gates:
+                buy_groups = set(s['group'] for s in signals if s['direction'] == 'BUY'])
+                sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL'])
+                min_groups = RELAXED_CONSENSUS_GROUPS if relaxed_mode else 2
 
-            if len(buy_groups) >= min_groups and len(buy_groups) >= len(sell_groups):
-                final_signals = [s for s in signals if s['direction'] == 'BUY']
-                final_groups = buy_groups
-            elif len(sell_groups) >= min_groups:
-                final_signals = [s for s in signals if s['direction'] == 'SELL']
-                final_groups = sell_groups
+                if len(buy_groups) >= min_groups and len(buy_groups) >= len(sell_groups):
+                    final_signals = [s for s in signals if s['direction'] == 'BUY']
+                    final_groups = buy_groups
+                elif len(sell_groups) >= min_groups:
+                    final_signals = [s for s in signals if s['direction'] == 'SELL']
+                    final_groups = sell_groups
+                else:
+                    stats['blocked_consensus'] += 1
+                    continue
             else:
-                stats['blocked_consensus'] += 1
-                continue
+                # no_post_gates: pick best BUY or SELL signal by score
+                buy_sigs = [s for s in signals if s['direction'] == 'BUY']
+                sell_sigs = [s for s in signals if s['direction'] == 'SELL']
+                if buy_sigs and sell_sigs:
+                    best_buy = max(buy_sigs, key=lambda s: s['score'])
+                    best_sell = max(sell_sigs, key=lambda s: s['score'])
+                    if best_buy['score'] >= best_sell['score']:
+                        final_signals = [best_buy]
+                        final_groups = {best_buy['group']}
+                    else:
+                        final_signals = [best_sell]
+                        final_groups = {best_sell['group']}
+                elif buy_sigs:
+                    final_signals = buy_sigs
+                    final_groups = set(s['group'] for s in buy_sigs)
+                elif sell_sigs:
+                    final_signals = sell_sigs
+                    final_groups = set(s['group'] for s in sell_sigs)
+                else:
+                    continue
 
             # Best signal
             best = max(final_signals, key=lambda s: s['score'])
 
             # Gate 5: Confluence
-            confluence = best.get('confluence', [])
-            min_conv = RELAXED_MIN_CONFLUENCE if relaxed_mode else MIN_CONFLUENCE
-            if len(confluence) < min_conv:
-                stats['blocked_confluence'] += 1
-                continue
+            if not no_post_gates:
+                confluence = best.get('confluence', [])
+                min_conv = RELAXED_MIN_CONFLUENCE if relaxed_mode else MIN_CONFLUENCE
+                if len(confluence) < min_conv:
+                    stats['blocked_confluence'] += 1
+                    continue
+
 
             # Gate 6: ML Gate filter (if --use-model)
             if ml_gate_active:

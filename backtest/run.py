@@ -111,6 +111,11 @@ Examples:
         '--no-limit', action='store_true',
         help='Remove max open position limits (no cap on total trades, '
              'multiple trades per symbol allowed). Use for data collection.')
+    parser.add_argument(
+        '--no-post-gates', action='store_true',
+        help='Skip post-strategy gates (bias mismatch, consensus, confluence). '
+             'Let L1 strategy models handle filtering instead. '
+             'Requires --use-strategy-models to be effective.')
 
     # ── ML model commands ─────────────────────────────────
     model_group = parser.add_argument_group(
@@ -531,6 +536,7 @@ def main():
                 run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                 max_trades_per_symbol=args.max_trades if args.max_trades > 0 else 9999,
                 unlimited_positions=args.no_limit,
+                no_post_gates=args.no_post_gates,
             )
         else:
             # ── Sequential mode: one symbol at a time (original) ──
@@ -550,6 +556,7 @@ def main():
                     use_strategy_models=use_strategy_models,
                     run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                     unlimited_positions=args.no_limit,
+                    no_post_gates=args.no_post_gates,
                 )
 
                 result = run_backtest(config)
