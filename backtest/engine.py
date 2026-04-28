@@ -344,6 +344,10 @@ def run_backtest(config: BacktestConfig) -> dict:
     signals_blocked_consensus = 0
     signals_blocked_gate = 0
     signals_blocked_score = 0
+    signals_blocked_choppy = 0
+    signals_blocked_bias = 0
+    signals_blocked_confluence = 0
+    signals_no_strategy = 0
     trades_executed = 0
 
     # ── Store feature snapshots per trade (for DB) ─────
@@ -368,6 +372,7 @@ def run_backtest(config: BacktestConfig) -> dict:
     # ── Load ML Gate model if --use-model ────────────────
     ml_gate_active = False
     model_blocked_count = 0
+    model_caution_count = 0
     if config.use_model:
         try:
             from ai_engine.ml_gate import is_model_trained, collect_all_strategy_scores
@@ -557,6 +562,7 @@ def run_backtest(config: BacktestConfig) -> dict:
         # ── Gate 2: Choppy market ─────────────────────────
         is_choppy = flow.get('momentum', {}).get('is_choppy', True)
         if is_choppy and not surge_active:
+            signals_blocked_choppy += 1
             continue
 
         # ── Run strategies ────────────────────────────────
@@ -580,6 +586,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                 non_zero_scores = {k: v for k, v in all_scores.items()
                                    if v and v > 0}
                 if not non_zero_scores:
+                    signals_no_strategy += 1
                     continue
 
                 # Get the actual signal dict for the best strategy
@@ -597,6 +604,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     pass
 
                 if best_signal is None:
+                    signals_no_strategy += 1
                     continue
 
                 signals_found += 1
@@ -752,6 +760,8 @@ def run_backtest(config: BacktestConfig) -> dict:
 
                     if recommendation == 'SKIP':
                         model_blocked_count += 1
+                    elif recommendation == 'CAUTION':
+                        model_caution_count += 1
 
                     # ── CAUTION or SKIP → SHADOW trade (simulate, don't execute) ──
                     # v3.3: ALL non-TAKE signals are shadowed for training data.
@@ -876,6 +886,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                     signals = [s for s in signals
                                if s['direction'] == 'SELL']
                 if not signals:
+                    signals_blocked_bias += 1
                     continue
 
             # ── Gate 4: Multi-group consensus ──────────────
@@ -908,6 +919,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             min_conv = (RELAXED_MIN_CONFLUENCE
                         if config.relaxed_mode else MIN_CONFLUENCE)
             if len(confluence) < min_conv:
+                signals_blocked_confluence += 1
                 continue
 
             # Collect ALL strategy scores for ML training data
@@ -1170,11 +1182,16 @@ def run_backtest(config: BacktestConfig) -> dict:
     summary['signals_blocked_consensus'] = signals_blocked_consensus
     summary['signals_blocked_gate'] = signals_blocked_gate
     summary['signals_blocked_score'] = signals_blocked_score
+    summary['signals_blocked_choppy'] = signals_blocked_choppy
+    summary['signals_blocked_bias'] = signals_blocked_bias
+    summary['signals_blocked_confluence'] = signals_blocked_confluence
+    summary['signals_no_strategy'] = signals_no_strategy
     summary['trades_executed'] = trades_executed
     summary['final_score_avg'] = final_score if trades_executed > 0 else 0
     summary['relaxed_mode'] = config.relaxed_mode
     summary['run_id'] = config.run_id
     summary['model_blocked'] = model_blocked_count
+    summary['model_caution'] = model_caution_count
     summary['shadow_trades'] = shadow_count
     summary['strat_model_rejected'] = strat_model_reject_count
     summary['strat_model_shadow_trades'] = strat_model_shadow_count
@@ -1405,7 +1422,10 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         symbol_stats[sym] = {
             'signals_found': 0, 'blocked_gate': 0,
             'blocked_consensus': 0, 'blocked_score': 0,
+            'blocked_choppy': 0, 'blocked_bias': 0,
+            'blocked_confluence': 0, 'no_strategy': 0,
             'executed': 0, 'model_blocked': 0, 'shadow_trades': 0,
+            'model_caution': 0, 'strat_model_rejected': 0,
         }
         # Shadow tracker for this symbol (only if store_db + model)
         # v3.3: Uses FULL TradeTracker (same features as real trades)
@@ -1561,6 +1581,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             # Gate 2: Choppy
             is_choppy = flow.get('momentum', {}).get('is_choppy', True)
             if is_choppy and not surge_active:
+                stats['blocked_choppy'] += 1
                 continue
 
             # Run strategies
@@ -1603,6 +1624,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 elif combined_bias == 'BEARISH':
                     signals = [s for s in signals if s['direction'] == 'SELL']
                 if not signals:
+                    stats['blocked_bias'] += 1
                     continue
 
             # Gate 4: Consensus
@@ -1627,6 +1649,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             confluence = best.get('confluence', [])
             min_conv = RELAXED_MIN_CONFLUENCE if relaxed_mode else MIN_CONFLUENCE
             if len(confluence) < min_conv:
+                stats['blocked_confluence'] += 1
                 continue
 
             # Gate 6: ML Gate filter (if --use-model)
@@ -1695,6 +1718,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
 
                     if rec == 'SKIP':
                         stats['model_blocked'] += 1
+                    elif rec == 'CAUTION':
+                        stats['model_caution'] += 1
 
                     # v3.3: ALL non-TAKE signals → SHADOW (CAUTION + SKIP)
                     if rec in ('CAUTION', 'SKIP'):
@@ -1866,12 +1891,18 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
         summary['signals_blocked_consensus'] = stats['blocked_consensus']
         summary['signals_blocked_gate'] = stats['blocked_gate']
         summary['signals_blocked_score'] = stats['blocked_score']
+        summary['signals_blocked_choppy'] = stats.get('blocked_choppy', 0)
+        summary['signals_blocked_bias'] = stats.get('blocked_bias', 0)
+        summary['signals_blocked_confluence'] = stats.get('blocked_confluence', 0)
+        summary['signals_no_strategy'] = stats.get('no_strategy', 0)
         summary['trades_executed'] = stats['executed']
         summary['final_score_avg'] = 0
         summary['relaxed_mode'] = relaxed_mode
         summary['run_id'] = run_id
         summary['model_blocked'] = stats.get('model_blocked', 0)
+        summary['model_caution'] = stats.get('model_caution', 0)
         summary['shadow_trades'] = stats.get('shadow_trades', 0)
+        summary['strat_model_rejected'] = stats.get('strat_model_rejected', 0)
 
         # Store trades to DB
         if store_db:

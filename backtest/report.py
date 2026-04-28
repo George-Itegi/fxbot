@@ -14,9 +14,7 @@ def print_summary(summary: dict):
     """Print a formatted performance report for one symbol."""
     if not summary or summary.get('total_trades', 0) == 0:
         print(f"\n  {summary.get('symbol', '?')}: NO TRADES EXECUTED")
-        print(f"  Signals found: {summary.get('signals_found', 0)}")
-        print(f"  Blocked (consensus): {summary.get('signals_blocked_consensus', 0)}")
-        print(f"  Blocked (gates): {summary.get('signals_blocked_gate', 0)}")
+        _print_gate_breakdown(summary)
         return
 
     symbol = summary.get('symbol', '?')
@@ -72,17 +70,7 @@ def print_summary(summary: dict):
     print(f"")
 
     # Signal pipeline stats
-    total_sig = (summary.get('signals_found', 0) +
-                 summary.get('signals_blocked_consensus', 0) +
-                 summary.get('signals_blocked_gate', 0))
-    print(f"  SIGNAL PIPELINE:")
-    print(f"    Total signals found:      {summary.get('signals_found', 0)}")
-    print(f"    Blocked (consensus):     {summary.get('signals_blocked_consensus', 0)}")
-    print(f"    Blocked (gates):         {summary.get('signals_blocked_gate', 0)}")
-    print(f"    Executed:                {summary.get('trades_executed', 0)}")
-    if total_sig > 0:
-        exec_pct = summary.get('trades_executed', 0) / total_sig * 100
-        print(f"    Execution rate:          {exec_pct:.1f}%")
+    _print_gate_breakdown(summary)
 
     # Partial TP stats
     pt = summary.get('partial_tp_stats', {})
@@ -277,3 +265,71 @@ def print_full_report(all_results: list):
         for sess, s in sorted_sess[:5]:
             wr = (s['wins'] / s['trades'] * 100) if s['trades'] > 0 else 0
             print(f"    {sess:<25} {s['trades']:>5} trades  {wr:>5.1f}% WR  ${s['pnl']:>+9.2f}")
+
+
+def _print_gate_breakdown(summary: dict):
+    """Print detailed per-gate rejection breakdown."""
+    if not summary:
+        return
+
+    # Gate counters (pre-strategy gates)
+    g_score = summary.get('signals_blocked_score', 0)
+    g_inst = summary.get('signals_blocked_gate', 0)
+    g_choppy = summary.get('signals_blocked_choppy', 0)
+    g_bias = summary.get('signals_blocked_bias', 0)
+    g_consensus = summary.get('signals_blocked_consensus', 0)
+    g_confluence = summary.get('signals_blocked_confluence', 0)
+    g_no_strat = summary.get('signals_no_strategy', 0)
+    g_l1_reject = summary.get('strat_model_rejected', 0)
+    g_l2_skip = summary.get('model_blocked', 0)
+    g_l2_caution = summary.get('model_caution', 0)
+    signals_found = summary.get('signals_found', 0)
+    executed = summary.get('trades_executed', 0)
+
+    # Total pre-strategy gate blocks
+    total_pre_gates = g_score + g_inst + g_choppy
+
+    # Total post-strategy gate blocks
+    total_post_gates = g_bias + g_consensus + g_confluence + g_no_strat
+
+    # Total ML blocks
+    total_ml = g_l1_reject + g_l2_skip + g_l2_caution
+
+    # Grand total of all blocks + signals
+    total_all = total_pre_gates + total_post_gates + signals_found + total_ml
+
+    print(f"  SIGNAL PIPELINE:")
+    print(f"    Scan bars evaluated:       {total_pre_gates + g_no_strat + total_post_gates + signals_found + total_ml}")
+
+    # Pre-strategy gates
+    print(f"")
+    print(f"    PRE-STRATEGY GATES:")
+    print(f"      Gate 0 (score < min):    {g_score:>6}")
+    print(f"      Gate 1 (no institution): {g_inst:>6}  {'<<< BOTTLENECK' if g_inst > total_pre_gates * 0.6 and total_pre_gates > 0 else ''}")
+    print(f"      Gate 2 (choppy market):  {g_choppy:>6}")
+    print(f"      Subtotal:                 {total_pre_gates:>6}")
+
+    # Post-strategy gates
+    print(f"")
+    print(f"    POST-STRATEGY GATES:")
+    print(f"      No qualifying signals:    {g_no_strat:>6}")
+    print(f"      Gate 3 (bias mismatch):  {g_bias:>6}")
+    print(f"      Gate 4 (no consensus):   {g_consensus:>6}  {'<<< BOTTLENECK' if g_consensus > total_post_gates * 0.6 and total_post_gates > 0 else ''}")
+    print(f"      Gate 5 (low confluence): {g_confluence:>6}")
+    print(f"      Subtotal:                 {total_post_gates:>6}")
+
+    # ML layer
+    print(f"")
+    print(f"    ML LAYERS:")
+    print(f"      Signals reached ML:      {signals_found:>6}")
+    print(f"      L1 Strategy REJECTED:    {g_l1_reject:>6}")
+    print(f"      L2 ML Gate CAUTION:      {g_l2_caution:>6}  (shadowed, not executed)")
+    print(f"      L2 ML Gate SKIP:         {g_l2_skip:>6}  (shadowed, not executed)")
+    ml_survived = signals_found - g_l1_reject - g_l2_skip - g_l2_caution
+    print(f"      ML Survived:             {ml_survived:>6}")
+    print(f"")
+    print(f"    FINAL OUTCOME:")
+    print(f"      Executed:                {executed:>6}")
+    if total_all > 0:
+        exec_pct = executed / total_all * 100
+        print(f"      Execution rate:           {exec_pct:>5.1f}%")
