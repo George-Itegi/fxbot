@@ -193,6 +193,14 @@ def evaluate(symbol: str,
     RSI Divergence + SMC Confirmation Strategy:
     Fires when M15 RSI diverges from price AND SMC structure confirms.
     """
+    # ── Debug: track call count vs signal count ──
+    if not hasattr(evaluate, '_call_count'):
+        evaluate._call_count = 0
+        evaluate._signal_count = 0
+        evaluate._divergence_found = 0
+        evaluate._confluence_pass = 0
+    evaluate._call_count += 1
+
     if df_m15 is None or len(df_m15) < RSI_LOOKBACK + 10:
         return None
     if market_report is None:
@@ -221,7 +229,11 @@ def evaluate(symbol: str,
                                           min_rsi_diff=min_rsi_div)
 
     if divergence is None:
+        log.debug(f"[RSI_DIV] No divergence detected on {symbol} (lookback={swing_lb}, "
+                  f"min_diff={min_rsi_div})")
         return None
+
+    evaluate._divergence_found += 1
 
     direction = divergence['direction']
     div_strength = divergence['strength']
@@ -434,10 +446,15 @@ def evaluate(symbol: str,
     min_score = (MIN_SCORE - 18) if relaxed else MIN_SCORE  # Relaxed: 50 vs 68
 
     if len(confluence) < min_confluence:
+        log.debug(f"[RSI_DIV] {symbol} {direction}: divergence found but only "
+                  f"{len(confluence)}/{min_confluence} confluence ({', '.join(confluence[:5])})")
         return None
 
     if score < min_score:
+        log.debug(f"[RSI_DIV] {symbol} {direction}: score {score} < min {min_score}")
         return None
+
+    evaluate._confluence_pass += 1
 
     # ── Calculate SL/TP ─────────────────────────────────
     entry = close_price
@@ -460,6 +477,14 @@ def evaluate(symbol: str,
     log.info(f"[{STRATEGY_NAME} v{VERSION}] {direction} {symbol}"
              f" entry={entry:.5f} Score:{score} | "
              f"{', '.join(confluence)}")
+
+    # ── Debug summary ──
+    evaluate._signal_count += 1
+    if evaluate._signal_count <= 5 or evaluate._signal_count % 10 == 0:
+        log.info(f"[RSI_DIV] Stats: called={evaluate._call_count} "
+                 f"divergence_found={evaluate._divergence_found} "
+                 f"confluence_passed={evaluate._confluence_pass} "
+                 f"signals_returned={evaluate._signal_count}")
 
     return {
         "direction":   direction,

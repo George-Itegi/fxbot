@@ -1038,7 +1038,8 @@ def collect_all_strategy_scores(symbol: str,
                 scores[name] = signal.get('score', 0)
             else:
                 scores[name] = 0
-        except Exception:
+        except Exception as e:
             scores[name] = 0
+            log.debug(f"[ML_GATE] collect_scores: {name} error: {e}")
 
     return scores
