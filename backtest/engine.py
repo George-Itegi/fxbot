@@ -1263,6 +1263,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                     slippage_pips=SLIPPAGE_PIPS,
                     strategy_scores=reports.get('strategy_scores'),
                     model_predicted_r=reports.get('predicted_r'),
+                    strategy_model_verdict=reports.get('strategy_model_verdict'),
+                    strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                     **strat_feat,
                 )
                 stored += 1
@@ -1286,6 +1288,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strategy_scores=reports.get('strategy_scores'),
                         source='SHADOW',
                         model_predicted_r=reports.get('predicted_r'),
+                        strategy_model_verdict=reports.get('strategy_model_verdict'),
+                        strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                         **strat_feat,
                     )
                     shadow_stored += 1
@@ -1336,6 +1340,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strategy_scores=reports.get('strategy_scores'),
                         source='SHADOW',
                         model_predicted_r=reports.get('predicted_r'),
+                        strategy_model_verdict=reports.get('strategy_model_verdict'),
+                        strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                         **strat_feat,
                     )
                     all_sig_stored += 1
@@ -1977,6 +1983,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         slippage_pips=SLIPPAGE_PIPS,
                         strategy_scores=reports.get('strategy_scores'),
                         model_predicted_r=reports.get('predicted_r'),
+                        strategy_model_verdict=reports.get('strategy_model_verdict'),
+                        strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                         **strat_feat,
                     )
                     stored += 1
@@ -2000,6 +2008,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             strategy_scores=reports.get('strategy_scores'),
                             source='SHADOW',
                             model_predicted_r=reports.get('predicted_r'),
+                            strategy_model_verdict=reports.get('strategy_model_verdict'),
+                            strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                             **strat_feat,
                         )
                         shadow_stored += 1
@@ -2024,6 +2034,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             strategy_scores=reports.get('strategy_scores'),
                             source='SHADOW',
                             model_predicted_r=reports.get('predicted_r'),
+                            strategy_model_verdict=reports.get('strategy_model_verdict'),
+                            strategy_model_predicted_r=reports.get('strategy_model_predicted_r'),
                             **strat_feat,
                         )
                         all_sig_stored += 1
