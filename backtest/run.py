@@ -88,8 +88,8 @@ Examples:
         help='Clear cached data and re-download')
     parser.add_argument(
         '--clear-data', action='store_true',
-        help='Clear all backtest_trades and backtest_signals from DB. '
-             'Use before a fresh data collection run.')
+        help='Clear all backtest DB tables (trades, signals, and all strategy '
+             'feature tables) for a fresh start. Model files are NOT deleted.')
     parser.add_argument(
         '--balance', type=float, default=20000.0,
         help='Starting balance (default: 20000)')
@@ -321,32 +321,60 @@ def _clear_backtest_data():
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
 
+        # All tables to clear
+        tables = [
+            'backtest_trades',
+            'backtest_signals',
+            'backtest_delta_div_features',
+            'backtest_rsi_div_features',
+            'backtest_liq_sweep_features',
+            'backtest_ema_cross_features',
+            'backtest_smc_ob_features',
+            'backtest_structure_features',
+            'backtest_trend_cont_features',
+            'backtest_breakout_features',
+            'backtest_fvg_features',
+            'backtest_vwap_features',
+        ]
+
         # Count before clearing
-        cursor.execute("SELECT COUNT(*) as cnt FROM backtest_trades")
-        trades_count = cursor.fetchone()['cnt']
-        cursor.execute("SELECT COUNT(*) as cnt FROM backtest_signals")
-        signals_count = cursor.fetchone()['cnt']
-
         print(f"\n  Current data:")
-        print(f"    backtest_trades:   {trades_count} rows")
-        print(f"    backtest_signals:  {signals_count} rows")
+        total_rows = 0
+        for table in tables:
+            try:
+                cursor.execute(f"SELECT COUNT(*) as cnt FROM {table}")
+                cnt = cursor.fetchone()['cnt']
+                total_rows += cnt
+                if cnt > 0:
+                    print(f"    {table}:  {cnt} rows")
+            except Exception:
+                pass  # table doesn't exist yet
 
-        if trades_count == 0 and signals_count == 0:
+        if total_rows == 0:
+            print(f"    (empty)")
             print(f"\n  No data to clear.")
             print("="*60 + "\n")
             conn.close()
             return
 
-        # Clear
-        cursor.execute("DELETE FROM backtest_signals")
-        cursor.execute("DELETE FROM backtest_trades")
+        # Clear all tables (TRUNCATE is faster than DELETE and resets AUTO_INCREMENT)
+        for table in tables:
+            try:
+                cursor.execute(f"TRUNCATE TABLE {table}")
+            except Exception:
+                # Table might not exist yet — try DELETE instead
+                try:
+                    cursor.execute(f"DELETE FROM {table}")
+                except Exception:
+                    pass  # table doesn't exist, skip
+
         conn.commit()
         conn.close()
 
-        print(f"\n  Cleared: {trades_count} trades + {signals_count} signals")
+        print(f"\n  Cleared {total_rows} total rows across {len(tables)} tables")
         print(f"  DB is now ready for a fresh data collection run.")
-        print(f"\n  Note: Your trained model (if any) is NOT deleted.")
-        print(f"  The model file (ai_engine/models/xgb_model.pkl) persists.")
+        print(f"\n  Note: Your trained models are NOT deleted.")
+        print(f"  Model files in ai_engine/models/ persist.")
         print(f"  To retrain after collecting new data: --train")
         print("="*60 + "\n")
 
