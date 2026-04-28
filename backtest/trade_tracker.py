@@ -136,7 +136,8 @@ class TradeTracker:
         """Check if we can open a new position."""
         if len(self.open_trades) >= self.max_open:
             return False
-        if any(t.symbol == symbol for t in self.open_trades):
+        open_for_symbol = sum(1 for t in self.open_trades if t.symbol == symbol)
+        if open_for_symbol >= self.max_per_symbol:
             return False
         return True
 
