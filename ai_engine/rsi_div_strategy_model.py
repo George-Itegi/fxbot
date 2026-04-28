@@ -355,6 +355,8 @@ def extract_rsi_div_features_from_db(row: dict) -> dict:
     Falls back to computed defaults for trades without rsi_div feature rows.
     """
     if row.get('div_type') is not None and row.get('div_type') != '':
+        # JOINed data available — use aliased column names to avoid conflicts
+        # with backtest_trades columns (e.g., smc_bias, delta_bias, of_imbalance, pd_zone, is_choppy)
         rf = {
             'div_type': str(row.get('div_type', 'NONE')),
             'div_strength': str(row.get('div_strength', 'NONE')),
@@ -363,14 +365,14 @@ def extract_rsi_div_features_from_db(row: dict) -> dict:
             'prev_rsi': float(row.get('prev_rsi', 50) or 50),
             'price_range_pips': float(row.get('price_range_pips', 0) or 0),
             'smc_confirmed': int(row.get('smc_confirmed', 0) or 0),
-            'smc_bias': str(row.get('smc_bias', 'NEUTRAL')),
+            'smc_bias': str(row.get('rdf_smc_bias', row.get('smc_bias', 'NEUTRAL'))),
             'ob_distance_pips': float(row.get('ob_distance_pips', 0) or 0),
             'fvg_distance_pips': float(row.get('fvg_distance_pips', 0) or 0),
-            'delta_bias': str(row.get('delta_bias', 'NEUTRAL')),
-            'of_imbalance': float(row.get('of_imbalance', 0) or 0),
+            'delta_bias': str(row.get('rdf_delta_bias', row.get('delta_bias', 'NEUTRAL'))),
+            'of_imbalance': float(row.get('rdf_of_imbalance', row.get('of_imbalance', 0)) or 0),
             'stoch_rsi_k': float(row.get('stoch_rsi_k', 50) or 50),
-            'pd_zone': str(row.get('pd_zone', 'NEUTRAL')),
-            'is_choppy': int(row.get('is_choppy', 0) or 0),
+            'pd_zone': str(row.get('rdf_pd_zone', row.get('pd_zone', 'NEUTRAL'))),
+            'is_choppy': int(row.get('rdf_is_choppy', row.get('is_choppy', 0)) or 0),
             'atr_pips': float(row.get('atr_pips', 0) or 0),
         }
     else:

@@ -525,8 +525,100 @@ class StrategyModelManager:
 
         return result
 
+    # Strategy-specific feature table JOINs for _fetch_strategy_trades()
+    # NOTE: Columns that conflict with backtest_trades columns use AS aliases.
+    #       The extraction functions (e.g., extract_delta_div_features_from_db) check
+    #       for 'div_type' to detect if the JOIN succeeded, then read aliased cols.
+    _FEATURE_TABLE_JOINS = {
+        'DELTA_DIVERGENCE': {
+            'table': 'backtest_delta_div_features',
+            'alias': 'ddf',
+            'columns': [
+                'ddf.div_type',
+                'ddf.div_strength',
+                'ddf.swing_range_pips',
+                'ddf.delta_value',
+                'ddf.delta_bias AS ddf_delta_bias',
+                'ddf.of_imbalance AS ddf_of_imbalance',
+                'ddf.of_strength AS ddf_of_strength',
+                'ddf.vol_surge',
+                'ddf.surge_ratio',
+                'ddf.surge_absorption',
+                'ddf.stoch_rsi_k',
+                'ddf.stoch_rsi_turning',
+                'ddf.pd_zone AS ddf_pd_zone',
+                'ddf.m5_body_ratio',
+                'ddf.atr_pips',
+            ],
+        },
+        'RSI_DIVERGENCE_SMC': {
+            'table': 'backtest_rsi_div_features',
+            'alias': 'rdf',
+            'columns': [
+                'rdf.div_type',
+                'rdf.div_strength',
+                'rdf.rsi_diff',
+                'rdf.curr_rsi',
+                'rdf.prev_rsi',
+                'rdf.price_range_pips',
+                'rdf.smc_confirmed',
+                'rdf.smc_bias AS rdf_smc_bias',
+                'rdf.ob_distance_pips',
+                'rdf.fvg_distance_pips',
+                'rdf.delta_bias AS rdf_delta_bias',
+                'rdf.of_imbalance AS rdf_of_imbalance',
+                'rdf.stoch_rsi_k',
+                'rdf.pd_zone AS rdf_pd_zone',
+                'rdf.is_choppy AS rdf_is_choppy',
+                'rdf.atr_pips',
+            ],
+        },
+        'LIQUIDITY_SWEEP_ENTRY': {
+            'table': 'backtest_liq_sweep_features',
+            'alias': 'lsf',
+            'columns': [
+                'lsf.sweep_type',
+                'lsf.sweep_bias',
+                'lsf.sweep_depth_pips',
+                'lsf.equity_proximity',
+                'lsf.htf_ok',
+                'lsf.smc_bias AS lsf_smc_bias',
+                'lsf.pd_zone AS lsf_pd_zone',
+                'lsf.vol_surge',
+                'lsf.of_imbalance AS lsf_of_imbalance',
+                'lsf.atr_pips',
+            ],
+        },
+        'EMA_CROSS_MOMENTUM': {
+            'table': 'backtest_ema_cross_features',
+            'alias': 'ecf',
+            'columns': [
+                'ecf.cross_type',
+                'ecf.ema_spread_9_21',
+                'ecf.ema_spread_21_50',
+                'ecf.price_from_ema9',
+                'ecf.m5_trend_aligned',
+                'ecf.m15_trend_aligned',
+                'ecf.h1_trend_aligned',
+                'ecf.h4_trend_aligned',
+                'ecf.trend_alignment',
+                'ecf.h4_cross_bars_ago',
+                'ecf.h4_supertrend_dir',
+                'ecf.h4_ema_spread_9_21',
+                'ecf.is_choppy AS ecf_is_choppy',
+                'ecf.vol_surge',
+                'ecf.atr_pips',
+            ],
+        },
+    }
+
     def _fetch_strategy_trades(self, strategy_name: str) -> list:
-        """Fetch all trades for a strategy from the database."""
+        """Fetch all trades for a strategy from the database.
+        
+        Includes LEFT JOIN on strategy-specific feature tables when available,
+        so that strategy-specific feature builders (e.g., build_delta_div_feature_vector)
+        can use real feature data instead of falling back to defaults.
+        """
         try:
             from database.db_manager import get_connection
             from backtest.db_store import _ensure_tables
@@ -538,33 +630,64 @@ class StrategyModelManager:
                 pass
 
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
-                SELECT
-                    symbol, direction, strategy, session, market_state,
-                    score, sl_pips, tp_pips, confluence_count,
-                    delta, rolling_delta, delta_bias, rd_bias,
-                    of_imbalance, of_strength, vol_surge_detected, vol_surge_ratio,
-                    momentum_velocity, is_choppy,
-                    smc_bias, pd_zone, pips_to_eq, structure_trend,
-                    atr, pip_from_vwap, pip_to_poc, va_width_pips, price_position,
-                    final_score, market_score, smc_score, htf_approved, htf_score,
-                    combined_bias, agreement_groups,
-                    spread_pips, slippage_pips,
-                    ss_smc_ob, ss_liquidity_sweep, ss_vwap_reversion,
-                    ss_delta_divergence, ss_trend_continuation,
-                    ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
-                    ss_breakout_momentum, ss_structure_align,
-                    profit_pips, profit_r, win,
-                    source, model_predicted_r
-                FROM backtest_trades
-                WHERE strategy = %s
-                  AND source IN ('BACKTEST', 'SHADOW')
-                  AND outcome IS NOT NULL
-                  AND outcome != ''
-                  AND win IS NOT NULL
-                  AND profit_r IS NOT NULL
-                ORDER BY entry_time ASC
-            """, (strategy_name,))
+
+            # Base columns from backtest_trades
+            base_columns = """
+                t.symbol, t.direction, t.strategy, t.session, t.market_state,
+                t.score, t.sl_pips, t.tp_pips, t.confluence_count,
+                t.delta, t.rolling_delta, t.delta_bias, t.rd_bias,
+                t.of_imbalance, t.of_strength, t.vol_surge_detected, t.vol_surge_ratio,
+                t.momentum_velocity, t.is_choppy,
+                t.smc_bias, t.pd_zone, t.pips_to_eq, t.structure_trend,
+                t.atr, t.pip_from_vwap, t.pip_to_poc, t.va_width_pips, t.price_position,
+                t.final_score, t.market_score, t.smc_score, t.htf_approved, t.htf_score,
+                t.combined_bias, t.agreement_groups,
+                t.spread_pips, t.slippage_pips,
+                t.ss_smc_ob, t.ss_liquidity_sweep, t.ss_vwap_reversion,
+                t.ss_delta_divergence, t.ss_trend_continuation,
+                t.ss_fvg_reversion, t.ss_ema_cross, t.ss_rsi_divergence,
+                t.ss_breakout_momentum, t.ss_structure_align,
+                t.profit_pips, t.profit_r, t.win,
+                t.source, t.model_predicted_r
+            """
+
+            # Check if this strategy has a feature table JOIN
+            join_info = self._FEATURE_TABLE_JOINS.get(strategy_name)
+            if join_info:
+                extra_cols = ',\n                '.join(join_info['columns'])
+                join_clause = (
+                    f" LEFT JOIN {join_info['table']} {join_info['alias']} "
+                    f"ON {join_info['alias']}.trade_id = t.id "
+                )
+                query = f"""
+                    SELECT
+                        {base_columns},
+                        {extra_cols}
+                    FROM backtest_trades t
+                    {join_clause}
+                    WHERE t.strategy = %s
+                      AND t.source IN ('BACKTEST', 'SHADOW')
+                      AND t.outcome IS NOT NULL
+                      AND t.outcome != ''
+                      AND t.win IS NOT NULL
+                      AND t.profit_r IS NOT NULL
+                    ORDER BY t.entry_time ASC
+                """
+            else:
+                query = f"""
+                    SELECT
+                        {base_columns}
+                    FROM backtest_trades t
+                    WHERE t.strategy = %s
+                      AND t.source IN ('BACKTEST', 'SHADOW')
+                      AND t.outcome IS NOT NULL
+                      AND t.outcome != ''
+                      AND t.win IS NOT NULL
+                      AND t.profit_r IS NOT NULL
+                    ORDER BY t.entry_time ASC
+                """
+
+            cursor.execute(query, (strategy_name,))
             rows = cursor.fetchall()
             conn.close()
             return rows

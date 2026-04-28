@@ -1673,7 +1673,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                     strat_name, sym,
                                     s_m1, s_m5, s_m15, s_h1, s_h4,
                                     smc_report, market_report,
-                                    market_state, session, master_report)
+                                    market_state, session, master_report,
+                                    relaxed=relaxed_mode)
                                 if sig is None:
                                     continue
                                 if _open_signal_shadow(

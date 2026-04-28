@@ -329,20 +329,22 @@ def extract_delta_div_features_from_db(row: dict) -> dict:
     Falls back to computed defaults for trades without delta_div feature rows.
     """
     if row.get('div_type') is not None and row.get('div_type') != '':
+        # JOINed data available — use aliased column names to avoid conflicts
+        # with backtest_trades columns (e.g., delta_bias, of_imbalance, of_strength, pd_zone)
         df = {
             'div_type': str(row.get('div_type', 'NONE')),
             'div_strength': str(row.get('div_strength', 'NONE')),
             'swing_range_pips': float(row.get('swing_range_pips', 0) or 0),
             'delta_value': float(row.get('delta_value', 0) or 0),
-            'delta_bias': str(row.get('delta_bias', 'NEUTRAL')),
-            'of_imbalance': float(row.get('of_imbalance', 0) or 0),
-            'of_strength': str(row.get('of_strength', 'NONE')),
+            'delta_bias': str(row.get('ddf_delta_bias', row.get('delta_bias', 'NEUTRAL'))),
+            'of_imbalance': float(row.get('ddf_of_imbalance', row.get('of_imbalance', 0)) or 0),
+            'of_strength': str(row.get('ddf_of_strength', row.get('of_strength', 'NONE'))),
             'vol_surge': int(row.get('vol_surge', 0) or 0),
             'surge_ratio': float(row.get('surge_ratio', 1.0) or 1.0),
             'surge_absorption': int(row.get('surge_absorption', 0) or 0),
             'stoch_rsi_k': float(row.get('stoch_rsi_k', 50) or 50),
             'stoch_rsi_turning': int(row.get('stoch_rsi_turning', 0) or 0),
-            'pd_zone': str(row.get('pd_zone', 'NEUTRAL')),
+            'pd_zone': str(row.get('ddf_pd_zone', row.get('pd_zone', 'NEUTRAL'))),
             'm5_body_ratio': float(row.get('m5_body_ratio', 0.5) or 0.5),
             'atr_pips': float(row.get('atr_pips', 0) or 0),
         }

@@ -1022,14 +1022,17 @@ def collect_all_strategy_scores(symbol: str,
 
     for name in strategies:
         try:
-            # Run WITHOUT the hard gates (state/session) so we get scores
-            # even when the strategy would normally be blocked
+            # Run WITH relaxed=True for strategies that need it (DELTA_DIVERGENCE,
+            # RSI_DIVERGENCE_SMC, BREAKOUT_MOMENTUM) so they bypass hard state/session
+            # gates. This ensures we collect scores and shadow data from ALL strategies,
+            # not just the ones whose state gates happen to match the current bar.
             signal = _run_one_strategy(
                 name, symbol,
                 df_m1, df_m5, df_m15, df_h1, df_h4,
                 smc_report, market_report,
                 market_state, session,
-                master_report=master_report)
+                master_report=master_report,
+                relaxed=True)
 
             if signal is not None:
                 scores[name] = signal.get('score', 0)
