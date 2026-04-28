@@ -895,9 +895,9 @@ def run_backtest(config: BacktestConfig) -> dict:
             # ── Gate 4: Multi-group consensus ──────────────
             if not config.no_post_gates:
                 buy_groups = set(s['group'] for s in signals
-                                 if s['direction'] == 'BUY'])
+                                 if s['direction'] == 'BUY')
                 sell_groups = set(s['group'] for s in signals
-                                  if s['direction'] == 'SELL'])
+                                  if s['direction'] == 'SELL')
 
                 min_groups = (RELAXED_CONSENSUS_GROUPS
                               if config.relaxed_mode else 2)
@@ -1663,8 +1663,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
 
             # Gate 4: Consensus
             if not no_post_gates:
-                buy_groups = set(s['group'] for s in signals if s['direction'] == 'BUY'])
-                sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL'])
+                buy_groups = set(s['group'] for s in signals if s['direction'] == 'BUY')
+                sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
                 min_groups = RELAXED_CONSENSUS_GROUPS if relaxed_mode else 2
 
                 if len(buy_groups) >= min_groups and len(buy_groups) >= len(sell_groups):
