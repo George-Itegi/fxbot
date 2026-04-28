@@ -550,14 +550,16 @@ def run_backtest(config: BacktestConfig) -> dict:
             signals_blocked_score += 1
             continue
 
-        # ── Gate 1: Institutional confirmation ────────────
+        # ── Gate 1: Institutional confirmation (SOFT) ──
+        # No longer a hard block — passes through for ML Gate to evaluate.
+        # ML Gate learns when institutional confirmation matters via features.
         imb_strength = flow.get('order_flow_imbalance', {}).get('strength', 'NONE')
         surge_active = flow.get('volume_surge', {}).get('surge_detected', False)
         has_institutional = imb_strength in ('STRONG', 'EXTREME') or surge_active
 
         if not has_institutional:
             signals_blocked_gate += 1
-            continue
+            # SOFT: no continue — signal passes to ML Gate
 
         # ── Gate 2: Choppy market ─────────────────────────
         is_choppy = flow.get('momentum', {}).get('is_choppy', True)
@@ -1569,14 +1571,14 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 stats['blocked_score'] += 1
                 continue
 
-            # Gate 1: Institutional
+            # Gate 1: Institutional (SOFT — no longer blocks)
             imb_strength = flow.get('order_flow_imbalance', {}).get('strength', 'NONE')
             surge_active = flow.get('volume_surge', {}).get('surge_detected', False)
             has_institutional = imb_strength in ('STRONG', 'EXTREME') or surge_active
 
             if not has_institutional:
                 stats['blocked_gate'] += 1
-                continue
+                # SOFT: no continue — signal passes to ML Gate
 
             # Gate 2: Choppy
             is_choppy = flow.get('momentum', {}).get('is_choppy', True)

@@ -119,13 +119,13 @@ def run_strategies(symbol: str,
 
     institutional_confirmed = has_order_flow or has_volume
 
-    # Momentum is a BONUS confirm, not a standalone gate.
-    # But if both OF and volume are present, that's the strongest setup.
+    # Gate 2: Institutional confirmation (SOFT — no longer hard blocks)
+    # Passes through for ML Gate to evaluate. ML learns when this matters.
     if not institutional_confirmed:
         log.debug(f"[ENGINE] {symbol} — no institutional activity "
                   f"(imb={imb_value:+.2f}/{imb_strength}, surge={has_volume}, "
-                  f"scalpable={is_scalpable}) — need OF or volume")
-        return None
+                  f"scalpable={is_scalpable}) — soft pass to ML Gate")
+        # SOFT: no return None — continues to strategy evaluation
 
     # Hard gate: never trade choppy markets
     if is_choppy and not surge_active:

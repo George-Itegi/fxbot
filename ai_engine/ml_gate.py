@@ -74,7 +74,7 @@ RETRAIN_EVERY_N_TRADES = 50  # Auto-retrain frequency
 # ── Regression-specific constants ──
 R_CLIP_MIN = -2.0    # Clip R-multiple outliers below this
 R_CLIP_MAX = 5.0     # Clip R-multiple outliers above this
-TAKE_THRESHOLD = 0.5  # Minimum predicted R to TAKE a trade
+TAKE_THRESHOLD = 0.3  # Minimum predicted R to TAKE a trade (lowered from 0.5)
 CAUTION_THRESHOLD = 0.0  # Below this → SKIP
 
 
