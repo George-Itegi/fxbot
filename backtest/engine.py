@@ -643,6 +643,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     'flow': flow,
                                     'strategy_scores': all_scores,
                                     'predicted_r': None,
+                                    'strategy_model_verdict': None,
+                                    'strategy_model_predicted_r': None,
                                     'signal': sig,
                                 }
                         except Exception:
@@ -812,6 +814,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     'flow': flow,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
+                                    'strategy_model_verdict': strat_model_verdict,
+                                    'strategy_model_predicted_r': strat_model_predicted_r,
                                     'signal': best_signal,  # Full signal with strategy features
                                 }
                         # Log sparingly to avoid spam
@@ -982,6 +986,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                             'flow': flow,
                             'strategy_scores': all_scores or {},
                             'predicted_r': None,
+                            'strategy_model_verdict': strat_model_verdict,
+                            'strategy_model_predicted_r': strat_model_predicted_r,
                             'signal': sig,
                         }
 
@@ -1748,6 +1754,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                         'flow': flow,
                                         'strategy_scores': all_scores,
                                         'predicted_r': None,
+                                        'strategy_model_verdict': None,
+                                        'strategy_model_predicted_r': None,
                                         'signal': sig,
                                     }
                             except Exception:
@@ -1823,6 +1831,8 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                                     'flow': flow,
                                     'strategy_scores': all_scores or {},
                                     'predicted_r': predicted_r,
+                                    'strategy_model_verdict': None,
+                                    'strategy_model_predicted_r': None,
                                     'signal': best,  # Full signal with strategy features
                                 }
                         continue  # Don't execute as real trade
