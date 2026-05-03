@@ -79,7 +79,8 @@ CAUTION_THRESHOLD = 0.0  # Below this → SKIP
 
 
 # ════════════════════════════════════════════════════════════════
-# FEATURE NAMES (63 total) — must match extract_features exactly
+# FEATURE NAMES (71 total) — must match extract_features exactly
+# v3.4: Added 8 hist_ps (pair-strategy historical performance) features
 # ════════════════════════════════════════════════════════════════
 
 FEATURE_NAMES = [
@@ -172,10 +173,23 @@ FEATURE_NAMES = [
     'fib_confluence_score',  # Fibonacci confluence score (0-20)
     'fib_in_golden_zone',    # 1 if price is in 0.618-0.786 golden zone
     'fib_bias_aligned',      # 1 if Fib bias aligns with trade direction
+
+    # ── Group 14: Historical pair-strategy performance (8) ──
+    # Self-improving features: model learns which (symbol, strategy)
+    # combos work well from accumulated backtest data.
+    # Uses rolling windows to avoid look-ahead bias.
+    'hist_ps_avg_r_recent',   # Avg R for (pair, strat) last 30 days
+    'hist_ps_wr_recent',      # Win rate for (pair, strat) last 30 days
+    'hist_ps_trades_recent',  # Trade count for (pair, strat) last 30 days
+    'hist_ps_avg_r_all',      # Avg R for (pair, strat) all-time
+    'hist_ps_wr_all',         # Win rate for (pair, strat) all-time
+    'hist_ps_trades_all',     # Trade count for (pair, strat) all-time
+    'hist_ps_avg_r_decay',    # Exp decay weighted avg R (half-life ~14d)
+    'hist_ps_avg_r_trend',    # Recent - all-time avg R (improving?)
 ]
 
-# Should be 63 features
-assert len(FEATURE_NAMES) == 63, f"Expected 63 features, got {len(FEATURE_NAMES)}"
+# Should be 71 features (63 original + 8 pair-strategy features)
+assert len(FEATURE_NAMES) == 71, f"Expected 71 features, got {len(FEATURE_NAMES)}"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -242,9 +256,11 @@ def extract_features(signal: dict,
                      all_strategy_scores: dict = None,
                      symbol: str = '',
                      spread_pips: float = 0.0,
-                     self_improvement: dict = None) -> np.ndarray:
+                     self_improvement: dict = None,
+                     hist_ps_features: dict = None) -> np.ndarray:
     """
-    Extract 66 numerical features from the full market context.
+    Extract 74 numerical features from the full market context.
+    v3.4: 71 named features + 3 unnamed self-calibration features = 74 total.
 
     Args:
         signal:              The best strategy signal dict (with score, direction, SL/TP, etc.)
@@ -257,9 +273,11 @@ def extract_features(signal: dict,
         symbol:              Symbol name (for symbol type features)
         spread_pips:         Spread at entry
         self_improvement:    Dict with 'recent_wr', 'recent_avg_r', 'strategy_wr'
+        hist_ps_features:    Dict with 8 historical pair-strategy performance features
+                             (from PairStrategyFeatureProvider.get_features)
 
     Returns:
-        np.ndarray of shape (1, 66) or None on error
+        np.ndarray of shape (1, 74) or None on error
     """
     try:
         mr = market_report or {}
@@ -342,7 +360,11 @@ def extract_features(signal: dict,
         recent_avg_r = float(si.get('recent_avg_r', 0.0))
         strategy_wr = float(si.get('strategy_wr', 0.5))
 
-        # ── Build the 63-feature vector ──
+        # ── Historical pair-strategy features ──
+        from ai_engine.pair_strategy_features import PairStrategyFeatureProvider
+        hist_ps = hist_ps_features or PairStrategyFeatureProvider._get_defaults()
+
+        # ── Build the 71-feature vector (+ 3 unnamed self-calibration = 74) ──
         features = [
             # Market quality (7)
             float(master_report.get('final_score', 0)),
@@ -436,6 +458,16 @@ def extract_features(signal: dict,
             1.0 if fib_data.get('in_golden_zone', False) else 0.0,
             1.0 if fib_data.get('fib_bias_aligned', False) else 0.0,
 
+            # Historical pair-strategy performance (8) — v3.4
+            float(hist_ps.get('hist_ps_avg_r_recent', 0.0)),
+            float(hist_ps.get('hist_ps_wr_recent', 0.5)),
+            float(hist_ps.get('hist_ps_trades_recent', 0.0)),
+            float(hist_ps.get('hist_ps_avg_r_all', 0.0)),
+            float(hist_ps.get('hist_ps_wr_all', 0.5)),
+            float(hist_ps.get('hist_ps_trades_all', 0.0)),
+            float(hist_ps.get('hist_ps_avg_r_decay', 0.0)),
+            float(hist_ps.get('hist_ps_avg_r_trend', 0.0)),
+
             # Self-calibration (3) — v3.3: always 0.0 for live scoring
             # (model knows this is a live signal, not historical)
             0.0,  # source: N/A for live (always 0.0)
@@ -450,13 +482,24 @@ def extract_features(signal: dict,
         return None
 
 
-def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.ndarray:
+def extract_features_from_db(row: dict, all_strategy_scores: dict = None,
+                              hist_ps_features: dict = None) -> np.ndarray:
     """
-    Extract 66 features from a backtest_trades DB row.
+    Extract 74 features from a backtest_trades DB row.
+    v3.4: 71 named features + 3 unnamed self-calibration features = 74 total.
     Used for training from stored historical data.
+
+    Args:
+        row:               DB row dict
+        all_strategy_scores: Strategy scores dict (not used for DB rows)
+        hist_ps_features:  Pre-computed dict with 8 hist_ps feature values
     """
     try:
         ss = all_strategy_scores or {}
+
+        # ── Historical pair-strategy features ──
+        from ai_engine.pair_strategy_features import PairStrategyFeatureProvider
+        hist_ps = hist_ps_features or PairStrategyFeatureProvider._get_defaults()
 
         features = [
             # Market quality (7)
@@ -550,6 +593,16 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None) -> np.
             1.0 if row.get('fib_in_golden_zone') else 0.0,
             1.0 if row.get('fib_bias_aligned') else 0.0,
 
+            # Historical pair-strategy performance (8) — v3.4
+            float(hist_ps.get('hist_ps_avg_r_recent', 0.0)),
+            float(hist_ps.get('hist_ps_wr_recent', 0.5)),
+            float(hist_ps.get('hist_ps_trades_recent', 0.0)),
+            float(hist_ps.get('hist_ps_avg_r_all', 0.0)),
+            float(hist_ps.get('hist_ps_wr_all', 0.5)),
+            float(hist_ps.get('hist_ps_trades_all', 0.0)),
+            float(hist_ps.get('hist_ps_avg_r_decay', 0.0)),
+            float(hist_ps.get('hist_ps_avg_r_trend', 0.0)),
+
             # Self-calibration (3) — v3.3: model learns from its own past decisions
             # source: 1.0 if SHADOW (model was unsure), 0.0 if BACKTEST (model was confident)
             1.0 if str(row.get('source', 'BACKTEST')) == 'SHADOW' else 0.0,
@@ -622,18 +675,21 @@ def score_signal(signal: dict,
                  flow_data: dict,
                  all_strategy_scores: dict = None,
                  symbol: str = '',
-                 spread_pips: float = 0.0) -> dict:
+                 spread_pips: float = 0.0,
+                 hist_ps_features: dict = None) -> dict:
     """
     Main scoring function — extract features + predict expected R-multiple.
+    v3.4: Accepts hist_ps_features for pair-strategy awareness.
 
     R-based thresholds:
-      >= 0.5 → TAKE (good edge — expected return is at least 50% of risk)
-      0.0-0.5 → CAUTION (marginal edge — might take with reduced size)
+      >= 0.3 → TAKE (good edge — expected return is at least 30% of risk)
+      0.0-0.3 → CAUTION (marginal edge — shadow-simulated)
       < 0.0   → SKIP (negative or zero expected R)
     """
     features = extract_features(
         signal, master_report, market_report, smc_report,
-        flow_data, all_strategy_scores, symbol, spread_pips)
+        flow_data, all_strategy_scores, symbol, spread_pips,
+        hist_ps_features=hist_ps_features)
 
     if features is None:
         return {
@@ -725,7 +781,7 @@ def train_model(source: str = 'auto') -> dict:
                     ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
                     ss_breakout_momentum, ss_structure_align,
                     profit_pips, profit_r, win,
-                    source, model_predicted_r
+                    source, model_predicted_r, entry_time
                 FROM backtest_trades
                 WHERE source IN ('BACKTEST', 'SHADOW')
                   AND outcome IS NOT NULL
@@ -758,15 +814,24 @@ def train_model(source: str = 'auto') -> dict:
                 'rows': len(rows),
             }
 
+        # ── Pre-compute historical pair-strategy features (v3.4) ──
+        # This is the self-improving feedback loop: each row's features
+        # include stats from all PRIOR trades for the same (symbol, strategy).
+        from ai_engine.pair_strategy_features import compute_hist_ps_for_ml_gate_training
+        log.info(f"[ML_GATE] Pre-computing pair-strategy features for {len(rows)} rows...")
+        hist_ps_map = compute_hist_ps_for_ml_gate_training(rows)
+        log.info(f"[ML_GATE] Pair-strategy features computed for {len(hist_ps_map)} rows")
+
         # ── Build feature matrix + R-multiple target ──
         X = []
         y = []  # R-multiple (continuous target)
         backtest_count = 0
         shadow_count = 0
 
-        for row in rows:
+        for idx, row in enumerate(rows):
             try:
-                features = extract_features_from_db(row)
+                hist_ps = hist_ps_map.get(idx)
+                features = extract_features_from_db(row, hist_ps_features=hist_ps)
                 if features is None:
                     continue
                 r_multiple = float(row.get('profit_r', 0) or 0)
