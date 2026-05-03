@@ -220,15 +220,24 @@ class StrategyModel:
             # ── Build feature matrix from DB rows ──
             # Reuse ML Gate's extract_features_from_db for feature consistency
             from ai_engine.ml_gate import extract_features_from_db
+            from ai_engine.pair_strategy_features import compute_hist_ps_features_for_training
+
+            # ── Pre-compute historical pair-strategy features (v3.4) ──
+            log.info(f"[STRAT_MODEL:{self.strategy_key}] Pre-computing pair-strategy "
+                     f"features for {len(rows)} rows...")
+            hist_ps_map = compute_hist_ps_features_for_training(rows)
+            log.info(f"[STRAT_MODEL:{self.strategy_key}] Pair-strategy features "
+                     f"computed for {len(hist_ps_map)} rows")
 
             X = []
             y = []
             backtest_count = 0
             shadow_count = 0
 
-            for row in rows:
+            for idx, row in enumerate(rows):
                 try:
-                    features = extract_features_from_db(row)
+                    hist_ps = hist_ps_map.get(idx)
+                    features = extract_features_from_db(row, hist_ps_features=hist_ps)
                     if features is None:
                         continue
                     r_multiple = float(row.get('profit_r', 0) or 0)
@@ -651,7 +660,7 @@ class StrategyModelManager:
                 t.ss_fvg_reversion, t.ss_ema_cross, t.ss_rsi_divergence,
                 t.ss_breakout_momentum, t.ss_structure_align,
                 t.profit_pips, t.profit_r, t.win,
-                t.source, t.model_predicted_r
+                t.source, t.model_predicted_r, t.entry_time
             """
 
             # Check if this strategy has a feature table JOIN

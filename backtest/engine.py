@@ -367,6 +367,18 @@ def run_backtest(config: BacktestConfig) -> dict:
     strat_model_shadow_count = 0
     strat_model_reject_count = 0
 
+    # ── Historical Pair-Strategy Feature Provider (v3.4) ──
+    # Pre-loads DB history so models can learn pair-strategy performance
+    # during backtesting. Updated as trades close during the run.
+    hist_ps_provider = None
+    if config.store_db:
+        try:
+            from ai_engine.pair_strategy_features import PairStrategyFeatureProvider
+            hist_ps_provider = PairStrategyFeatureProvider()
+            hist_ps_provider.warmup_from_db()
+        except Exception as e:
+            log.warning(f"  [PAIR_STRAT_FEAT] Failed to initialize: {e}")
+
     # ── ML Gate prediction tracking ──────────────────────
     ml_predictions = []  # Track all predictions for distribution analysis
 
@@ -651,12 +663,22 @@ def run_backtest(config: BacktestConfig) -> dict:
                             pass
 
                 # ── Layer 1 Strategy Model: per-strategy PASS/REJECT ──
+                # Compute pair-strategy features for L1 evaluation
+                hist_ps_feat = None
+                if hist_ps_provider is not None:
+                    try:
+                        hist_ps_feat = hist_ps_provider.get_features(
+                            symbol, best_strat_name, current_time)
+                    except Exception:
+                        pass
+
                 if strat_model_mgr is not None and strat_model_mgr.has_model(best_strat_name):
                     try:
                         from ai_engine.ml_gate import extract_features
                         l1_features = extract_features(
                             best_signal, master_report, market_report,
-                            smc_report, flow, all_scores, symbol, spread)
+                            smc_report, flow, all_scores, symbol, spread,
+                            hist_ps_features=hist_ps_feat)
                         if l1_features is not None:
                             l1_result = strat_model_mgr.evaluate_signal(
                                 best_strat_name, l1_features)
@@ -740,6 +762,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         all_strategy_scores=all_scores,
                         symbol=symbol,
                         spread_pips=spread,
+                        hist_ps_features=hist_ps_feat,
                     )
 
                     predicted_r = ml_result.get('predicted_r', 0.0)
@@ -993,12 +1016,22 @@ def run_backtest(config: BacktestConfig) -> dict:
 
             # ── Layer 1 Strategy Model: filter best signal ──
             best_strat_name = best.get('strategy', '')
+
+            # Compute pair-strategy features for rule-based path too
+            if hist_ps_feat is None and hist_ps_provider is not None:
+                try:
+                    hist_ps_feat = hist_ps_provider.get_features(
+                        symbol, best_strat_name, current_time)
+                except Exception:
+                    pass
+
             if strat_model_mgr is not None and strat_model_mgr.has_model(best_strat_name):
                 try:
                     from ai_engine.ml_gate import extract_features
                     l1_features = extract_features(
                         best, master_report, market_report,
-                        smc_report, flow, all_scores or {}, symbol, spread)
+                        smc_report, flow, all_scores or {}, symbol, spread,
+                        hist_ps_features=hist_ps_feat)
                     if l1_features is not None:
                         l1_result = strat_model_mgr.evaluate_signal(
                             best_strat_name, l1_features)
@@ -1274,6 +1307,11 @@ def run_backtest(config: BacktestConfig) -> dict:
                     **strat_feat,
                 )
                 stored += 1
+                # Feed back to pair-strategy feature provider
+                if hist_ps_provider is not None:
+                    hist_ps_provider.add_trade(
+                        symbol, trade.strategy, trade.entry_time,
+                        trade.profit_r, trade.outcome.startswith('WIN'))
             log.info(f"  [DB] Stored {stored} trades in MySQL")
 
             # ── Store shadow trades to DB ──
@@ -1299,6 +1337,11 @@ def run_backtest(config: BacktestConfig) -> dict:
                         **strat_feat,
                     )
                     shadow_stored += 1
+                    # Feed back to pair-strategy feature provider
+                    if hist_ps_provider is not None:
+                        hist_ps_provider.add_trade(
+                            symbol, trade.strategy, trade.entry_time,
+                            trade.profit_r, trade.outcome.startswith('WIN'))
                 if shadow_stored > 0:
                     log.info(f"  [DB] Stored {shadow_stored} shadow trades in MySQL")
 
@@ -1325,6 +1368,11 @@ def run_backtest(config: BacktestConfig) -> dict:
                         **strat_feat,
                     )
                     l1_shadow_stored += 1
+                    # Feed back to pair-strategy feature provider
+                    if hist_ps_provider is not None:
+                        hist_ps_provider.add_trade(
+                            symbol, trade.strategy, trade.entry_time,
+                            trade.profit_r, trade.outcome.startswith('WIN'))
                 if l1_shadow_stored > 0:
                     log.info(f"  [DB] Stored {l1_shadow_stored} L1 strategy model shadow trades in MySQL")
 
@@ -1351,6 +1399,11 @@ def run_backtest(config: BacktestConfig) -> dict:
                         **strat_feat,
                     )
                     all_sig_stored += 1
+                    # Feed back to pair-strategy feature provider
+                    if hist_ps_provider is not None:
+                        hist_ps_provider.add_trade(
+                            symbol, trade.strategy, trade.entry_time,
+                            trade.profit_r, trade.outcome.startswith('WIN'))
                 if all_sig_stored > 0:
                     log.info(f"  [DB] Stored {all_sig_stored} all-signals shadow trades in MySQL")
         except Exception as e:
@@ -1429,6 +1482,16 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                 log.warning(f"  [ML_GATE] --use-model but no model found")
         except Exception as e:
             log.warning(f"  [ML_GATE] Failed to load: {e}")
+
+    # ── Historical Pair-Strategy Feature Provider (v3.4) ──
+    hist_ps_provider = None
+    if store_db:
+        try:
+            from ai_engine.pair_strategy_features import PairStrategyFeatureProvider
+            hist_ps_provider = PairStrategyFeatureProvider()
+            hist_ps_provider.warmup_from_db()
+        except Exception as e:
+            log.warning(f"  [PAIR_STRAT_FEAT] Failed to initialize: {e}")
 
     for sym in symbols:
         data = load_all_data(sym, start_date, end_date, CACHE_DIR)
@@ -1761,11 +1824,21 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             except Exception:
                                 pass
 
+                    # Compute pair-strategy features for parallel ML Gate
+                    hist_ps_feat = None
+                    if hist_ps_provider is not None:
+                        try:
+                            hist_ps_feat = hist_ps_provider.get_features(
+                                sym, best.get('strategy', ''), current_time)
+                        except Exception:
+                            pass
+
                     ml_result = score_signal(
                         best, master_report, market_report,
                         smc_report, flow,
                         all_strategy_scores=all_scores,
-                        symbol=sym, spread_pips=symbol_spread.get(sym, 0))
+                        symbol=sym, spread_pips=symbol_spread.get(sym, 0),
+                        hist_ps_features=hist_ps_feat)
                     predicted_r = ml_result.get('predicted_r', 0.0)
                     rec = ml_result.get('recommendation', 'SKIP')
                     best['model_predicted_r'] = predicted_r
@@ -1998,6 +2071,11 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         **strat_feat,
                     )
                     stored += 1
+                    # Feed back to pair-strategy feature provider
+                    if hist_ps_provider is not None:
+                        hist_ps_provider.add_trade(
+                            sym, trade.strategy, trade.entry_time,
+                            trade.profit_r, trade.outcome.startswith('WIN'))
                 log.info(f"  [DB] {sym}: Stored {stored} trades in MySQL")
 
                 # Store shadow trades
@@ -2023,6 +2101,11 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             **strat_feat,
                         )
                         shadow_stored += 1
+                        # Feed back to pair-strategy feature provider
+                        if hist_ps_provider is not None:
+                            hist_ps_provider.add_trade(
+                                sym, trade.strategy, trade.entry_time,
+                                trade.profit_r, trade.outcome.startswith('WIN'))
                     if shadow_stored > 0:
                         log.info(f"  [DB] {sym}: Stored {shadow_stored} shadow trades in MySQL")
 
@@ -2049,6 +2132,11 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                             **strat_feat,
                         )
                         all_sig_stored += 1
+                        # Feed back to pair-strategy feature provider
+                        if hist_ps_provider is not None:
+                            hist_ps_provider.add_trade(
+                                sym, trade.strategy, trade.entry_time,
+                                trade.profit_r, trade.outcome.startswith('WIN'))
                     if all_sig_stored > 0:
                         log.info(f"  [DB] {sym}: Stored {all_sig_stored} all-signals shadow trades in MySQL")
             except Exception as e:
