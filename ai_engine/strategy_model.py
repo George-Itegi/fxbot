@@ -84,7 +84,7 @@ STRATEGY_PASS_THRESHOLDS = {
 # Empty list = all strategies active (using per-strategy thresholds above).
 # Add strategy names here to hard-block them (no signals, no shadow trades).
 # DISABLED_STRATEGIES = ['FVG_REVERSION', 'RSI_DIVERGENCE_SMC']  # Uncomment to re-disable
-DISABLED_STRATEGIES = []
+DISABLED_STRATEGIES = ['FVG_REVERSION']
 
 
 class StrategyModel:
