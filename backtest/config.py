@@ -66,8 +66,23 @@ BASE_RISK_PERCENT = 1.0   # Default 1% risk per trade
 
 # --- Partial TP (matches live v4.4) ---
 PARTIAL_TP_ENABLED = True
-PARTIAL_TP_RATIO = 0.50       # Close 50% at 1R
+PARTIAL_TP_RATIO = 0.50       # Close 50% at 1R (default)
 PARTIAL_TP_AT_R_MULTIPLE = 1.0  # Trigger at 1R profit
+
+# --- Per-Strategy TP2 Primary Target ---
+# When True, engine uses tp2_pips as the main TP target instead of tp1_pips.
+# The existing partial TP mechanism triggers at 1R (=TP1 distance for
+# strategies with SL == TP1 distance like LIQUIDITY_SWEEP v2.1).
+STRATEGY_TP2_PRIMARY = {
+    'LIQUIDITY_SWEEP_ENTRY': True,  # TP2=3.0xATR as main target
+}
+
+# --- Per-Strategy Partial TP Ratio Override ---
+# Allows strategies to use different partial close sizes.
+# LIQUIDITY_SWEEP: 33% at TP1, trail remaining 67% to TP2.
+STRATEGY_PARTIAL_TP_RATIO = {
+    'LIQUIDITY_SWEEP_ENTRY': 0.33,  # Close 33% at TP1, trail rest
+}
 
 # --- ATR Trailing Stop (matches live) ---
 ATR_TRAIL_ENABLED = True

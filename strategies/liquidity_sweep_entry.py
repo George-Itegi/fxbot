@@ -1,5 +1,5 @@
 # =============================================================
-# strategies/liquidity_sweep_entry.py  v2.0
+# strategies/liquidity_sweep_entry.py  v2.1
 # Strategy 3: Liquidity Sweep Entry
 # Price sweeps a liquidity pool then reverses with BOS confirmation.
 #
@@ -8,6 +8,13 @@
 #   2. Order flow reversal is MANDATORY (delta must confirm reversal)
 #   3. Volume surge is mandatory (institutional participation required)
 #   4. Added BOS as mandatory confirmation (structural shift required)
+#
+# v2.1 CHANGES (LIQUIDITY_SWEEP calibration fix):
+#   1. SL widened from 0.3xATR to 1.5xATR (was too tight, causing
+#      premature stops despite 59.9% WR on shadow trades)
+#   2. TP1 stays at 1.5xATR (= 1R with new SL) — used as partial TP
+#   3. TP2 stays at 3.0xATR (= 2R) — used as final target by engine
+#   4. Engine wired to use TP2 as primary target + 33% partial at TP1
 # =============================================================
 
 import pandas as pd
@@ -17,7 +24,7 @@ log = get_logger(__name__)
 
 STRATEGY_NAME = "LIQUIDITY_SWEEP_ENTRY"
 MIN_SCORE     = 70
-VERSION       = "2.0"
+VERSION       = "2.1"
 
 
 def evaluate(symbol: str,
@@ -201,7 +208,9 @@ def evaluate(symbol: str,
         if score >= MIN_SCORE:
             # Entry near swept level (better R:R than arbitrary candle close)
             entry_price = max(current_price, float(swept_level))
-            sl_price  = round(float(swept_level) - atr_pips * 0.3 * pip_size, 5)
+            # v2.1: SL widened to 1.5xATR (was 0.3xATR — too tight,
+            # causing -0.12 avg R despite 59.9% WR on shadow trades)
+            sl_price  = round(entry_price - atr_pips * 1.5 * pip_size, 5)
             tp1_price = round(entry_price + atr_pips * 1.5 * pip_size, 5)
             tp2_price = round(entry_price + atr_pips * 3.0 * pip_size, 5)
             sl_pips   = round((entry_price - sl_price) / pip_size, 1)
@@ -312,7 +321,8 @@ def evaluate(symbol: str,
 
         if score >= MIN_SCORE:
             entry_price = min(current_price, float(swept_level))
-            sl_price  = round(float(swept_level) + atr_pips * 0.3 * pip_size, 5)
+            # v2.1: SL widened to 1.5xATR (was 0.3xATR — too tight)
+            sl_price  = round(entry_price + atr_pips * 1.5 * pip_size, 5)
             tp1_price = round(entry_price - atr_pips * 1.5 * pip_size, 5)
             tp2_price = round(entry_price - atr_pips * 3.0 * pip_size, 5)
             sl_pips   = round((sl_price - entry_price) / pip_size, 1)

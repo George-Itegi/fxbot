@@ -53,7 +53,8 @@ class BacktestTrade:
     partial_tp_time: datetime.datetime = None
     partial_tp_price: float = 0.0
     partial_tp_pips: float = 0.0
-    partial_tp_usd: float = 0.0   # Profit from the closed 50%
+    partial_tp_usd: float = 0.0   # Profit from the closed portion
+    partial_tp_ratio: float = 0.50  # Per-trade override (default 50%)
 
     # ATR trailing
     trail_activated: bool = False
@@ -146,7 +147,8 @@ class TradeTracker:
                    tp_pips: float, score: int, confluence: list,
                    session: str, market_state: str,
                    agreement_groups: int = 2,
-                   atr_value: float = 0.0) -> BacktestTrade:
+                   atr_value: float = 0.0,
+                   partial_tp_ratio: float = 0.0) -> BacktestTrade:
         """Record a new trade opening."""
         self.ticket_counter += 1
 
@@ -166,6 +168,13 @@ class TradeTracker:
         if self.atr_trail_enabled and atr_value > 0:
             from backtest.config import ATR_TRAIL_MULTIPLIER
             trail_distance = atr_value * ATR_TRAIL_MULTIPLIER
+
+        # Per-trade partial TP ratio override
+        if partial_tp_ratio > 0:
+            trade_partial_ratio = partial_tp_ratio
+        else:
+            from backtest.config import PARTIAL_TP_RATIO
+            trade_partial_ratio = PARTIAL_TP_RATIO
 
         trade = BacktestTrade(
             ticket=self.ticket_counter,
@@ -189,6 +198,7 @@ class TradeTracker:
             risk_percent=risk_percent,
             conviction=conviction,
             trail_distance=trail_distance,
+            partial_tp_ratio=trade_partial_ratio,
         )
         self.open_trades.append(trade)
         return trade
@@ -209,8 +219,7 @@ class TradeTracker:
         5. Apply ATR trailing
         6. Apply dynamic TP extension
         """
-        from backtest.config import (PARTIAL_TP_ENABLED, PARTIAL_TP_RATIO,
-                                     PARTIAL_TP_AT_R_MULTIPLE,
+        from backtest.config import (PARTIAL_TP_ENABLED, PARTIAL_TP_AT_R_MULTIPLE,
                                      DYNAMIC_TP_TRIGGER_PCT,
                                      DYNAMIC_TP_MULTIPLIER_ATR)
 
@@ -250,8 +259,8 @@ class TradeTracker:
                 # P&L for full position (if no partial TP was triggered)
                 # Or for remaining 50% (if partial TP was triggered)
                 if trade.partial_tp_triggered:
-                    # Remaining 50% hit TP/SL
-                    remaining_lot = trade.lot_size * (1.0 - PARTIAL_TP_RATIO)
+                    # Remaining portion hit TP/SL
+                    remaining_lot = trade.lot_size * (1.0 - trade.partial_tp_ratio)
                     trade.profit_usd = trade.profit_pips * pip_value * remaining_lot
                     trade.outcome = 'WIN_TRAIL_TP' if trade.trail_activated else 'WIN_TP_REMAINING'
                     trade.exit_reason = 'EXTENDED_TP' if trade.tp_extended else 'TP'
@@ -277,7 +286,7 @@ class TradeTracker:
 
                 if trade.partial_tp_triggered:
                     # Only 50% remaining — reduced loss
-                    remaining_lot = trade.lot_size * (1.0 - PARTIAL_TP_RATIO)
+                    remaining_lot = trade.lot_size * (1.0 - trade.partial_tp_ratio)
                     trade.profit_usd = trade.profit_pips * pip_value * remaining_lot
                     trade.outcome = 'LOSS_SL_PARTIAL'
                 else:
@@ -310,7 +319,7 @@ class TradeTracker:
                     else:
                         trade.partial_tp_price = trade.entry_price - one_r_pips * pip_size
 
-                    partial_lot = trade.lot_size * PARTIAL_TP_RATIO
+                    partial_lot = trade.lot_size * trade.partial_tp_ratio
                     trade.partial_tp_usd = current_profit_pips * pip_value * partial_lot
 
                     # Move SL to breakeven (entry price + 0.5 pip buffer)
@@ -324,8 +333,9 @@ class TradeTracker:
                     self.balance += trade.partial_tp_usd
                     self.equity_curve.append((bar_time, self.balance))
 
+                    close_pct = int(trade.partial_tp_ratio * 100)
                     log.info(f"  [Partial TP] {trade.symbol} {trade.direction} "
-                             f"closed 50% at {trade.partial_tp_pips:.1f} pips "
+                             f"closed {close_pct}% at {trade.partial_tp_pips:.1f} pips "
                              f"(${trade.partial_tp_usd:+.2f}), SL → BE")
 
             # ── ATR Trailing Stop (only after partial TP triggered) ──
@@ -391,7 +401,7 @@ class TradeTracker:
             trade.profit_pips = self._calc_profit_pips(trade, trade.exit_price, pip_size)
             trade.profit_r = trade.profit_pips / trade.sl_pips if trade.sl_pips > 0 else 0
 
-            remaining_lot = trade.lot_size * (1.0 - 0.5) if trade.partial_tp_triggered else trade.lot_size
+            remaining_lot = trade.lot_size * (1.0 - trade.partial_tp_ratio) if trade.partial_tp_triggered else trade.lot_size
             trade.profit_usd = trade.profit_pips * pip_value * remaining_lot
             trade.outcome = 'WIN' if trade.profit_pips > 0 else 'LOSS'
             trade.exit_reason = 'END_OF_DATA'
