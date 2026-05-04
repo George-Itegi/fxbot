@@ -30,6 +30,7 @@ from backtest.config import (
     DYNAMIC_SIZING_ENABLED, BASE_RISK_PERCENT, MIN_CONFLUENCE,
     MIN_RR_RATIO, MASTER_MIN_SCORE, MAX_OPEN_TRADES, MAX_PER_SYMBOL,
     CONVICTION_LOW_SCORE_MAX, CONVICTION_MED_SCORE_MAX,
+    STRATEGY_TP2_PRIMARY, STRATEGY_PARTIAL_TP_RATIO,
 )
 from core.pip_utils import get_pip_size
 
@@ -38,6 +39,33 @@ RELAXED_MIN_SCORE = 35
 RELAXED_MIN_CONFLUENCE = 4
 RELAXED_MIN_RR_RATIO = 1.5
 RELAXED_CONSENSUS_GROUPS = 1  # Only 1 strategy group needed
+
+
+def _resolve_tp_and_partial(strategy_name: str, signal: dict):
+    """
+    Resolve effective TP pips and partial TP ratio for a strategy.
+
+    For strategies in STRATEGY_TP2_PRIMARY, uses tp2_pips as the main
+    target (partial TP triggers at 1R = TP1 distance, final target = TP2).
+    Others use tp1_pips as before.
+
+    Returns (tp_pips, partial_tp_ratio) tuple.
+    """
+    sl_pips = signal.get('sl_pips', 0)
+    tp1_pips = signal.get('tp1_pips', 0)
+    tp2_pips = signal.get('tp2_pips', 0)
+    fallback_tp = signal.get('tp_pips', 0)
+
+    # Use TP2 as primary target if configured for this strategy
+    if tp2_pips > 0 and STRATEGY_TP2_PRIMARY.get(strategy_name, False):
+        effective_tp_pips = tp2_pips
+    else:
+        effective_tp_pips = tp1_pips or fallback_tp
+
+    # Per-strategy partial TP ratio
+    partial_ratio = STRATEGY_PARTIAL_TP_RATIO.get(strategy_name, 0.0)
+
+    return effective_tp_pips, partial_ratio
 
 # Strategy feature keys embedded in signal dicts by each strategy
 _STRATEGY_FEATURE_KEYS = {
@@ -118,14 +146,28 @@ log = get_logger(__name__)
 
 def _open_signal_shadow(tracker, signal, symbol, current_time,
                         bar_close, pip_size, total_slippage,
-                        market_report, market_state):
+                        market_report, market_state,
+                        tp_pips: float = 0, partial_tp_ratio: float = 0.0):
     """
     Open a shadow trade from a signal dict.
     Returns True if the shadow trade was successfully opened.
+
+    Args:
+        tp_pips: Pre-resolved TP pips (may be tp1 or tp2 depending on strategy config).
+                 If 0, falls back to signal's tp1_pips.
+        partial_tp_ratio: Per-strategy partial TP ratio override (0 = use default).
     """
     sl_p = signal.get('sl_pips', 0)
-    tp_p = signal.get('tp1_pips', 0) or signal.get('tp_pips', 0)
-    if sl_p <= 0 or tp_p <= 0:
+    if sl_p <= 0:
+        return False
+
+    # Use pre-resolved tp_pips, or fall back to signal's tp1_pips
+    if tp_pips <= 0:
+        tp_p = signal.get('tp1_pips', 0) or signal.get('tp_pips', 0)
+    else:
+        tp_p = tp_pips
+
+    if tp_p <= 0:
         return False
 
     sh_entry = float(bar_close)
@@ -148,6 +190,7 @@ def _open_signal_shadow(tracker, signal, symbol, current_time,
         market_state=market_state,
         agreement_groups=1,
         atr_value=0.0,
+        partial_tp_ratio=partial_tp_ratio,
     )
 
     st = tracker.open_trades[-1]
@@ -640,12 +683,17 @@ def run_backtest(config: BacktestConfig) -> dict:
                                 relaxed=config.relaxed_mode)
                             if sig is None:
                                 continue
+                            # Resolve TP and partial ratio for this strategy
+                            sig_tp_pips, sig_partial = _resolve_tp_and_partial(
+                                strat_name, sig)
                             if _open_signal_shadow(
                                     all_signals_shadow_tracker, sig,
                                     symbol, current_time,
                                     current_bar['close'], pip_size,
                                     total_slippage, market_report,
-                                    market_state):
+                                    market_state,
+                                    tp_pips=sig_tp_pips,
+                                    partial_tp_ratio=sig_partial):
                                 all_signals_shadow_count += 1
                                 all_signals_shadow_reports[
                                     all_signals_shadow_tracker.ticket_counter] = {
@@ -692,9 +740,10 @@ def run_backtest(config: BacktestConfig) -> dict:
 
                                 # Shadow simulate the L1 rejection
                                 if strat_model_shadow_tracker is not None:
+                                    l1_tp_pips, l1_partial = _resolve_tp_and_partial(
+                                        best_strat_name, best_signal)
                                     sl_p = best_signal.get('sl_pips', 0)
-                                    tp_p = (best_signal.get('tp1_pips', 0)
-                                            or best_signal.get('tp_pips', 0))
+                                    tp_p = l1_tp_pips
                                     if sl_p > 0 and tp_p > 0:
                                         sh_entry = float(current_bar['close'])
                                         if best_signal['direction'] == 'BUY':
@@ -715,6 +764,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                                             market_state=market_state,
                                             agreement_groups=1,
                                             atr_value=0.0,
+                                            partial_tp_ratio=l1_partial,
                                         )
                                         st = strat_model_shadow_tracker.open_trades[-1]
                                         if best_signal['direction'] == 'BUY':
@@ -799,8 +849,10 @@ def run_backtest(config: BacktestConfig) -> dict:
                     # This gives the model learning signal from its rejections too.
                     if recommendation in ('CAUTION', 'SKIP'):
                         if shadow_tracker is not None:
+                            gate_tp_pips, gate_partial = _resolve_tp_and_partial(
+                                best_strat_name, best_signal)
                             sl_p = best_signal.get('sl_pips', 0)
-                            tp_p = best_signal.get('tp1_pips', 0) or best_signal.get('tp_pips', 0)
+                            tp_p = gate_tp_pips
                             if sl_p > 0 and tp_p > 0:
                                 sh_entry = float(current_bar['close'])
                                 if best_signal['direction'] == 'BUY':
@@ -821,6 +873,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     market_state=market_state,
                                     agreement_groups=1,
                                     atr_value=0.0,
+                                    partial_tp_ratio=gate_partial,
                                 )
                                 # Fix SL/TP prices after open
                                 st = shadow_tracker.open_trades[-1]
@@ -1122,10 +1175,11 @@ def run_backtest(config: BacktestConfig) -> dict:
             entry_price -= total_slippage * pip_size
 
         sl_pips = best.get('sl_pips', 0)
-        tp1_pips = best.get('tp1_pips', 0)
 
-        # Also check tp_pips (some strategies use this field)
-        tp_pips = tp1_pips or best.get('tp_pips', 0)
+        # Resolve TP: use TP2 for strategies configured for it, TP1 otherwise
+        exec_strategy_name = best.get('strategy', 'UNKNOWN')
+        tp_pips, exec_partial_ratio = _resolve_tp_and_partial(
+            exec_strategy_name, best)
 
         # Validate SL/TP
         if sl_pips <= 0 or tp_pips <= 0:
@@ -1152,7 +1206,7 @@ def run_backtest(config: BacktestConfig) -> dict:
         tracker.open_trade(
             symbol=symbol,
             direction=best['direction'],
-            strategy=best.get('strategy', 'UNKNOWN'),
+            strategy=exec_strategy_name,
             entry_time=current_time,
             entry_price=entry_price,
             sl_price=sl_price,
@@ -1165,6 +1219,7 @@ def run_backtest(config: BacktestConfig) -> dict:
             market_state=market_state,
             agreement_groups=agreement_groups,
             atr_value=atr_value,
+            partial_tp_ratio=exec_partial_ratio,
         )
         trades_executed += 1
 
