@@ -25,19 +25,20 @@ import datetime
 # ]
 
 SYMBOLS = [
-    # JPY Crosses (Priority - High Volatility Trenders)
-    "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "CHFJPY", "NZDJPY",
+    # JPY Crosses (Core Edge)
+    "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "CHFJPY",
     
-    # USD Majors (Liquid, Reliable Trends)
-    "EURUSD", "GBPUSD", "AUDUSD",
+    # GBP Base (Secondary Edge)
+    "GBPUSD", "GBPAUD", "GBPCAD", "GBPNZD",
     
-    # Other Crosses (Added for Trend Diversity)
-    "EURGBP", "GBPAUD", "AUDCAD", "GBPNZD", "GBPCAD", "EURNZD",
+    # Crosses
+    "AUDCAD", "EURGBP",
     
-    # Commodities (High Volatility)
+    # Metals
     "XAGUSD",  # Silver
-    "XAUUSD",  # Gold ⭐ NEW
+    "XAUUSD",  # Gold
 ]
+# v2.0 17-pair validation: removed AUDUSD/EURUSD/NZDJPY/EURNZD (0% WR, -$2,131 combined)
 # --- Timeframes to download ---
 TIMEFRAMES = ["M1", "M5", "M15", "H1", "H4"]
 
@@ -67,18 +68,17 @@ START_DATE = END_DATE - datetime.timedelta(days=180)  # 6 months
 # }
 
 AVG_SPREAD_PIPS = {
-    # JPY Crosses
+    # JPY Crosses (Core Edge)
     "EURJPY": 0.3,  "GBPJPY": 0.7,  "AUDJPY": 0.4,
-    "CADJPY": 0.5,  "CHFJPY": 0.6,  "NZDJPY": 0.8,
+    "CADJPY": 0.5,  "CHFJPY": 0.6,
     
-    # USD Majors
-    "EURUSD": 0.1,  "GBPUSD": 0.2,  "AUDUSD": 0.2,
+    # GBP Base (Secondary Edge)
+    "GBPUSD": 0.2,  "GBPAUD": 0.7,  "GBPCAD": 1.0,  "GBPNZD": 2.2,
     
-    # Other Crosses
-    "EURGBP": 0.3,  "GBPAUD": 0.7,  "AUDCAD": 0.4,
-    "GBPNZD": 2.2,  "GBPCAD": 1.0,  "EURNZD": 1.2,
+    # Crosses
+    "EURGBP": 0.3,  "AUDCAD": 0.4,
     
-    # Commodities
+    # Metals
     "XAGUSD": 2.0,   # Silver: ~0.020 USD
     "XAUUSD": 0.4,   # Gold: ~0.40 USD (IC Markets quotes to 2 decimals; 1 pip = 0.01)
     
