@@ -74,7 +74,7 @@ PASS_THRESHOLD = 0.2  # Default — lower than Layer 2's 0.5, L1 is permissive
 # ── Per-strategy threshold overrides ──
 # Strategies with weaker edge need higher thresholds to avoid marginal trades.
 STRATEGY_PASS_THRESHOLDS = {
-    'EMA_CROSS_MOMENTUM': 0.65,   # Raised from 0.2 — too many marginal signals (31.6% WR, +0.11R avg)
+    'EMA_CROSS_MOMENTUM': 0.3,    # Raised from 0.2 — trim marginal trades without killing the strategy
     # All other strategies use PASS_THRESHOLD (0.2)
 }
 
