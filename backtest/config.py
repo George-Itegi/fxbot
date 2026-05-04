@@ -26,19 +26,17 @@ import datetime
 
 SYMBOLS = [
     # JPY Crosses (Core Edge)
-    "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "CHFJPY",
-    
+    "CHFJPY", "EURJPY", "GBPJPY", "AUDJPY", "CADJPY",
+
     # GBP Base (Secondary Edge)
-    "GBPUSD", "GBPAUD", "GBPCAD", "GBPNZD",
-    
-    # Crosses
-    "AUDCAD", "EURGBP",
-    
-    # Metals
+    "GBPUSD", "GBPNZD",
+
+    # Commodities
     "XAGUSD",  # Silver
-    "XAUUSD",  # Gold
 ]
-# v2.0 17-pair validation: removed AUDUSD/EURUSD/NZDJPY/EURNZD (0% WR, -$2,131 combined)
+# v2.0: 8-pair optimized portfolio (removed GBPAUD/GBPCAD/XAUUSD/EURGBP/AUDCAD)
+# Cut pairs: negative P&L, low Sharpe, or structural dependency (see config/settings.py)
+# Cut sessions: NY_AFTERNOON and SYDNEY — enforced in data_loader.py _tag_session
 # --- Timeframes to download ---
 TIMEFRAMES = ["M1", "M5", "M15", "H1", "H4"]
 
@@ -69,19 +67,15 @@ START_DATE = END_DATE - datetime.timedelta(days=180)  # 6 months
 
 AVG_SPREAD_PIPS = {
     # JPY Crosses (Core Edge)
-    "EURJPY": 0.3,  "GBPJPY": 0.7,  "AUDJPY": 0.4,
-    "CADJPY": 0.5,  "CHFJPY": 0.6,
-    
+    "CHFJPY": 0.6,  "EURJPY": 0.3, "GBPJPY": 0.7,
+    "AUDJPY": 0.4, "CADJPY": 0.5,
+
     # GBP Base (Secondary Edge)
-    "GBPUSD": 0.2,  "GBPAUD": 0.7,  "GBPCAD": 1.0,  "GBPNZD": 2.2,
-    
-    # Crosses
-    "EURGBP": 0.3,  "AUDCAD": 0.4,
-    
-    # Metals
+    "GBPUSD": 0.2, "GBPNZD": 2.2,
+
+    # Commodities
     "XAGUSD": 2.0,   # Silver: ~0.020 USD
-    "XAUUSD": 0.4,   # Gold: ~0.40 USD (IC Markets quotes to 2 decimals; 1 pip = 0.01)
-    
+
     # Fallback
     "DEFAULT": 0.5,
 }
@@ -163,15 +157,14 @@ STRATEGIES_FILTER = []
 # For JPY pairs = varies (~$6.50-$9.50 depending on rate)
 # Simplified — we compute dynamically based on current rate
 PIP_VALUE_PER_LOT = {
-    "EURUSD": 10.0, "GBPUSD": 10.0, "AUDUSD": 10.0,
-    "NZDUSD": 10.0, "USDCAD": 7.50, "USDCHF": 11.00,
-    "USDJPY": 6.50,  "EURJPY": 6.50,  "GBPJPY": 6.50,
-    "AUDJPY": 6.50, "CADJPY": 6.50, "NZDJPY": 6.50,
-    "CHFJPY": 6.50,
-    "EURGBP": 13.00, "GBPAUD": 15.00, "GBPNZD": 6.00,
-    "EURCAD": 7.50,  "GBPCHF": 11.00, "AUDNZD": 6.00,
-    "AUDCAD": 7.50,  "NZDCAD": 7.50,  "EURCHF": 11.00,
-    "XAUUSD": 1.0,   "XAGUSD": 50.0,
+    # JPY Crosses
+    "CHFJPY": 6.50, "EURJPY": 6.50, "GBPJPY": 6.50,
+    "AUDJPY": 6.50, "CADJPY": 6.50,
+    # GBP Base
+    "GBPUSD": 10.0, "GBPNZD": 6.00,
+    # Commodities
+    "XAGUSD": 50.0,
+    # Fallback
     "DEFAULT": 10.0,
 }
 

@@ -3,24 +3,77 @@
 # All system-wide settings live here. Never hardcode values.
 # =============================================================
 
-# --- WATCHLIST ---
-# 17 instruments for TESTING/DEVELOPMENT phase.
-# Will narrow down based on backtesting data — keep the performers.
-#   7 Major USD pairs  (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, NZDUSD, USDCHF)
-#   5 JPY crosses      (GBPJPY, EURJPY, AUDJPY, CADJPY, NZDJPY)
-#   3 Popular crosses  (EURGBP, GBPAUD, GBPNZD)
-#   2 Commodities      (XAUUSD Gold, XAGUSD Silver)
-WATCHLIST = [
-    # Major Forex pairs (7)
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF",
-    # JPY crosses (5)
-    "GBPJPY", "EURJPY", "AUDJPY", "CADJPY", "NZDJPY",
-    # Popular crosses (3)
-    "EURGBP", "GBPAUD", "GBPNZD",
-    # Commodities (2)
-    "XAUUSD",  # Gold
-    "XAGUSD",  # Silver
+# --- PAIR WHITELIST / BLACKLIST (v2.0 — data-driven) ---
+# Single source of truth for which pairs and sessions are allowed.
+# Backtested 180 days on 13 pairs. Cuts based on negative P&L, low Sharpe,
+# insufficient sample size, or structural dependency issues.
+#
+# CUT PAIRS (do NOT trade — backtest proven negative):
+#   GBPAUD  -$818  Sharpe -0.44  27.4% WR  (consistently losing)
+#   GBPCAD  -$692  Sharpe -1.47  22.8% WR  (worst Sharpe of all 13)
+#   XAUUSD  -$246  Sharpe -0.92  21.4% WR  (gold microstructure mismatch)
+#   EURGBP    -$8  Sharpe -0.23  25.0% WR  (4 trades in 180 days = dead)
+#   AUDCAD +$1886 Sharpe  0.20  30.0% WR  (one-strategy dependency, thin edge)
+#
+# To ADD a new pair: backtest 180 days, must beat GBPUSD minimum bar
+#   (Sharpe > 1.79, PF > 1.55, positive P&L, 30+ trades).
+# To CUT an existing pair: add to PAIR_BLACKLIST with reason.
+
+PAIR_WHITELIST = [
+    # JPY Crosses (Core Edge — 69% of portfolio P&L)
+    "CHFJPY",  # Sharpe 4.92 | +$10,442 | 87 trades | BEST PAIR
+    "GBPJPY",  # Sharpe 3.58 | +$7,241  | 119 trades
+    "CADJPY",  # Sharpe 3.71 | +$5,699  | 38 trades
+    "AUDJPY",  # Sharpe 3.25 | +$4,506  | 65 trades
+    "EURJPY",  # Sharpe 2.29 | +$4,181  | 95 trades
+
+    # GBP Base (Secondary Edge)
+    "GBPNZD",  # Sharpe 2.63 | +$4,597  | 62 trades
+    "GBPUSD",  # Sharpe 1.79 | +$2,120  | 41 trades | diversifier
+
+    # Commodities
+    "XAGUSD",  # Sharpe 3.11 | +$5,074  | 52 trades | Silver only
 ]
+
+PAIR_BLACKLIST = {
+    # Pair: (date_cut, reason, backtest_pnl, backtest_sharpe)
+    "GBPAUD": ("2025-05", "Consistently losing across all metrics", -818, -0.44),
+    "GBPCAD": ("2025-05", "Worst Sharpe of all 13 pairs", -692, -1.47),
+    "XAUUSD": ("2025-05", "Gold microstructure mismatch", -246, -0.92),
+    "EURGBP": ("2025-05", "4 trades in 180 days — insufficient sample", -8, -0.23),
+    "AUDCAD": ("2025-05", "One-strategy dependency, 0.20 Sharpe", 1886, 0.20),
+}
+
+# Alias for backward compat — WATCHLIST = WHITELIST
+WATCHLIST = PAIR_WHITELIST
+
+# --- SESSION WHITELIST / BLACKLIST (v2.0 — data-driven) ---
+# Backtested across all 13 pairs (736 trades). Sessions below lose money.
+#
+# CUT SESSIONS (do NOT trade — backtest proven negative):
+#   NY_AFTERNOON:  36 trades, 11.1% WR, -$2,607 (fading volume, erratic)
+#   SYDNEY:       ~67 trades, ~20% WR, -$3,361 (thin liquidity, false signals)
+#
+# ALLOWED SESSIONS (3 of 6):
+#   LONDON_OPEN:       29 trades, 37.9% WR, +$2,806
+#   LONDON_SESSION:   275 trades, 40.0% WR, +$17,995
+#   NY_LONDON_OVERLAP: 306 trades, 43.1% WR, +$27,632
+
+SESSION_WHITELIST = [
+    "LONDON_OPEN",
+    "LONDON_SESSION",
+    "NY_LONDON_OVERLAP",
+]
+
+SESSION_BLACKLIST = {
+    # Session: (date_cut, reason, trades, win_rate, pnl)
+    "NY_AFTERNOON": ("2025-05", "36 trades, 11.1% WR, -$2,607", 36, 0.111, -2607),
+    "SYDNEY":      ("2025-05", "~67 trades, ~20% WR, -$3,361", 67, 0.20, -3361),
+}
+
+# Tokyo is marginal (+$1,417 on 23 trades, 34.8% WR) —
+# kept for monitoring but NOT in active whitelist yet.
+# Add to SESSION_WHITELIST if live data confirms edge.
 
 # --- TIMEFRAMES USED BY THE SYSTEM ---
 # H4=trend, H1=structure, M30=context, M15=bias, M5=structure confirm, M1=entry
@@ -81,21 +134,15 @@ SIZING_HIGH_MIN_GROUPS      = 3      # High conviction: 3+ groups must agree
 SIZING_CONSEC_LOSS_HALVE    = 3      # Halve all sizes after N consecutive losses
 
 # --- SPREAD LIMITS (in pips) ---
-# Tight spreads = only enter when liquidity is good.
-# Major pairs: very tight (these are the most liquid).
-# Cross pairs: wider (naturally less liquid, but still must be reasonable).
-# Commodities/Indices: wider still but still capped.
+# Only whitelisted pairs. Cut pairs removed.
 MAX_SPREAD = {
-    # Major USD pairs — tightest spreads, highest liquidity
-    "EURUSD": 1.5, "GBPUSD": 2.0, "USDJPY": 1.5,
-    "AUDUSD": 2.0, "USDCAD": 2.5, "NZDUSD": 2.5, "USDCHF": 2.5,
-    # JPY crosses — moderate spreads (crosses wider than USD majors)
-    "GBPJPY": 4.0, "EURJPY": 3.0, "AUDJPY": 3.5,
-    "CADJPY": 4.0, "NZDJPY": 5.0,
-    # Popular crosses — wider spreads
-    "EURGBP": 3.0, "GBPAUD": 4.0, "GBPNZD": 6.0,
-    # Commodities — wider spreads
-    "XAUUSD": 4.0, "XAGUSD": 5.0,
+    # JPY Crosses (Core Edge)
+    "CHFJPY": 3.5, "GBPJPY": 4.0, "EURJPY": 3.0,
+    "AUDJPY": 3.5, "CADJPY": 4.0,
+    # GBP Base
+    "GBPNZD": 6.0, "GBPUSD": 2.0,
+    # Commodities
+    "XAGUSD": 5.0,
     # Default fallback
     "DEFAULT": 4.0,
 }
@@ -149,10 +196,5 @@ SESSION_BEHAVIORS = {
     "NY_AFTERNOON":      "Late Distribution — liquidation, reversals or continuation",
 }
 
-# Preferred sessions — London + NY (manipulation, expansion, distribution)
-PREFERRED_SESSIONS = [
-    "LONDON_OPEN",
-    "LONDON_SESSION",
-    "NY_LONDON_OVERLAP",
-    "NY_AFTERNOON",
-]
+# Preferred sessions — ONLY whitelisted sessions (v2.0)
+PREFERRED_SESSIONS = SESSION_WHITELIST

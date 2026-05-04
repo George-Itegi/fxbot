@@ -129,6 +129,15 @@ def _tag_session(dt) -> str:
         return "UNKNOWN"
 
 
+def _is_session_allowed(session: str) -> bool:
+    """
+    v2.0: Returns True only for whitelisted sessions.
+    Used by backtest engine to skip trading in blocked sessions.
+    """
+    from config.settings import SESSION_WHITELIST
+    return session in SESSION_WHITELIST
+
+
 def _add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add ALL technical indicators to the DataFrame.

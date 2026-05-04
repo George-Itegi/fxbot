@@ -560,6 +560,48 @@ def run_backtest(config: BacktestConfig) -> dict:
         if config.max_trades > 0 and trades_executed >= config.max_trades:
             break
 
+        # ── v2.0: Skip if not in whitelisted session ─────
+        from backtest.data_loader import _tag_session, _is_session_allowed
+        current_session = _tag_session(current_time)
+        if not _is_session_allowed(current_session):
+            # Still check exits for existing open trades
+            tracker.check_exits(
+                current_time,
+                float(current_bar['high']),
+                float(current_bar['low']),
+                float(current_bar['close']),
+                pip_size,
+                pip_value,
+            )
+            if shadow_tracker is not None:
+                shadow_tracker.check_exits(
+                    current_time,
+                    float(current_bar['high']),
+                    float(current_bar['low']),
+                    float(current_bar['close']),
+                    pip_size,
+                    pip_value,
+                )
+            if strat_model_shadow_tracker is not None:
+                strat_model_shadow_tracker.check_exits(
+                    current_time,
+                    float(current_bar['high']),
+                    float(current_bar['low']),
+                    float(current_bar['close']),
+                    pip_size,
+                    pip_value,
+                )
+            if all_signals_shadow_tracker is not None:
+                all_signals_shadow_tracker.check_exits(
+                    current_time,
+                    float(current_bar['high']),
+                    float(current_bar['low']),
+                    float(current_bar['close']),
+                    pip_size,
+                    pip_value,
+                )
+            continue
+
         # ── Get candles UP TO this point (simulates live) ──
         sliced = get_candles_at_time(data, current_time, count=200)
 

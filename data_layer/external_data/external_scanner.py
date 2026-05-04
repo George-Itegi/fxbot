@@ -31,10 +31,11 @@ NEWS_REFRESH_MINUTES      = 15
 SESSION_MULTIPLIERS = {
     'LONDON_OPEN':       1.2,   # Manipulation — high opportunity but deceptive
     'NY_LONDON_OVERLAP': 1.4,   # Distribution — best window, highest liquidity
-    'NY_AFTERNOON':      1.1,   # Late distribution — good but fading
     'LONDON_SESSION':    1.3,   # Expansion — strong directional moves
-    'TOKYO':             0.7,   # Accumulation — tight ranges, low volatility
-    'SYDNEY':            0.5,   # Price discovery — thin liquidity
+    # v2.0: Blocked sessions — 0.0 multiplier (absolute block)
+    'NY_AFTERNOON':      0.0,   # BLOCKED: 36 trades, 11.1% WR, -$2,607
+    'TOKYO':             0.0,   # BLOCKED: marginal edge, not in whitelist
+    'SYDNEY':            0.0,   # BLOCKED: ~67 trades, ~20% WR, -$3,361
 }
 
 def _needs_refresh(key: str, max_hours: float = 1.0) -> bool:
@@ -117,12 +118,15 @@ def _build_report(symbols: list) -> dict:
 
     # ── Master gate ───────────────────────────────────────────
     # ONLY these block trading — COT/IM/FG do NOT block signals
-    # DEAD_ZONE block DISABLED for testing — all sessions tradable
+    # v2.0: Session blocking ENFORCED (was disabled for testing)
     day_trade_ok    = True
     blocking_reason = None
-    # if session == 'DEAD_ZONE':
-    #     day_trade_ok    = False
-    #     blocking_reason = "DEAD ZONE — low liquidity"
+
+    # v2.0: Hard block — no trading outside whitelisted sessions
+    from config.settings import SESSION_WHITELIST
+    if session not in SESSION_WHITELIST:
+        day_trade_ok    = False
+        blocking_reason = f"SESSION BLOCKED: {session} not in whitelist"
     if blackout.get('blackout'):
         day_trade_ok    = False
         blocking_reason = f"NEWS BLACKOUT: {blackout.get('reason')}"

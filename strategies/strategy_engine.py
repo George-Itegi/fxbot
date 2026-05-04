@@ -287,18 +287,19 @@ def _run_one_strategy(name, symbol,
     }
 
     # ── HARD session gates ──────────────────────────────────────
-    # Block strategies from sessions where they have no edge.
-    #   SYDNEY:             3 trades, 66.7% WR, +$568  → keep all
-    #   TOKYO:             14 trades, 21.4% WR, -$619  → block trend strategies
-    #   LONDON_OPEN:         0 trades                    → keep (SMC manipulation)
-    #   LONDON_SESSION:      6 trades, 33.3% WR, +$180  → keep all
-    #   NY_LONDON_OVERLAP:   4 trades, 50.0% WR, +$590  → keep all
-    #   NY_AFTERNOON:        2 trades,  0.0% WR, -$323  → block trend strategies
-    HARD_SESSION_GATES = {
-        # Trend strategies lose in low-volume sessions
-        "TREND_CONTINUATION":    ["SYDNEY", "LONDON_OPEN", "LONDON_SESSION",
+    # v2.0: NY_AFTERNOON and SYDNEY are HARD BLOCKED for ALL strategies.
+    # No strategy may trade during these sessions — backtest proven.
+    #   NY_AFTERNOON: 36 trades, 11.1% WR, -$2,607
+    #   SYDNEY:       ~67 trades, ~20% WR, -$3,361
+    # Per-strategy session gates below are ADDITIONAL restrictions.
+    GLOBAL_SESSION_BLOCK = {"SYDNEY", "NY_AFTERNOON", "TOKYO"}
+
+    # Per-strategy additional session restrictions
+    HARD_SESSION_GATES_STRAT = {
+        # Trend strategies — only fire in allowed sessions
+        "TREND_CONTINUATION":    ["LONDON_OPEN", "LONDON_SESSION",
                                   "NY_LONDON_OVERLAP"],
-        "EMA_CROSS_MOMENTUM":    ["SYDNEY", "LONDON_OPEN", "LONDON_SESSION",
+        "EMA_CROSS_MOMENTUM":    ["LONDON_OPEN", "LONDON_SESSION",
                                   "NY_LONDON_OVERLAP"],
         # Breakout needs volume — only London/NY
         "BREAKOUT_MOMENTUM":     ["LONDON_OPEN", "LONDON_SESSION",
@@ -321,12 +322,18 @@ def _run_one_strategy(name, symbol,
 
     # ── Check session gate ───────────────────────────────────────
     if not skip_hard_gates:
-        if name in HARD_SESSION_GATES and session:
-            allowed_sessions = HARD_SESSION_GATES[name]
-            if session not in allowed_sessions:
-                log.debug(f"[ENGINE] {name} blocked — session {session} "
-                          f"not in {allowed_sessions}")
+        if session:
+            # v2.0: GLOBAL session block — no strategy trades in blocked sessions
+            if session in GLOBAL_SESSION_BLOCK:
+                log.debug(f"[ENGINE] {name} blocked — session {session} is globally blocked")
                 return None
+            # Per-strategy session gate
+            if name in HARD_SESSION_GATES_STRAT:
+                allowed_sessions = HARD_SESSION_GATES_STRAT[name]
+                if session not in allowed_sessions:
+                    log.debug(f"[ENGINE] {name} blocked — session {session} "
+                              f"not in {allowed_sessions}")
+                    return None
 
     # Route to strategy evaluate function
     try:

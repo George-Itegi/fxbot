@@ -40,6 +40,7 @@ from config.settings import (
     WATCHLIST, MAGIC_NUMBER,
     ALLOW_REENTRY, REENTRY_COOLDOWN_MINUTES, REENTRY_MIN_SCORE_INCREASE,
     MIN_CONFLUENCE_COUNT,
+    SESSION_WHITELIST, PAIR_BLACKLIST,
 )
 
 load_dotenv()
@@ -139,6 +140,12 @@ def run():
 
             from data_layer.market_regime import get_session
             session = get_session()
+
+            # ── v2.0: Hard session gate — skip entire cycle if blocked ──
+            if session not in SESSION_WHITELIST:
+                log.debug(f"[CYCLE] Session {session} not in whitelist — sleeping {SCAN_INTERVAL}s")
+                time.sleep(SCAN_INTERVAL)
+                continue
 
             log.info(f"")
             log.info(f"{'━'*52}")

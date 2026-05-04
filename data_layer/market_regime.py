@@ -110,42 +110,42 @@ def get_session() -> str:
 
 def is_preferred_session() -> bool:
     """
-    Returns True during high-probability trading windows.
-    London + NY sessions (manipulation, expansion, distribution).
+    Returns True ONLY during whitelisted sessions (v2.0).
+    NY_AFTERNOON and SYDNEY are HARD BLOCKED — backtest proven negative.
+    Tokyo is NOT in whitelist (marginal edge, monitoring).
     """
-    return get_session() in [
-        "LONDON_OPEN",
-        "LONDON_SESSION",
-        "NY_LONDON_OVERLAP",
-        "NY_AFTERNOON",
-    ]
+    from config.settings import SESSION_WHITELIST
+    return get_session() in SESSION_WHITELIST
 
 
 def is_tradeable_session() -> bool:
     """
-    Returns True only during institutional sessions (London + NY).
-    Sydney and Tokyo blocked — thin liquidity, wide spreads, false signals.
+    Returns True ONLY during whitelisted sessions (v2.0).
+    Hard blocks: NY_AFTERNOON (-$2,607), SYDNEY (-$3,361).
+    This is the master gate — ALL trading paths must check this.
     """
-    return get_session() in [
-        "LONDON_OPEN",
-        "LONDON_SESSION",
-        "NY_LONDON_OVERLAP",
-        "NY_AFTERNOON",
-    ]
+    from config.settings import SESSION_WHITELIST
+    return get_session() in SESSION_WHITELIST
 
 
 def get_session_quality() -> float:
     """
     Returns a session quality multiplier (0.0 - 1.0).
-    Used to boost or reduce confidence during different sessions.
-    Based on real institutional behavior patterns.
+    v2.0: Blocked sessions return 0.0 (absolute block).
+    Only whitelisted sessions get positive quality.
     """
+    from config.settings import SESSION_WHITELIST, SESSION_BLACKLIST
+
+    session = get_session()
+
+    # Hard block: blacklisted sessions = 0.0
+    if session in SESSION_BLACKLIST:
+        return 0.0
+
+    # Only whitelisted sessions get quality scores
     quality_map = {
         "NY_LONDON_OVERLAP": 1.0,   # Distribution — highest liquidity, best window
         "LONDON_SESSION":    0.9,   # Expansion — strong directional moves
-        "NY_AFTERNOON":      0.8,   # Late distribution — still good but fading
         "LONDON_OPEN":       0.7,   # Manipulation — volatile, Judas swings
-        "TOKYO":             0.4,   # Accumulation — tight ranges, low volatility
-        "SYDNEY":            0.3,   # Price discovery — thin liquidity
     }
-    return quality_map.get(get_session(), 0.5)
+    return quality_map.get(session, 0.0)
