@@ -126,7 +126,7 @@ def _ensure_tables(conn):
             tp_extended            TINYINT,
             highest_profit_pips    DOUBLE,
 
-            -- Strategy scores (all 10, for ML Gate v3.0 training)
+            -- Strategy scores (for ML Gate v3.0 training)
             ss_smc_ob           INT DEFAULT 0,
             ss_liquidity_sweep  INT DEFAULT 0,
             ss_vwap_reversion   INT DEFAULT 0,
@@ -137,6 +137,8 @@ def _ensure_tables(conn):
             ss_rsi_divergence   INT DEFAULT 0,
             ss_breakout_momentum INT DEFAULT 0,
             ss_structure_align  INT DEFAULT 0,
+            ss_supply_demand    INT DEFAULT 0,
+            ss_bos_momentum     INT DEFAULT 0,
 
             -- Fibonacci confluence (3 features for ML Gate v3.1)
             fib_confluence_score DOUBLE DEFAULT 0,
@@ -496,6 +498,8 @@ def _auto_migrate_trades(cursor, conn):
         ('backtest_trades', 'ss_rsi_divergence',   'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'ss_breakout_momentum','DOUBLE DEFAULT 0'),
         ('backtest_trades', 'ss_structure_align',  'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_supply_demand',     'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_bos_momentum',      'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'fib_confluence_score', 'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'fib_in_golden_zone',   'TINYINT DEFAULT 0'),
         ('backtest_trades', 'fib_bias_aligned',     'TINYINT DEFAULT 0'),
@@ -1015,6 +1019,8 @@ def store_trade(trade, master_report: dict = None,
         ss_rsi_divergence   = _safe_float(ss.get('RSI_DIVERGENCE_SMC', 0))
         ss_breakout_momentum = _safe_float(ss.get('BREAKOUT_MOMENTUM', 0))
         ss_structure_align  = _safe_float(ss.get('STRUCTURE_ALIGNMENT', 0))
+        ss_supply_demand    = _safe_float(ss.get('SUPPLY_DEMAND_ZONE_ENTRY', 0))
+        ss_bos_momentum     = _safe_float(ss.get('BREAK_OF_STRUCTURE_MOMENTUM', 0))
 
         # Fibonacci confluence (from strategy_scores._fib_data)
         # check_fib_confluence returns: {fib_bonus, in_golden_zone, fib_bias_aligned, ...}
@@ -1180,6 +1186,7 @@ def store_trade(trade, master_report: dict = None,
                 ss_delta_divergence, ss_trend_continuation,
                 ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
                 ss_breakout_momentum, ss_structure_align,
+                ss_supply_demand, ss_bos_momentum,
                 fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
                 source,
                 model_predicted_r,
@@ -1194,7 +1201,7 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s
             )
         """, (
             run_id, trade.ticket, trade.symbol, trade.direction,
@@ -1255,11 +1262,12 @@ def store_trade(trade, master_report: dict = None,
             1 if trade.trail_activated else 0,
             1 if trade.tp_extended else 0,
             _safe_float(trade.highest_profit_pips),
-            # ── Strategy scores (10 features for ML Gate v3.0) ──
+            # ── Strategy scores (features for ML Gate v3.0) ──
             ss_smc_ob, ss_liquidity_sweep, ss_vwap_reversion,
             ss_delta_divergence, ss_trend_continuation,
             ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
             ss_breakout_momentum, ss_structure_align,
+            ss_supply_demand, ss_bos_momentum,
             # ── Fibonacci confluence (3 features for ML Gate v3.1) ──
             fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
             # ── Source: BACKTEST (real) or SHADOW (simulated) ──

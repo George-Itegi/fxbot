@@ -26,6 +26,8 @@ from strategies.ema_cross_momentum import evaluate as ema_cross_evaluate
 from strategies.rsi_divergence_smc import evaluate as rsi_div_smc_evaluate
 from strategies.breakout_momentum import evaluate as breakout_evaluate
 from strategies.structure_alignment import evaluate as struct_align_evaluate
+from strategies.supply_demand_zone import evaluate as sd_zone_evaluate
+from strategies.bos_momentum import evaluate as bos_momentum_evaluate
 
 log = get_logger(__name__)
 
@@ -33,16 +35,19 @@ log = get_logger(__name__)
 # Raised because scoring is inflated — lagging indicators score
 # too easily. These minimums require real institutional confluence.
 STRATEGY_MIN_SCORES = {
-    "SMC_OB_REVERSAL":       70,   # OB + delta + sweep confirmation
-    "LIQUIDITY_SWEEP_ENTRY": 70,   # Sweep + BOS + delta
-    "VWAP_MEAN_REVERSION":   65,   # VWAP distance + structure
-    "DELTA_DIVERGENCE":      70,   # Price vs delta divergence
-    "TREND_CONTINUATION":    72,   # Multi-TF trend + pullback
-    "FVG_REVERSION":         68,   # FVG gap fill entry
-    "EMA_CROSS_MOMENTUM":    70,   # EMA crossover + RSI momentum + delta
-    "RSI_DIVERGENCE_SMC":    68,   # RSI divergence + BOS/CHoCH
-    "BREAKOUT_MOMENTUM":     70,   # Consolidation breakout + retest
-    "STRUCTURE_ALIGNMENT":   70,   # BOS + H1 structure + delta agreement
+    "SMC_OB_REVERSAL":            70,   # OB + delta + sweep confirmation
+    "LIQUIDITY_SWEEP_ENTRY":       70,   # Sweep + BOS + delta
+    "DELTA_DIVERGENCE":            70,   # Price vs delta divergence
+    "TREND_CONTINUATION":          72,   # Multi-TF trend + pullback
+    "EMA_CROSS_MOMENTUM":          70,   # EMA crossover + RSI momentum + delta
+    "RSI_DIVERGENCE_SMC":          68,   # RSI divergence + BOS/CHoCH
+    "SUPPLY_DEMAND_ZONE_ENTRY":    70,   # S&D zone retest + delta + displacement
+    "BREAK_OF_STRUCTURE_MOMENTUM": 70,   # Fresh BOS + pullback + delta
+    # Retired (kept for reference):
+    # "VWAP_MEAN_REVERSION":       65,  # RETIRED
+    # "FVG_REVERSION":              68,  # RETIRED
+    # "BREAKOUT_MOMENTUM":           70,  # RETIRED
+    # "STRUCTURE_ALIGNMENT":         70,  # RETIRED
 }
 
 # ── Strategies grouped by what they fundamentally measure ────
@@ -58,7 +63,8 @@ STRATEGY_MIN_SCORES = {
 #   OSCILLATOR:       RSI divergence + SMC confirmation (oscillator-based)
 STRATEGY_GROUPS = {
     "SMC_STRUCTURE": [
-        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY"],
+        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY",
+        "SUPPLY_DEMAND_ZONE_ENTRY", "BREAK_OF_STRUCTURE_MOMENTUM"],
     "TREND_FOLLOWING": [
         "TREND_CONTINUATION", "EMA_CROSS_MOMENTUM"],
     "ORDER_FLOW": [
@@ -67,9 +73,6 @@ STRATEGY_GROUPS = {
         "RSI_DIVERGENCE_SMC"],
     # Retired groups preserved for reference:
     # "MEAN_REVERSION": ["VWAP_MEAN_REVERSION"],  # RETIRED — overfit
-    # Retired strategies removed from groups:
-    #   FVG_REVERSION, BREAKOUT_MOMENTUM (from SMC_STRUCTURE)
-    #   STRUCTURE_ALIGNMENT (from ORDER_FLOW)
 }
 
 
@@ -399,6 +402,22 @@ def _run_one_strategy(name, symbol,
                 smc_report=smc_report,
                 market_report=market_report,
                 df_h4=df_h4, master_report=master_report)
+
+        elif name == "SUPPLY_DEMAND_ZONE_ENTRY":
+            return sd_zone_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report,
+                relaxed=relaxed)
+
+        elif name == "BREAK_OF_STRUCTURE_MOMENTUM":
+            return bos_momentum_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report,
+                relaxed=relaxed)
 
         else:
             log.debug(f"[ENGINE] {name} is retired or unknown, skip")

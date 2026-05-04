@@ -79,6 +79,8 @@ _STRATEGY_FEATURE_KEYS = {
     'DELTA_DIVERGENCE': '_delta_div_features',
     'FVG_REVERSION': '_fvg_features',
     'RSI_DIVERGENCE_SMC': '_rsi_div_features',
+    'SUPPLY_DEMAND_ZONE_ENTRY': '_sd_zone_features',
+    'BREAK_OF_STRUCTURE_MOMENTUM': '_bos_momentum_features',
 }
 
 # Mapping from feature dict keys to store_trade() parameter names
@@ -93,6 +95,8 @@ _FEATURE_PARAM_MAP = {
     '_delta_div_features': 'delta_div_features',
     '_fvg_features': 'fvg_features',
     '_rsi_div_features': 'rsi_div_features',
+    '_sd_zone_features': 'sd_zone_features',
+    '_bos_momentum_features': 'bos_momentum_features',
 }
 
 

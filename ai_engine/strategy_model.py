@@ -135,6 +135,8 @@ class StrategyModel:
             'EMA_CROSS_MOMENTUM': 'ema_cross',
             'LIQUIDITY_SWEEP_ENTRY': 'liq_sweep',
             'DELTA_DIVERGENCE': 'delta_div',
+            'SUPPLY_DEMAND_ZONE_ENTRY': 'sd_zone',
+            'BREAK_OF_STRUCTURE_MOMENTUM': 'bos_momentum',
         }
         return known.get(name, name.lower().replace('_', '_')[:15])
 
@@ -456,7 +458,7 @@ class StrategyModelManager:
     - Provide shadow data for L1 rejections
     """
 
-    # All 10 strategies with their model keys
+    # All strategies with their model keys
     STRATEGY_REGISTRY = {
         'VWAP_MEAN_REVERSION': 'vwap',
         'BREAKOUT_MOMENTUM': 'breakout',
@@ -470,6 +472,8 @@ class StrategyModelManager:
         'EMA_CROSS_MOMENTUM': 'ema_cross',
         'LIQUIDITY_SWEEP_ENTRY': 'liq_sweep',
         'DELTA_DIVERGENCE': 'delta_div',
+        'SUPPLY_DEMAND_ZONE_ENTRY': 'sd_zone',
+        'BREAK_OF_STRUCTURE_MOMENTUM': 'bos_momentum',
     }
 
     def __init__(self):
