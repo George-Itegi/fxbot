@@ -58,16 +58,18 @@ STRATEGY_MIN_SCORES = {
 #   OSCILLATOR:       RSI divergence + SMC confirmation (oscillator-based)
 STRATEGY_GROUPS = {
     "SMC_STRUCTURE": [
-        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY", "FVG_REVERSION",
-        "BREAKOUT_MOMENTUM"],
+        "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY"],
     "TREND_FOLLOWING": [
         "TREND_CONTINUATION", "EMA_CROSS_MOMENTUM"],
-    "MEAN_REVERSION": [
-        "VWAP_MEAN_REVERSION"],
     "ORDER_FLOW": [
-        "DELTA_DIVERGENCE", "STRUCTURE_ALIGNMENT"],
+        "DELTA_DIVERGENCE"],
     "OSCILLATOR": [
         "RSI_DIVERGENCE_SMC"],
+    # Retired groups preserved for reference:
+    # "MEAN_REVERSION": ["VWAP_MEAN_REVERSION"],  # RETIRED — overfit
+    # Retired strategies removed from groups:
+    #   FVG_REVERSION, BREAKOUT_MOMENTUM (from SMC_STRUCTURE)
+    #   STRUCTURE_ALIGNMENT (from ORDER_FLOW)
 }
 
 
@@ -270,20 +272,16 @@ def _run_one_strategy(name, symbol,
                                   "TRENDING_EXTENDED"],
         "EMA_CROSS_MOMENTUM":    ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
                                   "TRENDING_EXTENDED"],
-        # Mean reversion — needs ranges, NOT trends
-        "VWAP_MEAN_REVERSION":   ["BALANCED", "REVERSAL_RISK",
-                                  "BREAKOUT_REJECTED"],
         # Divergence — needs reversal/breakdown setups
         "DELTA_DIVERGENCE":      ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED", "TRENDING_EXTENDED"],
         "RSI_DIVERGENCE_SMC":    ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED"],
-        # Breakout — needs confirmed trends, fails in ranges
-        "BREAKOUT_MOMENTUM":     ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
-                                  "TRENDING_EXTENDED"],
-        # Structure alignment — needs clear structure (BOS/HH-HL)
-        "STRUCTURE_ALIGNMENT":   ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
-                                  "TRENDING_EXTENDED", "BALANCED"],
+        # Retired strategies removed from gates:
+        #   VWAP_MEAN_REVERSION (mean reversion — overfit, retired)
+        #   BREAKOUT_MOMENTUM (zero trades — retired)
+        #   STRUCTURE_ALIGNMENT (net loser — retired)
+        #   FVG_REVERSION (FVG bug — retired)
     }
 
     # ── HARD session gates ──────────────────────────────────────
@@ -301,15 +299,12 @@ def _run_one_strategy(name, symbol,
                                   "NY_LONDON_OVERLAP"],
         "EMA_CROSS_MOMENTUM":    ["LONDON_OPEN", "LONDON_SESSION",
                                   "NY_LONDON_OVERLAP"],
-        # Breakout needs volume — only London/NY
-        "BREAKOUT_MOMENTUM":     ["LONDON_OPEN", "LONDON_SESSION",
-                                  "NY_LONDON_OVERLAP"],
+        # Retired: BREAKOUT_MOMENTUM session gate removed
     }
 
     # ── Check market state gate ─────────────────────────────────
     # In relaxed mode: bypass hard gates for strategies that need relaxation
-    RELAXED_STRATEGIES = {"DELTA_DIVERGENCE", "RSI_DIVERGENCE_SMC",
-                          "BREAKOUT_MOMENTUM"}
+    RELAXED_STRATEGIES = {"DELTA_DIVERGENCE", "RSI_DIVERGENCE_SMC"}
     skip_hard_gates = relaxed and name in RELAXED_STRATEGIES
 
     if not skip_hard_gates:

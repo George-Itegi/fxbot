@@ -1069,9 +1069,12 @@ def collect_all_strategy_scores(symbol: str,
                                 session: str,
                                 master_report: dict = None) -> dict:
     """
-    Run ALL 10 strategies and return their scores (even if they don't pass gates).
+    Run ALL active strategies and return their scores (even if they don't pass gates).
     This is what makes the system "strategy-informed" — we collect scores from
     every strategy, not just the ones that pass.
+
+    Retired strategies are excluded from scoring:
+      FVG_REVERSION, BREAKOUT_MOMENTUM, STRUCTURE_ALIGNMENT, VWAP_MEAN_REVERSION
 
     Returns dict: {strategy_name: score_or_None}
     """
@@ -1079,17 +1082,18 @@ def collect_all_strategy_scores(symbol: str,
 
     scores = {}
     strategies = [
-        'SMC_OB_REVERSAL', 'LIQUIDITY_SWEEP_ENTRY', 'VWAP_MEAN_REVERSION',
-        'DELTA_DIVERGENCE', 'TREND_CONTINUATION', 'FVG_REVERSION',
-        'EMA_CROSS_MOMENTUM', 'RSI_DIVERGENCE_SMC', 'BREAKOUT_MOMENTUM',
-        'STRUCTURE_ALIGNMENT',
+        'SMC_OB_REVERSAL', 'LIQUIDITY_SWEEP_ENTRY',
+        'DELTA_DIVERGENCE', 'TREND_CONTINUATION',
+        'EMA_CROSS_MOMENTUM', 'RSI_DIVERGENCE_SMC',
+        # Retired — excluded from scoring:
+        # 'VWAP_MEAN_REVERSION', 'FVG_REVERSION', 'BREAKOUT_MOMENTUM', 'STRUCTURE_ALIGNMENT',
     ]
 
     for name in strategies:
         try:
             # Run WITH relaxed=True for strategies that need it (DELTA_DIVERGENCE,
-            # RSI_DIVERGENCE_SMC, BREAKOUT_MOMENTUM) so they bypass hard state/session
-            # gates. This ensures we collect scores and shadow data from ALL strategies,
+            # RSI_DIVERGENCE_SMC) so they bypass hard state/session gates.
+            # This ensures we collect scores and shadow data from ALL strategies,
             # not just the ones whose state gates happen to match the current bar.
             signal = _run_one_strategy(
                 name, symbol,

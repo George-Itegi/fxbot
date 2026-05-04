@@ -81,10 +81,15 @@ STRATEGY_PASS_THRESHOLDS = {
 }
 
 # ── Soft-disabled strategies ──
-# Empty list = all strategies active (using per-strategy thresholds above).
-# Add strategy names here to hard-block them (no signals, no shadow trades).
-# DISABLED_STRATEGIES = ['FVG_REVERSION', 'RSI_DIVERGENCE_SMC']  # Uncomment to re-disable
-DISABLED_STRATEGIES = ['FVG_REVERSION']
+# These strategies are RETIRED (see strategy_registry.py for reasons).
+# Hard-blocked: no signals generated, no models loaded, no shadow trades.
+# Kept as a list (not removed) for reference and potential future re-enablement.
+DISABLED_STRATEGIES = [
+    'FVG_REVERSION',         # FVG bug + only 32 trades (below 50 min)
+    'BREAKOUT_MOMENTUM',     # Zero trades generated, strategy never fires
+    'STRUCTURE_ALIGNMENT',   # Net loser (mean_R=-0.236), L1 model cherry-picks
+    'VWAP_MEAN_REVERSION',   # Overfit L1 model (498 iters/160 rows), only 7 real trades
+]
 
 
 class StrategyModel:
