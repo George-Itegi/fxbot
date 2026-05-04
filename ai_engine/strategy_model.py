@@ -69,7 +69,23 @@ R_CLIP_MAX = 5.0
 # ── Layer 1 verdict thresholds ──
 # PASS: predicted R >= this value → signal passes to Layer 2
 # REJECT: predicted R < this value → signal rejected, shadow-simulated
-PASS_THRESHOLD = 0.2  # Lower than Layer 2's 0.5 — L1 is permissive, L2 is the final filter
+PASS_THRESHOLD = 0.2  # Default — lower than Layer 2's 0.5, L1 is permissive
+
+# ── Per-strategy threshold overrides ──
+# Strategies with weaker edge need higher thresholds to avoid marginal trades.
+STRATEGY_PASS_THRESHOLDS = {
+    'EMA_CROSS_MOMENTUM': 0.65,   # Raised from 0.2 — too many marginal signals (31.6% WR, +0.11R avg)
+    # All other strategies use PASS_THRESHOLD (0.2)
+}
+
+# ── Soft-disabled strategies ──
+# These strategies have proven zero edge (R² = 0.000, <4% WR across 360 days).
+# They are NOT deleted — set to empty list to re-enable for periodic backtest checks.
+# Use --include-disabled flag to force-enable in backtests for monitoring.
+DISABLED_STRATEGIES = [
+    'FVG_REVERSION',        # R² = 0.000, WR = 2.2-3.4%, model passes all trades blindly (4KB stub)
+    'RSI_DIVERGENCE_SMC',   # 0 trades generated, dead on arrival
+]
 
 
 class StrategyModel:
@@ -178,7 +194,9 @@ class StrategyModel:
         try:
             predicted_r = float(self.model.predict(features)[0])
             predicted_r = max(R_CLIP_MIN, min(R_CLIP_MAX, predicted_r))
-            is_pass = predicted_r >= PASS_THRESHOLD
+            # Use per-strategy threshold if defined, else default
+            threshold = STRATEGY_PASS_THRESHOLDS.get(self.strategy_name, PASS_THRESHOLD)
+            is_pass = predicted_r >= threshold
 
             return {
                 'pass': is_pass,
@@ -355,14 +373,15 @@ class StrategyModel:
 
             # Count how many trades PASS vs REJECT with this model
             all_preds = model_final.predict(X)
-            pass_count = int((all_preds >= PASS_THRESHOLD).sum())
+            threshold = STRATEGY_PASS_THRESHOLDS.get(self.strategy_name, PASS_THRESHOLD)
+            pass_count = int((all_preds >= threshold).sum())
             reject_count = len(all_preds) - pass_count
             pass_wr = 0.0
             reject_wr = 0.0
             if pass_count > 0:
-                pass_wr = float((y_raw[all_preds >= PASS_THRESHOLD] > 0).sum() / pass_count * 100)
+                pass_wr = float((y_raw[all_preds >= threshold] > 0).sum() / pass_count * 100)
             if reject_count > 0:
-                reject_wr = float((y_raw[all_preds < PASS_THRESHOLD] > 0).sum() / reject_count * 100)
+                reject_wr = float((y_raw[all_preds < threshold] > 0).sum() / reject_count * 100)
 
             meta = {
                 'status': 'trained',
@@ -386,7 +405,7 @@ class StrategyModel:
                 'val_r2': round(val_r2, 4),
                 'val_correlation': round(val_corr, 4),
                 # Thresholds
-                'pass_threshold': PASS_THRESHOLD,
+                'pass_threshold': threshold,
                 'best_iteration': int(best_n),
                 # Selection stats (model's own filtering)
                 'pass_count': pass_count,
@@ -457,6 +476,10 @@ class StrategyModelManager:
     def _load_available_models(self):
         """Scan the models directory and load any existing strategy models."""
         for strategy_name, strategy_key in self.STRATEGY_REGISTRY.items():
+            # Skip soft-disabled strategies — don't load their models
+            if strategy_name in DISABLED_STRATEGIES:
+                log.info(f"[STRAT_MODEL] Skipping DISABLED strategy: {strategy_name}")
+                continue
             model = StrategyModel(strategy_name, strategy_key)
             if model.is_trained():
                 if model.load():
@@ -496,6 +519,15 @@ class StrategyModelManager:
                 'pass': True,
                 'predicted_r': 0.0,
                 'verdict': 'NO_MODEL',
+            }
+
+        # Soft-disable check: reject signals from disabled strategies
+        if strategy_name in DISABLED_STRATEGIES:
+            return {
+                'has_model': True,
+                'pass': False,
+                'predicted_r': -1.0,
+                'verdict': 'DISABLED',
             }
 
         result = model.predict(features)

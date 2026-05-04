@@ -682,7 +682,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                             strat_model_verdict = l1_result.get('verdict', 'NO_MODEL')
                             strat_model_predicted_r = l1_result.get('predicted_r', 0.0)
 
-                            if strat_model_verdict == 'REJECT':
+                            if strat_model_verdict in ('REJECT', 'DISABLED'):
                                 strat_model_reject_count += 1
                                 best_signal['strategy_model_verdict'] = strat_model_verdict
                                 best_signal['strategy_model_predicted_r'] = strat_model_predicted_r
@@ -737,10 +737,11 @@ def run_backtest(config: BacktestConfig) -> dict:
                                         }
 
                                 if strat_model_shadow_count <= 3 or strat_model_shadow_count % 25 == 0:
-                                    log.info(f"  [L1_STRAT_MODEL] REJECT {best_strat_name} "
+                                    label = 'DISABLED' if strat_model_verdict == 'DISABLED' else 'REJECT'
+                                    log.info(f"  [L1_STRAT_MODEL] {label} {best_strat_name} "
                                              f"{best_signal['direction']} "
                                              f"R={strat_model_predicted_r:.2f}")
-                                continue  # L1 REJECT → shadow, don't proceed to L2
+                                continue  # L1 REJECT/DISABLED → shadow, don't proceed to L2
 
                             # L1 PASS → proceed to Layer 2 ML Gate
                             if strat_model_reject_count <= 3 or strat_model_reject_count % 50 == 0:
@@ -1007,7 +1008,7 @@ def run_backtest(config: BacktestConfig) -> dict:
                         strat_model_verdict = l1_result.get('verdict', 'NO_MODEL')
                         strat_model_predicted_r = l1_result.get('predicted_r', 0.0)
 
-                        if strat_model_verdict == 'REJECT':
+                        if strat_model_verdict in ('REJECT', 'DISABLED'):
                             strat_model_reject_count += 1
                             best['strategy_model_verdict'] = strat_model_verdict
                             best['strategy_model_predicted_r'] = strat_model_predicted_r
@@ -1062,10 +1063,11 @@ def run_backtest(config: BacktestConfig) -> dict:
                                     }
 
                             if strat_model_shadow_count <= 3 or strat_model_shadow_count % 25 == 0:
-                                log.info(f"  [L1_STRAT_MODEL] REJECT {best_strat_name} "
+                                label = 'DISABLED' if strat_model_verdict == 'DISABLED' else 'REJECT'
+                                log.info(f"  [L1_STRAT_MODEL] {label} {best_strat_name} "
                                          f"{best['direction']} "
                                          f"R={strat_model_predicted_r:.2f}")
-                            continue  # L1 REJECT → shadow, skip execution
+                            continue  # L1 REJECT/DISABLED → shadow, skip execution
 
                         # L1 PASS
                         if strat_model_reject_count <= 3 or strat_model_reject_count % 50 == 0:
