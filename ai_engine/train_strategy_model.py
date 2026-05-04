@@ -247,6 +247,18 @@ def _train_all_eligible():
         mgr = get_strategy_model_manager()
 
         for r in eligible:
+            # Skip soft-disabled strategies
+            from ai_engine.strategy_model import DISABLED_STRATEGIES
+            if r['strategy'] in DISABLED_STRATEGIES:
+                print(f"\n  {'='*65}")
+                print(f"  APEX TRADER — Layer 1: SKIPPING {r['strategy']}")
+                print(f"  {'='*65}")
+                print(f"  Strategy: {r['strategy']}")
+                print(f"  Status:   SOFT-DISABLED (in DISABLED_STRATEGIES list)")
+                print(f"  Reason:   Proven zero edge (R²=0.000, <4% WR)")
+                print(f"  Action:   Set DISABLED_STRATEGIES = [] to re-enable")
+                print(f"  {'='*65}\n")
+                continue
             _train_strategy(r['strategy'])
 
     except Exception as e:
