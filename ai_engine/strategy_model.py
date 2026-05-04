@@ -74,18 +74,17 @@ PASS_THRESHOLD = 0.2  # Default — lower than Layer 2's 0.5, L1 is permissive
 # ── Per-strategy threshold overrides ──
 # Strategies with weaker edge need higher thresholds to avoid marginal trades.
 STRATEGY_PASS_THRESHOLDS = {
-    'EMA_CROSS_MOMENTUM': 0.3,    # Raised from 0.2 — trim marginal trades without killing the strategy
+    'EMA_CROSS_MOMENTUM': 0.3,      # Raised from 0.2 — trim marginal trades
+    'FVG_REVERSION': 0.5,           # High threshold — only pass if model predicts strong edge
+    'RSI_DIVERGENCE_SMC': 0.4,      # Moderate threshold — let model try, generates few signals
     # All other strategies use PASS_THRESHOLD (0.2)
 }
 
 # ── Soft-disabled strategies ──
-# These strategies have proven zero edge (R² = 0.000, <4% WR across 360 days).
-# They are NOT deleted — set to empty list to re-enable for periodic backtest checks.
-# Use --include-disabled flag to force-enable in backtests for monitoring.
-DISABLED_STRATEGIES = [
-    'FVG_REVERSION',        # R² = 0.000, WR = 2.2-3.4%, model passes all trades blindly (4KB stub)
-    'RSI_DIVERGENCE_SMC',   # 0 trades generated, dead on arrival
-]
+# Empty list = all strategies active (using per-strategy thresholds above).
+# Add strategy names here to hard-block them (no signals, no shadow trades).
+# DISABLED_STRATEGIES = ['FVG_REVERSION', 'RSI_DIVERGENCE_SMC']  # Uncomment to re-disable
+DISABLED_STRATEGIES = []
 
 
 class StrategyModel:
