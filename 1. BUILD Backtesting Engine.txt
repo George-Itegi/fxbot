@@ -1,0 +1,49 @@
+1. BUILD: Backtesting Engine
+This is the #1 thing your bot is missing. You have no idea if any of your strategies actually make money. You're trading live with real money on untested logic.
+
+Build a simple backtester that:
+
+Downloads 6 months of M1/M5/M15/H1/H4 data from MT5
+Replays the master_scan → strategy_engine → order flow pipeline on historical bars
+Records every signal, whether it would have won/lost, and by how much
+Outputs: win rate, profit factor, max drawdown, avg win/loss, Sharpe ratio per strategy
+Without this, you're gambling, not trading. Every dollar you risk before backtesting is a dollar you might lose to a bug, not the market.
+
+12. BUILD: Walk-Forward Optimization
+Static settings don't work because markets change. What works in trending June fails in ranging December.
+
+Build a system that:
+
+Tests the last 3 months of data
+Optimizes the best settings (entry thresholds, SL multipliers, score minimums)
+Tests those settings on the NEXT month (out-of-sample)
+If out-of-sample performance drops >20% from in-sample → flag the strategy as broken
+Run this monthly
+13. BUILD: Equity Curve Drawdown Protection
+Right now you lose 8% in a day and the bot stops. But what about a slow bleed? 2% per day for 5 days = 10% gone.
+
+Add:
+
+Weekly drawdown circuit breaker (already in settings at 8%, but check if it's enforced in code — I see MAX_WEEKLY_LOSS_PERCENT in settings but didn't see it checked in risk_engine.py)
+Position size reduction: after 2% daily loss → halve all position sizes for the rest of the day
+"Angry mode": after 3 consecutive losses → only trade the highest conviction signals (score 85+, 3+ groups)
+14. BUILD: Trade Quality Scoring (Post-Trade Analysis)
+After every trade closes, calculate:
+
+Was the entry actually at a key level or was it just close?
+Did the trade move in your favor first (good entry) or hit SL first (bad entry)?
+How far did price move against you before hitting TP?
+Was the spread reasonable at execution?
+Store this in the database. After 50 trades, you'll know EXACTLY which strategies, which symbols, which sessions, and which market states produce the best entries. Then you can optimize with data instead of guessing.
+
+15. BUILD: Session-Adaptive Behavior (Not Blocking)
+You said no session blocking, and I agree. But you CAN adapt behavior without blocking:
+
+Session
+Behavior
+Sydney (21-00)	Only VWAP mean reversion, wider SL, smaller size
+Tokyo (00-07)	Tighter SL, smaller size, only continuation trades
+London Open (07-08)	Sweep and ORB strategies primed, full size
+London (08-12)	All strategies, full size — peak session
+NY/London Overlap (12-16)	All strategies, full size — highest liquidity
+NY Afternoon (16-21)	Reduce size, only trend continuation, wider SL

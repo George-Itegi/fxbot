@@ -8,22 +8,36 @@ import datetime
 
 # --- Symbols to backtest ---
 # Matches the full WATCHLIST in config/settings.py
-SYMBOLS = [
-    # Major Forex pairs (7)
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF",
-    # JPY crosses (5)
-    "GBPJPY", "EURJPY", "AUDJPY", "CADJPY", "NZDJPY",
-    # Popular crosses (3)
-    "EURGBP", "GBPAUD", "GBPNZD",
-    # Additional crosses (5) — added for model diversity
-    "EURCAD", "GBPCHF", "AUDNZD", "AUDCAD", "NZDCAD",
-    # CHF crosses (2)
-    "CHFJPY", "EURCHF",
-    # Commodities (2)
-    "XAUUSD",  # Gold
-    "XAGUSD",  # Silver
-]
+# SYMBOLS = [
+#     # Major Forex pairs (7)
+#     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF",
+#     # JPY crosses (5)
+#     "GBPJPY", "EURJPY", "AUDJPY", "CADJPY", "NZDJPY",
+#     # Popular crosses (3)
+#     "EURGBP", "GBPAUD", "GBPNZD",
+#     # Additional crosses (5) — added for model diversity
+#     "EURCAD", "GBPCHF", "AUDNZD", "AUDCAD", "NZDCAD",
+#     # CHF crosses (2)
+#     "CHFJPY", "EURCHF",
+#     # Commodities (2)
+#     "XAUUSD",  # Gold
+#     "XAGUSD",  # Silver
+# ]
 
+SYMBOLS = [
+    # JPY Crosses (Priority - High Volatility Trenders)
+    "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "CHFJPY", "NZDJPY",
+    
+    # USD Majors (Liquid, Reliable Trends)
+    "EURUSD", "GBPUSD", "AUDUSD",
+    
+    # Other Crosses (Added for Trend Diversity)
+    "EURGBP", "GBPAUD", "AUDCAD", "GBPNZD", "GBPCAD", "EURNZD",
+    
+    # Commodities (High Volatility)
+    "XAGUSD",  # Silver
+    "XAUUSD",  # Gold ⭐ NEW
+]
 # --- Timeframes to download ---
 TIMEFRAMES = ["M1", "M5", "M15", "H1", "H4"]
 
@@ -33,21 +47,42 @@ START_DATE = END_DATE - datetime.timedelta(days=180)  # 6 months
 
 # --- Realistic average spreads (pips) per symbol ---
 # Use typical ICMarkets raw spreads during London/NY session
+# AVG_SPREAD_PIPS = {
+#     # Major pairs
+
+#     "EURUSD": 0.3,  "GBPUSD": 0.5,  "USDJPY": 0.3,
+#     "AUDUSD": 0.4,  "USDCAD": 0.6,  "NZDUSD": 0.4,  "USDCHF": 0.5,
+#     # JPY crosses
+#     "GBPJPY": 1.0,  "EURJPY": 0.5,  "AUDJPY": 0.7,
+#     "CADJPY": 0.7,  "NZDJPY": 1.0,  "CHFJPY": 0.8,
+#     # Popular crosses
+#     "EURGBP": 0.6,  "GBPAUD": 1.2,  "GBPNZD": 2.5,
+#     # Other crosses
+#     "EURCAD": 0.8,  "GBPCHF": 0.9,  "AUDNZD": 1.2,
+#     "AUDCAD": 0.8,  "NZDCAD": 0.8,  "EURCHF": 0.7,
+#     # Commodities
+#     "XAUUSD": 2.0,  "XAGUSD": 3.0,
+#     # Default
+#     "DEFAULT": 0.5,
+# }
+
 AVG_SPREAD_PIPS = {
-    # Major pairs
-    "EURUSD": 0.3,  "GBPUSD": 0.5,  "USDJPY": 0.3,
-    "AUDUSD": 0.4,  "USDCAD": 0.6,  "NZDUSD": 0.4,  "USDCHF": 0.5,
-    # JPY crosses
-    "GBPJPY": 1.0,  "EURJPY": 0.5,  "AUDJPY": 0.7,
-    "CADJPY": 0.7,  "NZDJPY": 1.0,  "CHFJPY": 0.8,
-    # Popular crosses
-    "EURGBP": 0.6,  "GBPAUD": 1.2,  "GBPNZD": 2.5,
-    # Other crosses
-    "EURCAD": 0.8,  "GBPCHF": 0.9,  "AUDNZD": 1.2,
-    "AUDCAD": 0.8,  "NZDCAD": 0.8,  "EURCHF": 0.7,
+    # JPY Crosses
+    "EURJPY": 0.3,  "GBPJPY": 0.7,  "AUDJPY": 0.4,
+    "CADJPY": 0.5,  "CHFJPY": 0.6,  "NZDJPY": 0.8,
+    
+    # USD Majors
+    "EURUSD": 0.1,  "GBPUSD": 0.2,  "AUDUSD": 0.2,
+    
+    # Other Crosses
+    "EURGBP": 0.3,  "GBPAUD": 0.7,  "AUDCAD": 0.4,
+    "GBPNZD": 2.2,  "GBPCAD": 1.0,  "EURNZD": 1.2,
+    
     # Commodities
-    "XAUUSD": 2.0,  "XAGUSD": 3.0,
-    # Default
+    "XAGUSD": 2.0,   # Silver: ~0.020 USD
+    "XAUUSD": 0.4,   # Gold: ~0.40 USD (IC Markets quotes to 2 decimals; 1 pip = 0.01)
+    
+    # Fallback
     "DEFAULT": 0.5,
 }
 

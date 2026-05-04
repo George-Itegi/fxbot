@@ -1,0 +1,92 @@
+{
+  "status": "trained",
+  "version": "1.0-strategy",
+  "model_type": "XGBRegressor",
+  "target": "profit_r (R-multiple)",
+  "strategy": "DELTA_DIVERGENCE",
+  "strategy_key": "delta_div",
+  "layer": 1,
+  "n_features": 71,
+  "total_trades": 52,
+  "wins": 20,
+  "losses": 32,
+  "win_rate": 38.5,
+  "mean_r": -0.234,
+  "median_r": -1.0,
+  "train_mae": 0.1431,
+  "val_mae": 0.5146,
+  "val_rmse": 0.761,
+  "val_r2": 0.533,
+  "val_correlation": 0.897,
+  "pass_threshold": 0.2,
+  "best_iteration": 487,
+  "pass_count": 21,
+  "reject_count": 31,
+  "pass_wr": 95.2,
+  "reject_wr": 0.0,
+  "top_features": [
+    [
+      "tp_rr_ratio",
+      0.08330000191926956
+    ],
+    [
+      "tp_score",
+      0.08299999684095383
+    ],
+    [
+      "vw_pip_to_poc",
+      0.04360000044107437
+    ],
+    [
+      "of_imbalance",
+      0.03370000049471855
+    ],
+    [
+      "vs_momentum_velocity",
+      0.03139999881386757
+    ],
+    [
+      "fq_final_score",
+      0.026399999856948853
+    ],
+    [
+      "tp_sl_pips",
+      0.025499999523162842
+    ],
+    [
+      "of_delta",
+      0.02319999970495701
+    ],
+    [
+      "of_rolling_delta",
+      0.022600000724196434
+    ],
+    [
+      "tp_tp_pips",
+      0.021400000900030136
+    ],
+    [
+      "vw_pip_from_vwap",
+      0.017799999564886093
+    ],
+    [
+      "fq_market_score",
+      0.01209999993443489
+    ],
+    [
+      "fx_spread_pips",
+      0.008100000210106373
+    ],
+    [
+      "vs_choppy",
+      0.007799999788403511
+    ],
+    [
+      "vs_market_state",
+      0.006000000052154064
+    ]
+  ],
+  "calibration": [],
+  "model_size_kb": 395.3,
+  "trained_at": "2026-05-03T21:52:56.787235+00:00"
+}

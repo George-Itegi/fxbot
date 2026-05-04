@@ -1,0 +1,85 @@
+ python -m backtest.run --relaxed --use-model --store-db --days 2000 --no-limit
+Collect: python -m backtest.run --relaxed --store-db --days 1050 --no-limit
+Check: python -m backtest.run --model-status (verify trade count + WR)
+Train: python -m backtest.run --train --model-source backtest
+Test: python -m backtest.run --use-model --days 365 --no-limit
+
+python -m backtest.run --relaxed --use-model --store-db --days 2000 --unlimited-positions
+
+python -m backtest.run --parallel --relaxed --store-db --use-model
+
+/home/z/my-project/fxbot/
+python main.py --train --model-source backtest
+python -m backtest.run --relaxed --store-db --days 1050 --no-limit
+python main.py --backtest --parallel --relaxed --store-db
+
+
+# Single pair backtest with model gate active
+python main.py --backtest --symbol EURUSD --use-model --relaxed --store-db
+
+# Full 17-symbol parallel backtest with model
+python main.py --backtest --parallel --use-model --relaxed --store-db
+
+# Backtest WITHOUT model (raw strategy signals)
+python main.py --backtest --parallel --relaxed --store-db
+
+# Backtest without relaxed mode (stricter gates)
+python main.py --backtest --parallel --use-model --store-db
+python -m backtest.run --relaxed --store-db --use-model --days 365
+python -m backtest.run --relaxed --store-db --days 365
+python -m ai_engine.train_model --mixed
+python -m backtest.run --relaxed --store-db --use-model --days 365
+# Limit each pair to maximum 50 trades (stops after 50)
+python -m backtest.run --relaxed --store-db --use-model --max-trades 50
+
+# Unlimited (default - takes all qualified signals)
+python -m backtest.run --relaxed --store-db --use-model --max-trades 0
+
+python -m backtest.run --train --model-source backtest
+
+# Train/retrain XGBoost model on all stored backtest trades
+python main.py --train
+
+# Then immediately run backtest with the new model
+python main.py --backtest --parallel --use-model --relaxed --store-db
+
+Step 1: Collect training data
+  python -m backtest.run --relaxed --store-db --parallel
+
+Step 2: Train the model
+  python -m backtest.run --train
+
+Step 3: Run with model active
+  python -m backtest.run --use-model --parallel
+
+Step 4: (Optional) Clear and retrain
+  python -m backtest.run --clear-data
+  python -m backtest.run --relaxed --store-db --parallel
+  python -m backtest.run --train
+
+
+python -m backtest.run --train	Train XGBoost from DB data and exit
+python -m backtest.run --use-model	Run backtest with model filtering trades
+python -m backtest.run --clear-data	Clear DB for fresh start
+python -m backtest.run --model-status	Show if model is trained, size, age
+
+
+broker : Deriv.com Limited
+server: Deriv-Demo
+login id: 41020184
+password:Mkuthika001@
+
+
+Phase 1 (NOW):
+  Hard gates filter → ML Gate → TAKE/SHADOW/SKIP
+  Shadow only ML-blocked signals
+
+Phase 2 (LATER):  
+  Sample gate-blocked signals → shadow simulate them
+  Analyze: "Which gates are blocking profitable trades?"
+  Remove or loosen the gates that hurt performance
+  Keep the gates that protect against losses
+
+Phase 3 (MUCH LATER):
+  Once model has 2000+ trades including gate-blocked data
+  THEN the same model can learn to replace the gates
