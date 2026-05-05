@@ -7,127 +7,127 @@
   "strategy_key": "vwap",
   "layer": 1,
   "n_features": 71,
-  "total_trades": 360,
-  "wins": 99,
-  "losses": 261,
-  "win_rate": 27.5,
-  "mean_r": -0.264,
+  "total_trades": 160,
+  "wins": 49,
+  "losses": 111,
+  "win_rate": 30.6,
+  "mean_r": -0.187,
   "median_r": -1.0,
-  "train_mae": 0.0608,
-  "val_mae": 0.1647,
-  "val_rmse": 0.38,
-  "val_r2": 0.9191,
-  "val_correlation": 0.965,
+  "train_mae": 0.0572,
+  "val_mae": 0.21,
+  "val_rmse": 0.3248,
+  "val_r2": 0.942,
+  "val_correlation": 0.9796,
   "pass_threshold": 0.2,
-  "best_iteration": 499,
-  "pass_count": 99,
-  "reject_count": 261,
+  "best_iteration": 498,
+  "pass_count": 49,
+  "reject_count": 111,
   "pass_wr": 100.0,
   "reject_wr": 0.0,
   "top_features": [
     [
-      "of_delta_bias",
-      0.04610000178217888
-    ],
-    [
-      "vw_pip_from_vwap",
-      0.038600001484155655
-    ],
-    [
-      "hist_ps_avg_r_trend",
-      0.028200000524520874
-    ],
-    [
-      "ss_vwap_reversion",
-      0.025299999862909317
-    ],
-    [
-      "tp_sl_pips",
-      0.02449999935925007
-    ],
-    [
-      "st_session",
-      0.023099999874830246
-    ],
-    [
-      "vw_pip_to_poc",
-      0.01860000006854534
-    ],
-    [
-      "tp_score",
-      0.01769999973475933
-    ],
-    [
-      "smc_pips_to_eq",
-      0.01759999990463257
-    ],
-    [
       "hist_ps_avg_r_recent",
-      0.01720000058412552
+      0.07419999688863754
     ],
     [
       "smc_pd_zone",
-      0.01600000075995922
+      0.07029999792575836
+    ],
+    [
+      "of_rd_bias",
+      0.0640999972820282
+    ],
+    [
+      "fq_combined_bias",
+      0.05119999870657921
     ],
     [
       "of_rolling_delta",
-      0.014600000344216824
+      0.04019999876618385
     ],
     [
-      "fq_final_score",
-      0.014499999582767487
+      "hist_ps_trades_recent",
+      0.02879999950528145
     ],
     [
-      "tp_rr_ratio",
-      0.013799999840557575
+      "smc_pips_to_eq",
+      0.02239999920129776
+    ],
+    [
+      "vw_pip_to_poc",
+      0.019999999552965164
     ],
     [
       "vs_surge_ratio",
-      0.012400000356137753
+      0.01889999955892563
+    ],
+    [
+      "hist_ps_avg_r_all",
+      0.018699999898672104
+    ],
+    [
+      "fx_spread_pips",
+      0.01860000006854534
+    ],
+    [
+      "fq_market_score",
+      0.016300000250339508
+    ],
+    [
+      "fq_final_score",
+      0.015300000086426735
+    ],
+    [
+      "st_session",
+      0.014700000174343586
+    ],
+    [
+      "of_imbalance",
+      0.014600000344216824
     ]
   ],
   "calibration": [
     {
       "Q1 (worst)": {
-        "predicted_r": -1.046,
+        "predicted_r": -1.011,
         "actual_mean_r": -1.0,
         "win_rate_pct": 0.0,
-        "count": 14
+        "count": 6
       }
     },
     {
       "Q2": {
-        "predicted_r": -0.967,
+        "predicted_r": -0.889,
         "actual_mean_r": -1.0,
         "win_rate_pct": 0.0,
-        "count": 14
+        "count": 6
       }
     },
     {
       "Q3 (middle)": {
-        "predicted_r": -0.925,
+        "predicted_r": -0.772,
         "actual_mean_r": -1.0,
         "win_rate_pct": 0.0,
-        "count": 14
+        "count": 6
       }
     },
     {
       "Q4": {
-        "predicted_r": -0.273,
-        "actual_mean_r": -0.126,
-        "win_rate_pct": 35.7,
-        "count": 14
+        "predicted_r": 0.915,
+        "actual_mean_r": 0.987,
+        "win_rate_pct": 83.3,
+        "count": 6
       }
     },
     {
       "Q5 (best)": {
-        "predicted_r": 1.741,
-        "actual_mean_r": 1.994,
+        "predicted_r": 1.554,
+        "actual_mean_r": 1.844,
         "win_rate_pct": 100.0,
-        "count": 16
+        "count": 8
       }
     }
   ],
-  "model_size_kb": 500.4,
-  "trained_at": "2026-05-04T11:08:10.645001+00:00"
+  "model_size_kb": 446.9,
+  "trained_at": "2026-05-04T18:52:08.355522+00:00"
 }

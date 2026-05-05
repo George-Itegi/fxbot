@@ -7,127 +7,127 @@
   "strategy_key": "liq_sweep",
   "layer": 1,
   "n_features": 71,
-  "total_trades": 359,
-  "wins": 215,
-  "losses": 144,
-  "win_rate": 59.9,
-  "mean_r": -0.12,
-  "median_r": 0.157,
-  "train_mae": 0.1213,
-  "val_mae": 0.1954,
-  "val_rmse": 0.3659,
-  "val_r2": 0.7972,
-  "val_correlation": 0.8953,
+  "total_trades": 213,
+  "wins": 67,
+  "losses": 146,
+  "win_rate": 31.5,
+  "mean_r": -0.057,
+  "median_r": -1.0,
+  "train_mae": 0.1965,
+  "val_mae": 0.3647,
+  "val_rmse": 0.6414,
+  "val_r2": 0.8121,
+  "val_correlation": 0.9061,
   "pass_threshold": 0.2,
-  "best_iteration": 222,
-  "pass_count": 134,
-  "reject_count": 225,
-  "pass_wr": 100.0,
-  "reject_wr": 36.0,
+  "best_iteration": 307,
+  "pass_count": 68,
+  "reject_count": 145,
+  "pass_wr": 98.5,
+  "reject_wr": 0.0,
   "top_features": [
     [
-      "vw_position",
-      0.07010000199079514
-    ],
-    [
-      "hist_ps_wr_all",
-      0.0568000003695488
-    ],
-    [
-      "hist_ps_wr_recent",
-      0.04340000078082085
-    ],
-    [
-      "tp_rr_ratio",
-      0.03700000047683716
-    ],
-    [
-      "hist_ps_avg_r_decay",
-      0.03530000150203705
-    ],
-    [
-      "tp_sl_pips",
-      0.035100001841783524
-    ],
-    [
-      "fq_market_score",
-      0.029100000858306885
-    ],
-    [
-      "fq_smc_score",
-      0.026399999856948853
-    ],
-    [
-      "tp_tp_pips",
-      0.021900000050663948
-    ],
-    [
-      "tp_score",
-      0.021400000900030136
-    ],
-    [
       "fx_spread_pips",
-      0.0210999995470047
+      0.06289999932050705
     ],
     [
-      "sym_is_jpy",
-      0.02070000022649765
+      "smc_smc_bias",
+      0.059700001031160355
     ],
     [
-      "fq_final_score",
-      0.020400000736117363
+      "smc_structure_trend",
+      0.04639999940991402
+    ],
+    [
+      "smc_pd_zone",
+      0.04500000178813934
+    ],
+    [
+      "ss_trend_continuation",
+      0.04179999977350235
     ],
     [
       "vw_pip_to_poc",
-      0.02019999921321869
+      0.03849999979138374
     ],
     [
-      "of_imbalance",
-      0.01889999955892563
+      "fq_combined_bias",
+      0.03189999982714653
+    ],
+    [
+      "smc_pips_to_eq",
+      0.029600000008940697
+    ],
+    [
+      "vs_surge_ratio",
+      0.027699999511241913
+    ],
+    [
+      "hist_ps_trades_recent",
+      0.026599999517202377
+    ],
+    [
+      "hist_ps_wr_all",
+      0.026399999856948853
+    ],
+    [
+      "of_delta",
+      0.02199999988079071
+    ],
+    [
+      "tp_sl_pips",
+      0.020999999716877937
+    ],
+    [
+      "hist_ps_avg_r_decay",
+      0.020600000396370888
+    ],
+    [
+      "fq_final_score",
+      0.01860000006854534
     ]
   ],
   "calibration": [
     {
       "Q1 (worst)": {
-        "predicted_r": -0.98,
+        "predicted_r": -1.086,
         "actual_mean_r": -1.0,
         "win_rate_pct": 0.0,
-        "count": 14
+        "count": 8
       }
     },
     {
       "Q2": {
-        "predicted_r": -0.68,
-        "actual_mean_r": -0.715,
-        "win_rate_pct": 14.3,
-        "count": 14
+        "predicted_r": -0.954,
+        "actual_mean_r": -1.0,
+        "win_rate_pct": 0.0,
+        "count": 8
       }
     },
     {
       "Q3 (middle)": {
-        "predicted_r": 0.009,
-        "actual_mean_r": 0.233,
-        "win_rate_pct": 100.0,
-        "count": 14
+        "predicted_r": -0.657,
+        "actual_mean_r": -1.0,
+        "win_rate_pct": 0.0,
+        "count": 8
       }
     },
     {
       "Q4": {
-        "predicted_r": 0.212,
-        "actual_mean_r": 0.143,
-        "win_rate_pct": 92.9,
-        "count": 14
+        "predicted_r": 0.852,
+        "actual_mean_r": 1.624,
+        "win_rate_pct": 87.5,
+        "count": 8
       }
     },
     {
       "Q5 (best)": {
-        "predicted_r": 0.751,
-        "actual_mean_r": 0.81,
+        "predicted_r": 1.898,
+        "actual_mean_r": 2.0,
         "win_rate_pct": 100.0,
-        "count": 16
+        "count": 11
       }
     }
   ],
-  "model_size_kb": 231.6,
-  "trained_at": "2026-05-04T11:08:10.096110+00:00"
+  "model_size_kb": 304.4,
+  "trained_at": "2026-05-04T18:52:11.985225+00:00"
 }

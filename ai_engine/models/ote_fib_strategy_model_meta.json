@@ -1,0 +1,133 @@
+{
+  "status": "trained",
+  "version": "1.0-strategy",
+  "model_type": "XGBRegressor",
+  "target": "profit_r (R-multiple)",
+  "strategy": "OPTIMAL_TRADE_ENTRY_FIB",
+  "strategy_key": "ote_fib",
+  "layer": 1,
+  "n_features": 71,
+  "total_trades": 95,
+  "wins": 20,
+  "losses": 75,
+  "win_rate": 21.1,
+  "mean_r": 0.051,
+  "median_r": -1.0,
+  "train_mae": 0.4664,
+  "val_mae": 0.5718,
+  "val_rmse": 1.3289,
+  "val_r2": 0.0162,
+  "val_correlation": 0.139,
+  "pass_threshold": 0.2,
+  "best_iteration": 90,
+  "pass_count": 21,
+  "reject_count": 74,
+  "pass_wr": 95.2,
+  "reject_wr": 0.0,
+  "top_features": [
+    [
+      "ss_ote_fib",
+      0.07980000227689743
+    ],
+    [
+      "sym_is_jpy",
+      0.0794999971985817
+    ],
+    [
+      "hist_ps_avg_r_all",
+      0.040300000458955765
+    ],
+    [
+      "vs_market_state",
+      0.032499998807907104
+    ],
+    [
+      "hist_ps_avg_r_decay",
+      0.03200000151991844
+    ],
+    [
+      "vs_surge_ratio",
+      0.02759999968111515
+    ],
+    [
+      "fq_htf_score",
+      0.024299999698996544
+    ],
+    [
+      "vw_position",
+      0.02239999920129776
+    ],
+    [
+      "vw_pip_from_vwap",
+      0.016599999740719795
+    ],
+    [
+      "fx_spread_pips",
+      0.016200000420212746
+    ],
+    [
+      "fq_market_score",
+      0.013899999670684338
+    ],
+    [
+      "vw_price_position",
+      0.013000000268220901
+    ],
+    [
+      "tp_sl_pips",
+      0.009999999776482582
+    ],
+    [
+      "of_imbalance",
+      0.008899999782443047
+    ],
+    [
+      "of_delta",
+      0.008200000040233135
+    ]
+  ],
+  "calibration": [
+    {
+      "Q1 (worst)": {
+        "predicted_r": -0.944,
+        "actual_mean_r": -1.0,
+        "win_rate_pct": 0.0,
+        "count": 3
+      }
+    },
+    {
+      "Q2": {
+        "predicted_r": -0.873,
+        "actual_mean_r": -1.0,
+        "win_rate_pct": 0.0,
+        "count": 3
+      }
+    },
+    {
+      "Q3 (middle)": {
+        "predicted_r": -0.789,
+        "actual_mean_r": -1.0,
+        "win_rate_pct": 0.0,
+        "count": 3
+      }
+    },
+    {
+      "Q4": {
+        "predicted_r": -0.738,
+        "actual_mean_r": -1.0,
+        "win_rate_pct": 0.0,
+        "count": 3
+      }
+    },
+    {
+      "Q5 (best)": {
+        "predicted_r": -0.455,
+        "actual_mean_r": -0.143,
+        "win_rate_pct": 14.3,
+        "count": 7
+      }
+    }
+  ],
+  "model_size_kb": 79.3,
+  "trained_at": "2026-05-05T11:54:11.943672+00:00"
+}

@@ -7,86 +7,86 @@
   "strategy_key": "fvg",
   "layer": 1,
   "n_features": 71,
-  "total_trades": 61,
-  "wins": 0,
-  "losses": 61,
-  "win_rate": 0.0,
-  "mean_r": -1.0,
+  "total_trades": 50,
+  "wins": 5,
+  "losses": 45,
+  "win_rate": 10.0,
+  "mean_r": -0.182,
   "median_r": -1.0,
-  "train_mae": 0.0,
-  "val_mae": 0.0,
-  "val_rmse": 0.0,
-  "val_r2": 0.0,
-  "val_correlation": 0.0,
+  "train_mae": 0.6473,
+  "val_mae": 0.7327,
+  "val_rmse": 1.6378,
+  "val_r2": 0.1721,
+  "val_correlation": 0.622,
   "pass_threshold": 0.5,
-  "best_iteration": 0,
-  "pass_count": 61,
-  "reject_count": 0,
-  "pass_wr": 0.0,
+  "best_iteration": 116,
+  "pass_count": 5,
+  "reject_count": 45,
+  "pass_wr": 100.0,
   "reject_wr": 0.0,
   "top_features": [
     [
-      "fq_final_score",
-      0.0
+      "fx_spread_pips",
+      0.07050000131130219
     ],
     [
-      "fq_market_score",
-      0.0
-    ],
-    [
-      "fq_smc_score",
-      0.0
-    ],
-    [
-      "fq_combined_bias",
-      0.0
-    ],
-    [
-      "fq_bias_confidence",
-      0.0
-    ],
-    [
-      "fq_htf_approved",
-      0.0
-    ],
-    [
-      "fq_htf_score",
-      0.0
-    ],
-    [
-      "of_delta",
-      0.0
-    ],
-    [
-      "of_rolling_delta",
-      0.0
-    ],
-    [
-      "of_delta_bias",
-      0.0
-    ],
-    [
-      "of_rd_bias",
-      0.0
+      "tp_rr_ratio",
+      0.06849999725818634
     ],
     [
       "of_imbalance",
-      0.0
+      0.06069999933242798
     ],
     [
-      "of_imb_strength",
-      0.0
+      "smc_smc_bias",
+      0.05739999935030937
+    ],
+    [
+      "smc_structure_trend",
+      0.050200000405311584
+    ],
+    [
+      "tp_sl_pips",
+      0.04500000178813934
+    ],
+    [
+      "fq_smc_score",
+      0.04149999842047691
+    ],
+    [
+      "st_session",
+      0.04129999876022339
+    ],
+    [
+      "hist_ps_trades_recent",
+      0.04129999876022339
+    ],
+    [
+      "vw_pip_to_poc",
+      0.04050000011920929
+    ],
+    [
+      "of_rolling_delta",
+      0.039400000125169754
+    ],
+    [
+      "smc_pips_to_eq",
+      0.03909999877214432
+    ],
+    [
+      "fq_final_score",
+      0.03830000013113022
     ],
     [
       "vw_pip_from_vwap",
-      0.0
+      0.03709999844431877
     ],
     [
-      "vw_position",
-      0.0
+      "vs_momentum_velocity",
+      0.03319999948143959
     ]
   ],
   "calibration": [],
-  "model_size_kb": 4.0,
-  "trained_at": "2026-05-04T11:08:09.764169+00:00"
+  "model_size_kb": 93.6,
+  "trained_at": "2026-05-04T16:00:34.491746+00:00"
 }
