@@ -1234,6 +1234,11 @@ def store_inst_candles_features(cursor, trade_id: int, inst_candles_features: di
     if not inst_candles_features or not trade_id:
         return
     try:
+        # context_types is a list from the strategy — serialize to comma-separated string
+        ctx_types = inst_candles_features.get('context_types')
+        if isinstance(ctx_types, list):
+            ctx_types = ','.join(str(x) for x in ctx_types)
+
         cursor.execute("""
             INSERT INTO backtest_inst_candles_features
                 (trade_id, pattern_type, direction, body_pips, wick_ratio,
@@ -1252,7 +1257,7 @@ def store_inst_candles_features(cursor, trade_id: int, inst_candles_features: di
             inst_candles_features.get('body_pips'),
             inst_candles_features.get('wick_ratio'),
             inst_candles_features.get('quality'),
-            inst_candles_features.get('context_types'),
+            ctx_types,
             inst_candles_features.get('context_count'),
             inst_candles_features.get('context_score'),
             inst_candles_features.get('delta_bias'),
