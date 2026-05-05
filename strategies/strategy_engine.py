@@ -329,8 +329,14 @@ def _run_one_strategy(name, symbol,
     # Per-strategy session gates below are ADDITIONAL restrictions.
 
     # Per-strategy additional session restrictions
-    # (empty = no per-strategy restrictions; all use SESSION_WHITELIST from config)
-    HARD_SESSION_GATES_STRAT = {}
+    HARD_SESSION_GATES_STRAT = {
+        "TREND_CONTINUATION":    ["LONDON_OPEN", "LONDON_SESSION",
+                                  "NY_LONDON_OVERLAP"],
+        "EMA_CROSS_MOMENTUM":    ["LONDON_OPEN", "LONDON_SESSION",
+                                  "NY_LONDON_OVERLAP"],
+        "OPTIMAL_TRADE_ENTRY_FIB": ["LONDON_OPEN", "LONDON_SESSION",
+                                  "NY_LONDON_OVERLAP"],
+    }
 
     # ── Check market state gate ─────────────────────────────────
     # In relaxed mode: bypass hard gates for strategies that need relaxation

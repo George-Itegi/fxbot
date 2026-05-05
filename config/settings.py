@@ -21,34 +21,32 @@
 # To CUT an existing pair: add to PAIR_BLACKLIST with reason.
 
 PAIR_WHITELIST = [
-    # GBP Crosses (NEW — GBP shares volatility/momentum DNA with JPY)
-    "GBPCAD",  # Walk-forward 60d: +$1,493 | Sharpe 1.33 | PF 1.53 | PROMISING
-    "GBPAUD",  # Walk-forward 60d: -$524 | Low trades (21) | Needs more data
-
-    # GBP Core (Proven Edge)
-    "GBPJPY",  # Walk-forward 60d: +$10,430 | Sharpe 4.39 | ELITE
-    "GBPNZD",  # Walk-forward 60d: +$4,738 | Sharpe 3.62 | PF 2.21 (retrained model)
-    "GBPUSD",  # Walk-forward 60d: +$1,355 | Sharpe 1.86 | PF 1.69
-
-    # JPY Crosses (Core Edge — 69% of portfolio P&L)
-    "CHFJPY",  # Walk-forward 60d: +$3,971 | Sharpe 3.63 | PF 2.44 (retrained model)
-    "AUDJPY",  # Walk-forward 60d: +$4,662 | Sharpe 3.14 | PF 2.04
-    "CADJPY",  # Walk-forward 60d: +$1,662 | Sharpe 2.30 | PF 2.92 (retrained model)
-    "EURJPY",  # Walk-forward 60d: +$4,365 | Sharpe 3.65 | PF 2.62 (retrained model)
+    # JPY Crosses (Core Edge)
+    "EURJPY",  # +$11,506 | JPY Cross
+    "GBPJPY",  # +$10,346 | JPY Cross
+    "CHFJPY",  # +$6,083  | JPY Cross
+    "CADJPY",  # +$3,413  | JPY Cross
+    "AUDJPY",  # +$2,739  | JPY Cross
 
     # Commodities
-    "XAGUSD",  # Walk-forward 60d: -$773 (retrained model over-filtered) | Historical Sharpe 4.53
+    "XAGUSD",  # +$9,290  | Metal
+
+    # USD Pairs
+    "AUDUSD",  # +$2,253  | USD
+    "EURUSD",  # +$1,592  | USD
+    "GBPUSD",  # +$1,419  | USD
+
+    # Commodity Cross
+    "AUDCAD",  # +$2,277  | Commodity
 ]
 
 PAIR_BLACKLIST = {
     # Pair: (date_cut, reason, backtest_pnl, backtest_sharpe)
     "XAUUSD": ("2025-05", "Gold microstructure mismatch", -246, -0.92),
-    "AUDCAD": ("2025-05", "One-strategy dependency, 0.20 Sharpe", 1886, 0.20),
-    "EURUSD": ("2025-05", "EUR base toxic for momentum strategies", -4538, -3.82),
-    "EURAUD": ("2025-05", "EUR base toxic for momentum strategies", -3304, -2.89),
-    "EURNZD": ("2025-05", "EUR base toxic for momentum strategies", -4162, -2.89),
-    "EURCAD": ("2025-05", "EUR base toxic for momentum strategies", -3041, -2.11),
-    "EURGBP": ("2025-05", "Model rejects all signals, pair too rangy", 0, 0.30),
+    "GBPAUD": ("2025-05", "AUD quote toxic for momentum", -524, -0.50),
+    "GBPCAD": ("2025-05", "Insufficient edge in 120d", -3026, -2.08),
+    "GBPNZD": ("2025-05", "NZD quote toxic in 120d", -3026, -2.08),
+    "EURGBP": ("2025-05", "Model rejects all signals, 0 trades", -691, -42.6),
 }
 
 # Alias for backward compat — WATCHLIST = WHITELIST
@@ -67,12 +65,9 @@ WATCHLIST = PAIR_WHITELIST
 #   NY_LONDON_OVERLAP: 306 trades, 43.1% WR, +$27,632
 
 SESSION_WHITELIST = [
-    "SYDNEY",
-    "TOKYO",
     "LONDON_OPEN",
     "LONDON_SESSION",
     "NY_LONDON_OVERLAP",
-    "NY_AFTERNOON",
 ]
 
 SESSION_BLACKLIST = {
@@ -151,15 +146,15 @@ SIZING_CONSEC_LOSS_HALVE    = 3      # Halve all sizes after N consecutive losse
 # --- SPREAD LIMITS (in pips) ---
 # Only whitelisted pairs. Cut pairs removed.
 MAX_SPREAD = {
-    # GBP Crosses (NEW)
-    "GBPAUD": 3.0, "GBPCAD": 3.5,
-    # GBP Core
-    "GBPJPY": 4.0, "GBPNZD": 6.0, "GBPUSD": 2.0,
     # JPY Crosses (Core Edge)
-    "CHFJPY": 3.5, "EURJPY": 3.0,
+    "EURJPY": 3.0, "GBPJPY": 4.0, "CHFJPY": 3.5,
     "AUDJPY": 3.5, "CADJPY": 4.0,
     # Commodities
     "XAGUSD": 5.0,
+    # USD Pairs
+    "AUDUSD": 2.0, "EURUSD": 2.0, "GBPUSD": 2.0,
+    # Commodity Cross
+    "AUDCAD": 4.0,
     # Default fallback
     "DEFAULT": 4.0,
 }
