@@ -23,17 +23,42 @@ import datetime
 #     "XAUUSD",  # Gold
 #     "XAGUSD",  # Silver
 # ]
+PAIR_WHITELIST = [
+    # CHF Pairs (Category 1 — HIGHEST PRIORITY)
+    # CHFJPY is the #1 pair by every metric. Testing CHF cross pairs to
+    # validate whether the bot's CHF edge transfers to related pairs.
+    "USDCHF",  # MUST TEST — Major pair, highest liquidity, tightest spreads
+    "GBPCHF",  # MUST TEST — GBP trends well + CHF edge, ICMarkets spread ~0.9pip
+    "CHFJPY",  # Sharpe 4.92 | +$10,442 | 87 trades | BEST PAIR (existing)
+    "EURCHF",  # Test — Liquid cross, tends to range but worth checking
+    "AUDCHF",  # Test — If AUDJPY + CHFJPY both work, this could be strong
+    "CADCHF",  # Test — If CADJPY + CHFJPY both work, this could work
+    "NZDCHF",  # Maybe — Less liquid but NZD trends well
 
-SYMBOLS = [
-    # JPY Crosses (Core Edge)
-    "CHFJPY", "EURJPY", "GBPJPY", "AUDJPY", "CADJPY",
+    # JPY Crosses (Core Edge — 69% of portfolio P&L)
+    "GBPJPY",  # Sharpe 3.58 | +$7,241  | 119 trades
+    "CADJPY",  # Sharpe 3.71 | +$5,699  | 38 trades
+    "AUDJPY",  # Sharpe 3.25 | +$4,506  | 65 trades
+    "EURJPY",  # Sharpe 2.29 | +$4,181  | 95 trades
 
     # GBP Base (Secondary Edge)
-    "GBPUSD", "GBPNZD",
+    "GBPNZD",  # Sharpe 2.63 | +$4,597  | 62 trades
+    "GBPUSD",  # Sharpe 1.79 | +$2,120  | 41 trades | diversifier
 
     # Commodities
-    "XAGUSD",  # Silver
+    "XAGUSD",  # Sharpe 3.11 | +$5,074  | 52 trades | Silver only
 ]
+
+# SYMBOLS = [
+#     # JPY Crosses (Core Edge)
+#     "CHFJPY", "EURJPY", "GBPJPY", "AUDJPY", "CADJPY",
+
+#     # GBP Base (Secondary Edge)
+#     "GBPUSD", "GBPNZD",
+
+#     # Commodities
+#     "XAGUSD",  # Silver
+# ]
 # v2.0: 8-pair optimized portfolio (removed GBPAUD/GBPCAD/XAUUSD/EURGBP/AUDCAD)
 # Cut pairs: negative P&L, low Sharpe, or structural dependency (see config/settings.py)
 # Cut sessions: NY_AFTERNOON and SYDNEY — enforced in data_loader.py _tag_session
@@ -65,19 +90,33 @@ START_DATE = END_DATE - datetime.timedelta(days=180)  # 6 months
 #     "DEFAULT": 0.5,
 # }
 
-AVG_SPREAD_PIPS = {
+# AVG_SPREAD_PIPS = {
+#     # JPY Crosses (Core Edge)
+#     "CHFJPY": 0.6,  "EURJPY": 0.3, "GBPJPY": 0.7,
+#     "AUDJPY": 0.4, "CADJPY": 0.5,
+
+#     # GBP Base (Secondary Edge)
+#     "GBPUSD": 0.2, "GBPNZD": 2.2,
+
+#     # Commodities
+#     "XAGUSD": 2.0,   # Silver: ~0.020 USD
+
+#     # Fallback
+#     "DEFAULT": 0.5,
+# }
+MAX_SPREAD = {
+    # CHF Pairs (Category 1 — ICMarkets raw spreads)
+    "USDCHF": 2.0, "GBPCHF": 4.0, "CHFJPY": 3.5,
+    "EURCHF": 3.0, "AUDCHF": 3.5, "CADCHF": 3.5, "NZDCHF": 4.0,
     # JPY Crosses (Core Edge)
-    "CHFJPY": 0.6,  "EURJPY": 0.3, "GBPJPY": 0.7,
-    "AUDJPY": 0.4, "CADJPY": 0.5,
-
-    # GBP Base (Secondary Edge)
-    "GBPUSD": 0.2, "GBPNZD": 2.2,
-
+    "GBPJPY": 4.0, "EURJPY": 3.0,
+    "AUDJPY": 3.5, "CADJPY": 4.0,
+    # GBP Base
+    "GBPNZD": 6.0, "GBPUSD": 2.0,
     # Commodities
-    "XAGUSD": 2.0,   # Silver: ~0.020 USD
-
-    # Fallback
-    "DEFAULT": 0.5,
+    "XAGUSD": 5.0,
+    # Default fallback
+    "DEFAULT": 4.0,
 }
 
 # --- Slippage (pips) ---
