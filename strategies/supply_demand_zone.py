@@ -1,5 +1,5 @@
 # =============================================================
-# strategies/supply_demand_zone.py  v1.0
+# strategies/supply_demand_zone.py  v1.1
 # Strategy: Supply/Demand Zone Entry
 #
 # Institutional S&D zones represent areas where banks placed
@@ -23,7 +23,11 @@ log = get_logger(__name__)
 
 STRATEGY_NAME = "SUPPLY_DEMAND_ZONE_ENTRY"
 MIN_SCORE     = 70
-VERSION       = "1.0"
+MIN_SL_PIPS   = 25.0   # Minimum SL distance (pips) — prevents noise stop-outs
+SL_ATR_MULT   = 1.5     # SL buffer = ATR × this multiplier
+ZONE_TOLERANCE_PIPS = 1.0  # Tolerance for price-at-zone check (pips)
+DISP_MIN_PIPS = 15.0    # Minimum displacement to qualify (pips)
+VERSION       = "1.1"
 
 
 def _get_pip_size(symbol: str, price: float) -> float:
@@ -49,7 +53,8 @@ def _find_demand_zone(df_h1: pd.DataFrame, pip_size: float) -> dict | None:
 
     lookback = min(40, len(df_h1) - 1)
     
-    for i in range(len(df_h1) - lookback, len(df_h1) - 3):
+    # Scan NEWEST → OLDEST to trade the freshest valid zone first
+    for i in range(len(df_h1) - 4, len(df_h1) - lookback - 1, -1):
         # Check for consolidation: 3+ candles with small bodies
         consolidation_high = float(df_h1.iloc[i]['high'])
         consolidation_low  = float(df_h1.iloc[i]['low'])
@@ -86,7 +91,7 @@ def _find_demand_zone(df_h1: pd.DataFrame, pip_size: float) -> dict | None:
                 if body / pip_size > 3:  # Strong bullish candle
                     disp_candles += 1
         
-        if disp_candles < 1 or disp_pips < 8:
+        if disp_candles < 1 or disp_pips < DISP_MIN_PIPS:
             continue  # No meaningful displacement
         
         # Zone freshness: count bars since zone formed
@@ -117,7 +122,8 @@ def _find_supply_zone(df_h1: pd.DataFrame, pip_size: float) -> dict | None:
 
     lookback = min(40, len(df_h1) - 1)
     
-    for i in range(len(df_h1) - lookback, len(df_h1) - 3):
+    # Scan NEWEST → OLDEST to trade the freshest valid zone first
+    for i in range(len(df_h1) - 4, len(df_h1) - lookback - 1, -1):
         consolidation_high = float(df_h1.iloc[i]['high'])
         consolidation_low  = float(df_h1.iloc[i]['low'])
         consolidation_bodies = 0
@@ -152,7 +158,7 @@ def _find_supply_zone(df_h1: pd.DataFrame, pip_size: float) -> dict | None:
                 if body / pip_size > 3:
                     disp_candles += 1
         
-        if disp_candles < 1 or disp_pips < 8:
+        if disp_candles < 1 or disp_pips < DISP_MIN_PIPS:
             continue
         
         age_bars = len(df_h1) - 1 - disp_idx
@@ -248,7 +254,7 @@ def evaluate(symbol: str,
         age_bars    = demand_zone['age_bars']
 
         # MANDATORY: Price must be inside or touching the demand zone
-        tolerance = 3.0 * pip_size
+        tolerance = ZONE_TOLERANCE_PIPS * pip_size
         price_in_zone = (zone_bottom - tolerance <= close_price <= zone_top + tolerance)
         if not price_in_zone:
             demand_zone = None  # Clear — price not at zone
@@ -360,9 +366,15 @@ def evaluate(symbol: str,
             return None
 
         if score >= MIN_SCORE:
-            # Entry at zone bottom (support) or current price if inside zone
-            entry_price = max(close_price, zone_bottom)
-            sl_price  = round(zone_bottom - atr_pips * 0.3 * pip_size, 5)
+            # Entry at actual close price (realistic fill)
+            entry_price = close_price
+            sl_price  = round(zone_bottom - atr_pips * SL_ATR_MULT * pip_size, 5)
+
+            # Enforce minimum SL distance
+            sl_pips_calc = (entry_price - sl_price) / pip_size
+            if sl_pips_calc < MIN_SL_PIPS:
+                sl_price = round(entry_price - MIN_SL_PIPS * pip_size, 5)
+
             tp1_price = round(entry_price + atr_pips * 2.0 * pip_size, 5)
             tp2_price = round(entry_price + atr_pips * 3.5 * pip_size, 5)
             sl_pips   = round((entry_price - sl_price) / pip_size, 1)
@@ -423,7 +435,7 @@ def evaluate(symbol: str,
         disp_pips   = supply_zone['displacement_pips']
         age_bars    = supply_zone['age_bars']
 
-        tolerance = 3.0 * pip_size
+        tolerance = ZONE_TOLERANCE_PIPS * pip_size
         price_in_zone = (zone_bottom - tolerance <= close_price <= zone_top + tolerance)
         if not price_in_zone:
             supply_zone = None
@@ -535,8 +547,15 @@ def evaluate(symbol: str,
             return None
 
         if score >= MIN_SCORE:
-            entry_price = min(close_price, zone_top)
-            sl_price  = round(zone_top + atr_pips * 0.3 * pip_size, 5)
+            # Entry at actual close price (realistic fill)
+            entry_price = close_price
+            sl_price  = round(zone_top + atr_pips * SL_ATR_MULT * pip_size, 5)
+
+            # Enforce minimum SL distance
+            sl_pips_calc = (sl_price - entry_price) / pip_size
+            if sl_pips_calc < MIN_SL_PIPS:
+                sl_price = round(entry_price + MIN_SL_PIPS * pip_size, 5)
+
             tp1_price = round(entry_price - atr_pips * 2.0 * pip_size, 5)
             tp2_price = round(entry_price - atr_pips * 3.5 * pip_size, 5)
             sl_pips   = round((sl_price - entry_price) / pip_size, 1)

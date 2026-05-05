@@ -1,5 +1,5 @@
 # =============================================================
-# strategies/optimal_trade_entry_fib.py  v1.0
+# strategies/optimal_trade_entry_fib.py  v1.1
 # Strategy: ICT Optimal Trade Entry (OTE) Fibonacci
 #
 # After a strong trending move, price tends to retrace to the
@@ -22,7 +22,9 @@ log = get_logger(__name__)
 
 STRATEGY_NAME = "OPTIMAL_TRADE_ENTRY_FIB"
 MIN_SCORE     = 70
-VERSION       = "1.0"
+MIN_SL_PIPS   = 25.0   # Minimum SL distance (pips) — prevents noise stop-outs
+SL_ATR_MULT   = 1.5     # SL buffer = ATR × this multiplier
+VERSION       = "1.1"
 
 
 def _get_pip_size(symbol: str, price: float) -> float:
@@ -43,22 +45,28 @@ def _check_displacement(df_m15: pd.DataFrame, direction: str,
     """
     result = {'has_displacement': False, 'displacement_pips': 0.0}
 
-    if df_m15 is None or len(df_m15) < 1:
+    if df_m15 is None or len(df_m15) < 2:
         return result
 
-    candle = df_m15.iloc[-1]
-    body = float(candle['close']) - float(candle['open'])
-    body_pips = abs(body) / pip_size
+    # Check last 3 M15 candles for displacement — institutions may have
+    # entered 1-2 bars ago and the current bar could be consolidation
+    lookback = min(3, len(df_m15))
+    for offset in range(1, lookback + 1):
+        candle = df_m15.iloc[-offset]
+        body = float(candle['close']) - float(candle['open'])
+        body_pips = abs(body) / pip_size
 
-    if body_pips < 5.0:
-        return result
+        if body_pips < 5.0:
+            continue
 
-    if direction == 'BUY' and body > 0:
-        result['has_displacement'] = True
-        result['displacement_pips'] = body_pips
-    elif direction == 'SELL' and body < 0:
-        result['has_displacement'] = True
-        result['displacement_pips'] = body_pips
+        if direction == 'BUY' and body > 0:
+            result['has_displacement'] = True
+            result['displacement_pips'] = body_pips
+            break  # Use the most recent qualifying displacement
+        elif direction == 'SELL' and body < 0:
+            result['has_displacement'] = True
+            result['displacement_pips'] = body_pips
+            break
 
     return result
 
@@ -243,14 +251,18 @@ def evaluate(symbol: str,
             entry_price = close_price
 
             # SL: below the 78.6% level (deeper boundary of OTE zone),
-            #     with ATR * 0.5 buffer — whichever is wider
-            sl_below_zone = gz_low - atr_pips * 0.5 * pip_size
-            sl_atr = entry_price - atr_pips * 0.5 * pip_size
-            sl_price = round(min(sl_below_zone, sl_atr), 5)
+            #     with ATR * 1.5 buffer — wide enough to survive noise
+            sl_below_zone = gz_low - atr_pips * SL_ATR_MULT * pip_size
+            sl_price = round(sl_below_zone, 5)
 
             # Ensure SL is below current price
             if sl_price >= entry_price:
-                sl_price = round(entry_price - atr_pips * 0.5 * pip_size, 5)
+                sl_price = round(entry_price - atr_pips * SL_ATR_MULT * pip_size, 5)
+
+            # Enforce minimum SL distance to prevent noise stop-outs
+            sl_pips_calc = (entry_price - sl_price) / pip_size
+            if sl_pips_calc < MIN_SL_PIPS:
+                sl_price = round(entry_price - MIN_SL_PIPS * pip_size, 5)
 
             # TP1: 1.618 extension, or ATR * 2.5 from entry
             tp1_ext = extension_levels.get('1.618')
@@ -409,14 +421,18 @@ def evaluate(symbol: str,
             entry_price = close_price
 
             # SL: above the 78.6% level (deeper boundary of OTE zone),
-            #     with ATR * 0.5 buffer — whichever is wider
-            sl_above_zone = gz_high + atr_pips * 0.5 * pip_size
-            sl_atr = entry_price + atr_pips * 0.5 * pip_size
-            sl_price = round(max(sl_above_zone, sl_atr), 5)
+            #     with ATR * 1.5 buffer — wide enough to survive noise
+            sl_above_zone = gz_high + atr_pips * SL_ATR_MULT * pip_size
+            sl_price = round(sl_above_zone, 5)
 
             # Ensure SL is above current price
             if sl_price <= entry_price:
-                sl_price = round(entry_price + atr_pips * 0.5 * pip_size, 5)
+                sl_price = round(entry_price + atr_pips * SL_ATR_MULT * pip_size, 5)
+
+            # Enforce minimum SL distance to prevent noise stop-outs
+            sl_pips_calc = (sl_price - entry_price) / pip_size
+            if sl_pips_calc < MIN_SL_PIPS:
+                sl_price = round(entry_price + MIN_SL_PIPS * pip_size, 5)
 
             # TP1: 1.618 extension (below for DOWN), or ATR * 2.5 from entry
             tp1_ext = extension_levels.get('1.618')
