@@ -678,6 +678,8 @@ def run_backtest(config: BacktestConfig) -> dict:
         # Initialize L1 model vars (used in both ML Gate and rule-based paths)
         strat_model_verdict = None
         strat_model_predicted_r = None
+        hist_ps_feat = None
+        confluence = []
 
         if ml_gate_active:
             try:
