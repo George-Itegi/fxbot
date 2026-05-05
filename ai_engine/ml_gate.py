@@ -7,13 +7,13 @@
 # instead of classification (predict win/loss).
 #
 # ARCHITECTURE:
-#   Layer 1 — Feature Engineering (75 features):
+#   Layer 1 — Feature Engineering (71 features):
 #     - 8  market quality features (score, delta, OF, volume)
 #     - 4  VWAP features
 #     - 8  SMC features (BOS, OBs, FVGs, sweeps, P/D zone)
 #     - 3  HTF alignment features
 #     - 5  trade parameter features (SL, TP, R:R)
-#     - 14 strategy scores (the KEY addition)
+#     - 10 strategy scores (active strategies only)
 #     - 3  consensus features (groups, counts, direction split)
 #     - 5  session/time features
 #     - 6  volatility/state features
@@ -22,10 +22,11 @@
 #     - 3  Fibonacci confluence features
 #     - 1  price context (spread)
 #     - 3  self-calibration features (v3.3: source, predicted_r, error)
-#     = 75 total features
+#     - 9  pair-strategy performance features
+#     = 71 named features (+ 3 unnamed self-calibration = 74 total)
 #
 #   Layer 2 — ML Model (XGBoost Regressor):
-#     Input:  78-feature vector (75 named + 3 unnamed self-calibration)
+#     Input:  74-feature vector (71 named + 3 unnamed self-calibration)
 #     Output: Predicted R-multiple (continuous float) per trade
 #     Trained on: backtest_trades + shadow_trades with profit_r as target
 #     v3.1: Switched from XGBClassifier (binary) to XGBRegressor
@@ -79,8 +80,9 @@ CAUTION_THRESHOLD = 0.0  # Below this → SKIP
 
 
 # ════════════════════════════════════════════════════════════════
-# FEATURE NAMES (75 total) — must match extract_features exactly
-# v3.5: Added 4 new strategy scores (Batch 1 + Batch 2 strategies)
+# FEATURE NAMES (71 total) — must match extract_features exactly
+# v3.5: Removed 4 retired strategy scores, added 4 new (Batch 1 + Batch 2)
+#        Net change: 71 features (was 71, replaced 4 retired with 4 new)
 # ════════════════════════════════════════════════════════════════
 
 FEATURE_NAMES = [
@@ -124,17 +126,13 @@ FEATURE_NAMES = [
     'tp_rr_ratio',           # TP/SL ratio
     'tp_direction',          # 1 for BUY, -1 for SELL
 
-    # ── Group 6: Strategy scores (14) — THE KEY ADDITION ───
+    # ── Group 6: Strategy scores (10) — THE KEY ADDITION ───
     'ss_smc_ob',             # SMC_OB_REVERSAL score (0 if no signal)
     'ss_liquidity_sweep',    # LIQUIDITY_SWEEP_ENTRY score
-    'ss_vwap_reversion',     # VWAP_MEAN_REVERSION score
     'ss_delta_divergence',   # DELTA_DIVERGENCE score
     'ss_trend_continuation', # TREND_CONTINUATION score
-    'ss_fvg_reversion',      # FVG_REVERSION score
     'ss_ema_cross',          # EMA_CROSS_MOMENTUM score
     'ss_rsi_divergence',     # RSI_DIVERGENCE_SMC score
-    'ss_breakout_momentum',  # BREAKOUT_MOMENTUM score
-    'ss_structure_align',    # STRUCTURE_ALIGNMENT score
     'ss_sd_zone',            # SUPPLY_DEMAND_ZONE_ENTRY score (Batch 1)
     'ss_bos_momentum',       # BREAK_OF_STRUCTURE_MOMENTUM score (Batch 1)
     'ss_ote_fib',            # OPTIMAL_TRADE_ENTRY_FIB score (Batch 2)
@@ -192,8 +190,8 @@ FEATURE_NAMES = [
     'hist_ps_avg_r_trend',    # Recent - all-time avg R (improving?)
 ]
 
-# Should be 75 features (71 original + 4 new strategy scores)
-assert len(FEATURE_NAMES) == 75, f"Expected 75 features, got {len(FEATURE_NAMES)}"
+# Should be 71 features (67 original + 4 new strategy scores, retired 4 removed)
+assert len(FEATURE_NAMES) == 71, f"Expected 71 features, got {len(FEATURE_NAMES)}"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -264,7 +262,7 @@ def extract_features(signal: dict,
                      hist_ps_features: dict = None) -> np.ndarray:
     """
     Extract 74 numerical features from the full market context.
-    v3.5: 75 named features + 3 unnamed self-calibration features = 78 total.
+    v3.5: 71 named features + 3 unnamed self-calibration features = 74 total.
 
     Args:
         signal:              The best strategy signal dict (with score, direction, SL/TP, etc.)
@@ -281,7 +279,7 @@ def extract_features(signal: dict,
                              (from PairStrategyFeatureProvider.get_features)
 
     Returns:
-        np.ndarray of shape (1, 78) or None on error
+        np.ndarray of shape (1, 74) or None on error
     """
     try:
         mr = market_report or {}
@@ -305,14 +303,10 @@ def extract_features(signal: dict,
         ss = all_strategy_scores or {}
         ss_smc_ob = float(ss.get('SMC_OB_REVERSAL', 0) or 0)
         ss_liq_sweep = float(ss.get('LIQUIDITY_SWEEP_ENTRY', 0) or 0)
-        ss_vwap = float(ss.get('VWAP_MEAN_REVERSION', 0) or 0)
         ss_delta = float(ss.get('DELTA_DIVERGENCE', 0) or 0)
         ss_trend = float(ss.get('TREND_CONTINUATION', 0) or 0)
-        ss_fvg = float(ss.get('FVG_REVERSION', 0) or 0)
         ss_ema = float(ss.get('EMA_CROSS_MOMENTUM', 0) or 0)
         ss_rsi = float(ss.get('RSI_DIVERGENCE_SMC', 0) or 0)
-        ss_breakout = float(ss.get('BREAKOUT_MOMENTUM', 0) or 0)
-        ss_struct = float(ss.get('STRUCTURE_ALIGNMENT', 0) or 0)
         # Batch 1 new strategies
         ss_sd_zone = float(ss.get('SUPPLY_DEMAND_ZONE_ENTRY', 0) or 0)
         ss_bos_momentum = float(ss.get('BREAK_OF_STRUCTURE_MOMENTUM', 0) or 0)
@@ -374,7 +368,7 @@ def extract_features(signal: dict,
         from ai_engine.pair_strategy_features import PairStrategyFeatureProvider
         hist_ps = hist_ps_features or PairStrategyFeatureProvider._get_defaults()
 
-        # ── Build the 75-feature vector (+ 3 unnamed self-calibration = 78) ──
+        # ── Build the 71-feature vector (+ 3 unnamed self-calibration = 74) ──
         features = [
             # Market quality (7)
             float(master_report.get('final_score', 0)),
@@ -419,21 +413,15 @@ def extract_features(signal: dict,
              max(float(signal.get('sl_pips', 10)), 0.1)),
             1.0 if str(signal.get('direction', '')) == 'BUY' else -1.0,
 
-            # Strategy scores (14) — THE KEY ADDITION
+            # Strategy scores (10) — active strategies only
             ss_smc_ob,
             ss_liq_sweep,
-            ss_vwap,
             ss_delta,
             ss_trend,
-            ss_fvg,
             ss_ema,
             ss_rsi,
-            ss_breakout,
-            ss_struct,
-            # Batch 1 new strategies
             ss_sd_zone,
             ss_bos_momentum,
-            # Batch 2 new strategies
             ss_ote_fib,
             ss_inst_candles,
 
@@ -502,7 +490,7 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None,
                               hist_ps_features: dict = None) -> np.ndarray:
     """
     Extract 74 features from a backtest_trades DB row.
-    v3.5: 75 named features + 3 unnamed self-calibration features = 78 total.
+    v3.5: 71 named features + 3 unnamed self-calibration features = 74 total.
     Used for training from stored historical data.
 
     Args:
@@ -560,21 +548,15 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None,
              max(float(row.get('sl_pips', 10) or 10), 0.1)),
             1.0 if str(row.get('direction', '')) == 'BUY' else -1.0,
 
-            # Strategy scores (14) — directly from DB columns
+            # Strategy scores (10) — active strategies only
             float(row.get('ss_smc_ob', 0) or 0),
             float(row.get('ss_liquidity_sweep', 0) or 0),
-            float(row.get('ss_vwap_reversion', 0) or 0),
             float(row.get('ss_delta_divergence', 0) or 0),
             float(row.get('ss_trend_continuation', 0) or 0),
-            float(row.get('ss_fvg_reversion', 0) or 0),
             float(row.get('ss_ema_cross', 0) or 0),
             float(row.get('ss_rsi_divergence', 0) or 0),
-            float(row.get('ss_breakout_momentum', 0) or 0),
-            float(row.get('ss_structure_align', 0) or 0),
-            # Batch 1 new strategies
             float(row.get('ss_supply_demand', 0) or 0),
             float(row.get('ss_bos_momentum', 0) or 0),
-            # Batch 2 new strategies
             float(row.get('ss_optimal_trade', 0) or 0),
             float(row.get('ss_institutional', 0) or 0),
 
@@ -798,10 +780,9 @@ def train_model(source: str = 'auto') -> dict:
                     final_score, market_score, smc_score, htf_approved, htf_score,
                     combined_bias, agreement_groups,
                     spread_pips, slippage_pips,
-                    ss_smc_ob, ss_liquidity_sweep, ss_vwap_reversion,
+                    ss_smc_ob, ss_liquidity_sweep,
                     ss_delta_divergence, ss_trend_continuation,
-                    ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
-                    ss_breakout_momentum, ss_structure_align,
+                    ss_ema_cross, ss_rsi_divergence,
                     ss_supply_demand, ss_bos_momentum,
                     ss_optimal_trade, ss_institutional,
                     profit_pips, profit_r, win,
