@@ -363,6 +363,9 @@ def _scan_and_trade(symbol: str,
     m5_confirmed = fractal.get("m5_structure", {}).get("confirmed", False)
     m1_aligned   = fractal.get("trigger", {}).get("trigger_aligned", False)
 
+    setup_quality  = fractal.get('setup_quality', 0)
+    factors_agreed = fractal.get('factors_agreed', 0)
+
     bias_icon = "📈" if bias == "BULLISH" else "📉" if bias == "BEARISH" else "↔️"
     log.info(f"🧭  {symbol:<10} Score:{final_score:>3}/100  {bias:<9}{bias_icon}  {state}")
 
@@ -386,8 +389,6 @@ def _scan_and_trade(symbol: str,
                  + (f" ({factors_agreed} factors)" if fractal_aligned else ""))
 
     # ── Fractal Alignment Gate — RELAXED for intraday ─────────
-    setup_quality  = fractal.get('setup_quality', 0)
-    factors_agreed = fractal.get('factors_agreed', 0)
 
     if not fractal_aligned:
         # Allow if score is reasonable and bias is clear
