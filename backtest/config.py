@@ -24,16 +24,14 @@ import datetime
 #     "XAGUSD",  # Silver
 # ]
 PAIR_WHITELIST = [
-    # CHF Pairs (Category 1 — HIGHEST PRIORITY)
-    # CHFJPY is the #1 pair by every metric. Testing CHF cross pairs to
-    # validate whether the bot's CHF edge transfers to related pairs.
-    "USDCHF",  # MUST TEST — Major pair, highest liquidity, tightest spreads
-    "GBPCHF",  # MUST TEST — GBP trends well + CHF edge, ICMarkets spread ~0.9pip
+    # EUR Base (NEW — Currency Commodity)
+    "EURUSD",  # MUST TEST — Most liquid pair on earth, if bot can't read EURUSD something's wrong
+    "EURAUD",  # Test — EUR works well, AUD is mixed, worth a shot
+    "EURNZD",  # Test — NZD trends well
+    "EURCAD",  # Maybe — EUR-CAD cross
+
+    # CHF Pair (Retained — Best performer)
     "CHFJPY",  # Sharpe 4.92 | +$10,442 | 87 trades | BEST PAIR (existing)
-    "EURCHF",  # Test — Liquid cross, tends to range but worth checking
-    "AUDCHF",  # Test — If AUDJPY + CHFJPY both work, this could be strong
-    "CADCHF",  # Test — If CADJPY + CHFJPY both work, this could work
-    "NZDCHF",  # Maybe — Less liquid but NZD trends well
 
     # JPY Crosses (Core Edge — 69% of portfolio P&L)
     "GBPJPY",  # Sharpe 3.58 | +$7,241  | 119 trades
@@ -107,9 +105,10 @@ START_DATE = END_DATE - datetime.timedelta(days=180)  # 6 months
 #     "DEFAULT": 0.5,
 # }
 MAX_SPREAD = {
-    # CHF Pairs (Category 1 — ICMarkets raw spreads)
-    "USDCHF": 2.0, "GBPCHF": 4.0, "CHFJPY": 3.5,
-    "EURCHF": 3.0, "AUDCHF": 3.5, "CADCHF": 3.5, "NZDCHF": 4.0,
+    # EUR Base (Currency Commodity)
+    "EURUSD": 1.5, "EURAUD": 2.5, "EURNZD": 3.0, "EURCAD": 2.5,
+    # CHF Pair
+    "CHFJPY": 3.5,
     # JPY Crosses (Core Edge)
     "GBPJPY": 4.0, "EURJPY": 3.0,
     "AUDJPY": 3.5, "CADJPY": 4.0,
@@ -201,9 +200,10 @@ STRATEGIES_FILTER = []
 # For JPY pairs = varies (~$6.50-$9.50 depending on rate)
 # Simplified — we compute dynamically based on current rate
 PIP_VALUE_PER_LOT = {
-    # CHF Pairs
-    "USDCHF": 10.0, "GBPCHF": 10.0, "CHFJPY": 6.50,
-    "EURCHF": 10.0, "AUDCHF": 10.0, "CADCHF": 10.0, "NZDCHF": 10.0,
+    # EUR Base (Currency Commodity)
+    "EURUSD": 10.0, "EURAUD": 6.50, "EURNZD": 6.00, "EURCAD": 6.50,
+    # CHF Pair
+    "CHFJPY": 6.50,
     # JPY Crosses
     "EURJPY": 6.50, "GBPJPY": 6.50,
     "AUDJPY": 6.50, "CADJPY": 6.50,
