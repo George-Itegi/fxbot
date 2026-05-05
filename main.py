@@ -31,6 +31,8 @@ import MetaTrader5 as mt5
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import os
+import sys
+import argparse
 import numpy as np
 
 from core.connection import connect, disconnect, is_algo_trading_enabled
@@ -41,6 +43,7 @@ from config.settings import (
     ALLOW_REENTRY, REENTRY_COOLDOWN_MINUTES, REENTRY_MIN_SCORE_INCREASE,
     MIN_CONFLUENCE_COUNT,
     SESSION_WHITELIST, PAIR_BLACKLIST,
+    SCAN_MODE, SCAN_PAIR_INTERVAL, SCAN_VERBOSE,
 )
 
 load_dotenv()
@@ -52,22 +55,36 @@ EXTERNAL_REFRESH_SECS  = 3600   # External data refresh (1 hour)
 MODEL_RETRAIN_TRADES   = 50     # Retrain XGBoost every N trades
 TRADE_COUNT_SINCE_TRAIN= 0      # Counter for retraining trigger
 
-# ── Re-entry tracking ────────────────────────────────────────
-# {symbol: {"exit_time": datetime, "direction": str, "score": int}}
-_recent_exits: dict = {}
-
-# ── Consecutive loss tracking ────────────────────────────────
-_consecutive_losses = 0
+# ── Runtime flags (set by CLI args) ───────────────────────────
+_relaxed       = False
+_no_post_gates = False
+_no_limit      = False
 
 
 def run():
     """Main entry point — starts the full bot loop."""
-    global _consecutive_losses
+    global _consecutive_losses, _relaxed, _no_post_gates, _no_limit
 
     log.info("=" * 60)
     log.info("  APEX TRADER — INSTITUTIONAL GRADE BOT")
     log.info("  Version 4.2 | numpy.float64 Fix + Type Safety + Traceback Logging")
     log.info("=" * 60)
+
+    # Parse CLI arguments
+    args = _parse_args()
+    _relaxed       = args.relaxed
+    _no_post_gates = args.no_post_gates
+    _no_limit      = args.no_limit
+
+    mode_label = []
+    if _relaxed:
+        mode_label.append("RELAXED")
+    if _no_post_gates:
+        mode_label.append("NO_POST_GATES")
+    if _no_limit:
+        mode_label.append("NO_LIMIT")
+    if mode_label:
+        log.info(f"[STARTUP] Mode flags: {' | '.join(mode_label)}")
 
     # ── Startup checks ────────────────────────────────────────
     if not connect():
@@ -80,7 +97,10 @@ def run():
 
     init_db()
     log.info("[STARTUP] Database initialized")
-    log.info(f"[STARTUP] Watchlist: {', '.join(WATCHLIST)}")
+    log.info(f"[STARTUP] Watchlist ({len(WATCHLIST)}): {', '.join(WATCHLIST)}")
+    log.info(f"[STARTUP] Scan mode: {SCAN_MODE.upper()}"
+             + (f" | interval: {SCAN_PAIR_INTERVAL}s between pairs" if SCAN_MODE == "sequential" else " | parallel")
+             + (f" | verbose: ON" if SCAN_VERBOSE else ""))
 
     # ── Initialize Tick Aggregator ───────────────────────────
     from data_layer.tick_aggregator import init_aggregator
@@ -109,7 +129,7 @@ def run():
             try:
                 manage_positions()
                 sync_closed_trades()
-                
+
                 # Heartbeat every 5 minutes
                 if time.time() - last_heartbeat > 300:
                     log.info("[THREAD] Position Manager Heartbeat: Active")
@@ -148,28 +168,53 @@ def run():
                 continue
 
             log.info(f"")
-            log.info(f"{'━'*52}")
+            log.info(f"{'━'*60}")
             log.info(f"🔍  SCAN CYCLE  {cycle_t} UTC  |  {session}")
-            log.info(f"{'━'*52}")
+            log.info(f"{'━'*60}")
 
-            # ── Scan each symbol in parallel ──────────────────────────────
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
-                futures = [executor.submit(_scan_and_trade,
-                                           symbol,
-                                           session,
-                                           master_scan, run_strategies,
-                                           can_trade, calculate_lot_size,
-                                           place_order, log_signal)
-                           for symbol in WATCHLIST]
-                for future in futures:
+            # ── Scan each symbol ───────────────────────────────────────
+            if SCAN_MODE == "sequential":
+                # Sequential: one pair at a time, with delay between each
+                for i, symbol in enumerate(WATCHLIST):
                     try:
-                        result = future.result()
+                        if SCAN_VERBOSE:
+                            log.info(f"  [{i+1}/{len(WATCHLIST)}] Scanning {symbol}...")
+
+                        result = _scan_and_trade(
+                            symbol, session,
+                            master_scan, run_strategies,
+                            can_trade, calculate_lot_size,
+                            place_order, log_signal)
+
                         if result:
                             trade_count += 1
                             TRADE_COUNT_SINCE_TRAIN += 1
+
                     except Exception as e:
-                        log.error(f"[CYCLE] Error during parallel scan: {e}\n{traceback.format_exc()}")
+                        log.error(f"[CYCLE] Error scanning {symbol}: {e}\n{traceback.format_exc()}")
+
+                    # Delay between pairs (except after the last one)
+                    if i < len(WATCHLIST) - 1:
+                        time.sleep(SCAN_PAIR_INTERVAL)
+            else:
+                # Parallel: all pairs at once (original behavior)
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
+                    futures = [executor.submit(_scan_and_trade,
+                                               symbol,
+                                               session,
+                                               master_scan, run_strategies,
+                                               can_trade, calculate_lot_size,
+                                               place_order, log_signal)
+                               for symbol in WATCHLIST]
+                    for future in futures:
+                        try:
+                            result = future.result()
+                            if result:
+                                trade_count += 1
+                                TRADE_COUNT_SINCE_TRAIN += 1
+                        except Exception as e:
+                            log.error(f"[CYCLE] Error during parallel scan: {e}\n{traceback.format_exc()}")
 
             # ── Retrain models if enough new trades ───────────
             if TRADE_COUNT_SINCE_TRAIN >= MODEL_RETRAIN_TRADES:
@@ -195,43 +240,63 @@ def run():
         log.info("[APEX] Shutdown complete.")
 
 
+def _parse_args():
+    """Parse command-line arguments for live trading."""
+    parser = argparse.ArgumentParser(description="Apex Trader v4.2 — Live Trading Bot")
+    parser.add_argument("--relaxed", action="store_true",
+                        help="Relaxed mode: lower confluence, skip post-gates for some strategies")
+    parser.add_argument("--no-post-gates", action="store_true",
+                        help="Skip bias/conflict/confluence post-gates (let ML handle filtering)")
+    parser.add_argument("--no-limit", action="store_true",
+                        help="Remove max open position limits")
+    parser.add_argument("--use-strategy-models", action="store_true",
+                        help="Use L1 strategy XGBoost models")
+    parser.add_argument("--use-model", action="store_true",
+                        help="Use L2 ML Gate model")
+    parser.add_argument("--store-db", action="store_true",
+                        help="Store trades in MySQL database")
+    # Backwards compat: silently accept these flags (they're already defaults in live)
+    parser.add_argument("--clear-data", action="store_true", help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
 def _check_reentry(symbol: str, direction: str, score: int) -> tuple:
     """
     Check if this is a re-entry and if it should be allowed.
     A re-entry is when the same symbol+direction is traded again
     shortly after a previous TP exit.
-    
+
     Returns: (allowed: bool, is_reentry: bool, reason: str)
     """
     global _recent_exits
-    
+
     if not ALLOW_REENTRY:
         return True, False, "ok"
-    
+
     exit_info = _recent_exits.get(symbol)
     if exit_info is None:
         return True, False, "ok"  # No recent exit, not a re-entry
-    
+
     exit_time = exit_info.get("exit_time")
     exit_direction = exit_info.get("direction")
     exit_score = exit_info.get("score", 0)
-    
+
     # Check if direction matches
     if exit_direction != direction:
         # Different direction — not a re-entry, clear old record
         _recent_exits.pop(symbol, None)
         return True, False, "ok"
-    
+
     # Check cooldown
     elapsed_minutes = (datetime.now(timezone.utc) - exit_time).total_seconds() / 60
     if elapsed_minutes < REENTRY_COOLDOWN_MINUTES:
         remaining = int(REENTRY_COOLDOWN_MINUTES - elapsed_minutes)
         return False, True, f"reentry_cooldown_{remaining}m"
-    
+
     # Check if score is higher than before (must be stronger signal)
     if score < exit_score + REENTRY_MIN_SCORE_INCREASE:
         return False, True, f"reentry_score_too_low ({score}<{exit_score + REENTRY_MIN_SCORE_INCREASE})"
-    
+
     # Re-entry allowed — clear the record
     _recent_exits.pop(symbol, None)
     return True, True, "reentry_allowed"
@@ -258,8 +323,9 @@ def _scan_and_trade(symbol: str,
     """
     Full pipeline for one symbol in one scan cycle.
     Returns True if a trade was placed.
-    
+
     v4.0: Added bias cross-validation, correlation check, re-entry logic.
+    v4.3: Added verbose scanning logs for live monitoring.
     """
     from risk_management.risk_engine import register_trade, check_risk_reward
 
@@ -267,13 +333,15 @@ def _scan_and_trade(symbol: str,
     # Initial check without direction (for cooldown, daily limit, etc.)
     tradeable, reason = can_trade(symbol, [])
     if not tradeable:
-        log.debug(f"  {symbol}: Risk blocked — {reason}")
+        if SCAN_VERBOSE:
+            log.info(f"      └─ ❌ Risk blocked — {reason}")
         return False
 
     # ── Run master scanner (pass session) ─────────────────
     master = master_scan(symbol, session=session)
     if master is None:
-        log.debug(f"  {symbol}: Master scan failed")
+        if SCAN_VERBOSE:
+            log.info(f"      └─ ❌ Master scan failed (no data)")
         return False
 
     final_score = master.get("final_score", 0)
@@ -289,27 +357,47 @@ def _scan_and_trade(symbol: str,
     bias_icon = "📈" if bias == "BULLISH" else "📉" if bias == "BEARISH" else "↔️"
     log.info(f"🧭  {symbol:<10} Score:{final_score:>3}/100  {bias:<9}{bias_icon}  {state}")
 
+    # ── Verbose: show key metrics ─────────────────────────
+    if SCAN_VERBOSE:
+        of_imb = master.get("order_flow_imbalance", {})
+        imb_val = of_imb.get("imbalance", 0)
+        imb_str = of_imb.get("strength", "NONE")
+        surge   = master.get("volume_surge", {})
+        surge_on = surge.get("surge_detected", False)
+        mom     = master.get("momentum", {})
+        choppy  = mom.get("is_choppy", True)
+        inst_ok = imb_str in ("STRONG", "EXTREME") or surge_on
+
+        inst_label = "✅" if inst_ok else "⚠️ (soft)"
+        choppy_label = "🔴 CHOPPY" if choppy else "✅"
+        log.info(f"      ├─ OF imbalance: {imb_val:+.2f} ({imb_str}) | "
+                 f"Surge: {'YES' if surge_on else 'no'} | "
+                 f"Institutional: {inst_label} | Choppy: {choppy_label}")
+        log.info(f"      ├─ Fractal: {'ALIGNED' if fractal_aligned else 'not aligned'}"
+                 + (f" ({factors_agreed} factors)" if fractal_aligned else ""))
+
     # ── Fractal Alignment Gate — RELAXED for intraday ─────────
-    # Fractal needs H4+H1+M15 all aligned — too strict for intraday.
-    # We now only hard-block if score is very low AND bias is neutral.
-    # Individual strategies already check their own timeframe alignment.
     setup_quality  = fractal.get('setup_quality', 0)
     factors_agreed = fractal.get('factors_agreed', 0)
 
     if not fractal_aligned:
         # Allow if score is reasonable and bias is clear
         if final_score >= 55 and bias not in ("CONFLICTED", "NEUTRAL"):
-            log.debug(f"  {symbol}: Fractal gate bypassed (score={final_score}, bias={bias})")
+            if SCAN_VERBOSE:
+                log.info(f"      ├─ Fractal gate BYPASSED (score={final_score}, bias={bias})")
         elif state in ("TRENDING_STRONG", "BREAKOUT_ACCEPTED") and final_score >= 50:
-            log.debug(f"  {symbol}: Trending — fractal gate bypassed ({state})")
+            if SCAN_VERBOSE:
+                log.info(f"      ├─ Fractal gate BYPASSED (trending: {state})")
         else:
-            log.debug(f"  {symbol}: Skip — low score + no fractal (score={final_score})")
+            if SCAN_VERBOSE:
+                log.info(f"      └─ ❌ Fractal gate BLOCKED (score={final_score}, no alignment)")
             return False
 
     # ── Check scalping signal — skip if market is too choppy ──
     scalping = master.get("scalping_signal", {})
     if scalping.get("status") == "CHOPPY_SKIP":
-        log.debug(f"  {symbol}: Choppy market — skip")
+        if SCAN_VERBOSE:
+            log.info(f"      └─ ❌ Choppy market — SKIP")
         return False
 
     # ── Order Flow Direction Gate ─────────────────────────────
@@ -318,17 +406,23 @@ def _scan_and_trade(symbol: str,
     imb_strength = of_imb.get("strength", "NONE")
     if imb_strength in ("EXTREME", "STRONG"):
         if bias == "BULLISH" and imb_value < -0.3:
-            log.debug(f"  {symbol}: Order flow opposes BUY — skip")
+            if SCAN_VERBOSE:
+                log.info(f"      └─ ❌ Order flow opposes BUY (imb={imb_value:+.2f})")
             return False
         elif bias == "BEARISH" and imb_value > 0.3:
-            log.debug(f"  {symbol}: Order flow opposes SELL — skip")
+            if SCAN_VERBOSE:
+                log.info(f"      └─ ❌ Order flow opposes SELL (imb={imb_value:+.2f})")
             return False
 
     # ── Run strategy engine ───────────────────────────────
+    if SCAN_VERBOSE:
+        log.info(f"      ├─ Running strategies...")
+
     signal = run_strategies(symbol, master)
 
     if signal is None:
-        log.debug(f"  {symbol}: No strategy fired ({action})")
+        if SCAN_VERBOSE:
+            log.info(f"      └─ 📭 No strategy fired (action={action})")
         log_signal({
             'symbol': symbol, 'direction': None, 'strategy': 'NONE',
             'ai_score': final_score, 'was_traded': False,
@@ -344,7 +438,9 @@ def _scan_and_trade(symbol: str,
 
     # FIXED: Use MIN_CONFLUENCE_COUNT from settings (not hardcoded)
     if len(confluence) < MIN_CONFLUENCE_COUNT:
-        log.debug(f"  {symbol}: Signal rejected — only {len(confluence)} confluence factors (need {MIN_CONFLUENCE_COUNT}) from {strategy_name}")
+        if SCAN_VERBOSE:
+            log.info(f"      └─ ❌ Confluence too low: {len(confluence)}/{MIN_CONFLUENCE_COUNT} "
+                     f"[{strategy_name}]")
         return False
 
     dir_icon = "📈" if direction == "BUY" else "📉"
@@ -353,51 +449,54 @@ def _scan_and_trade(symbol: str,
              f"  score={score}  conf={len(confluence)}"
              f"  SL={signal.get('sl_pips')}p  TP={signal.get('tp1_pips')}p")
 
-    # ══════════════════════════════════════════════════════════
-    # NEW v4.0: BIAS CROSS-VALIDATION
-    # Strategy direction must align with master combined_bias.
-    # If master says BULLISH but strategy says SELL → BLOCK.
-    # Exception: CONFLICTED bias → allow strategy direction.
-    # ══════════════════════════════════════════════════════════
-    # Sanitize direction — ensure it's a proper string
-    direction = direction.upper() if isinstance(direction, str) else str(direction)
-    
-    if bias not in ("NEUTRAL", "CONFLICTED"):
-        if bias == "BULLISH" and direction == "SELL":
-            log.warning(f"🚫  {symbol}: BIAS CONFLICT — master={bias} signal={direction} [{strategy_name}] BLOCKED")
-            log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
-                        'ai_score': score, 'was_traded': False,
-                        'skip_reason': f"BIAS_CONFLICT({bias} vs {direction})",
-                        'session': session, 'market_regime': state})
-            return False
-        elif bias == "BEARISH" and direction == "BUY":
-            log.warning(f"🚫  {symbol}: BIAS CONFLICT — master={bias} signal={direction} [{strategy_name}] BLOCKED")
-            log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
-                        'ai_score': score, 'was_traded': False,
-                        'skip_reason': f"BIAS_CONFLICT({bias} vs {direction})",
-                        'session': session, 'market_regime': state})
-            return False
-        else:
-            log.info(f"✅  {symbol}: Bias aligned — {bias} matches {direction}")
+    # ── Post-gates can be bypassed with --no-post-gates ───────
+    if not _no_post_gates:
+        # ══════════════════════════════════════════════════════════
+        # BIAS CROSS-VALIDATION
+        # ══════════════════════════════════════════════════════════
+        direction = direction.upper() if isinstance(direction, str) else str(direction)
 
-    # ══════════════════════════════════════════════════════════
-    # NEW v4.0: CORRELATION RISK CHECK (with direction)
-    # ══════════════════════════════════════════════════════════
-    tradeable, reason = can_trade(symbol, [], direction=direction)
-    if not tradeable:
-        log.info(f"🚫  {symbol}: Risk gate blocked after signal — {reason}")
-        return False
+        if bias not in ("NEUTRAL", "CONFLICTED"):
+            if bias == "BULLISH" and direction == "SELL":
+                log.warning(f"🚫  {symbol}: BIAS CONFLICT — master={bias} signal={direction} [{strategy_name}] BLOCKED")
+                log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
+                            'ai_score': score, 'was_traded': False,
+                            'skip_reason': f"BIAS_CONFLICT({bias} vs {direction})",
+                            'session': session, 'market_regime': state})
+                return False
+            elif bias == "BEARISH" and direction == "BUY":
+                log.warning(f"🚫  {symbol}: BIAS CONFLICT — master={bias} signal={direction} [{strategy_name}] BLOCKED")
+                log_signal({'symbol': symbol, 'direction': direction, 'strategy': strategy_name,
+                            'ai_score': score, 'was_traded': False,
+                            'skip_reason': f"BIAS_CONFLICT({bias} vs {direction})",
+                            'session': session, 'market_regime': state})
+                return False
+            else:
+                if SCAN_VERBOSE:
+                    log.info(f"      ├─ ✅ Bias aligned — {bias} matches {direction}")
 
-    # ══════════════════════════════════════════════════════════
-    # NEW v4.0: RE-ENTRY CHECK
-    # ══════════════════════════════════════════════════════════
-    reentry_ok, is_reentry, reentry_reason = _check_reentry(
-        symbol, direction, score)
-    if not reentry_ok:
-        log.info(f"🚫  {symbol}: Re-entry blocked — {reentry_reason}")
-        return False
-    if is_reentry:
-        log.info(f"♻️   {symbol}: Re-entry allowed — {reentry_reason}")
+        # ══════════════════════════════════════════════════════════
+        # CORRELATION RISK CHECK (with direction)
+        # ══════════════════════════════════════════════════════════
+        tradeable, reason = can_trade(symbol, [], direction=direction)
+        if not tradeable:
+            log.info(f"🚫  {symbol}: Risk gate blocked after signal — {reason}")
+            return False
+
+        # ══════════════════════════════════════════════════════════
+        # RE-ENTRY CHECK
+        # ══════════════════════════════════════════════════════════
+        reentry_ok, is_reentry, reentry_reason = _check_reentry(
+            symbol, direction, score)
+        if not reentry_ok:
+            log.info(f"🚫  {symbol}: Re-entry blocked — {reentry_reason}")
+            return False
+        if is_reentry:
+            log.info(f"♻️   {symbol}: Re-entry allowed — {reentry_reason}")
+    else:
+        if SCAN_VERBOSE:
+            log.info(f"      ├─ Post-gates SKIPPED (--no-post-gates)")
+        direction = direction.upper() if isinstance(direction, str) else str(direction)
 
     # ── AI model scoring ──────────────────────────────────
     from ai_engine.model_trainer import get_ai_score
@@ -412,6 +511,10 @@ def _scan_and_trade(symbol: str,
     ai_score   = ai_result.get('ai_score', 50)
     ai_rec     = ai_result.get('recommendation', 'NEUTRAL')
     ai_trained = ai_result.get('xgb_trained', False)
+
+    if SCAN_VERBOSE:
+        log.info(f"      ├─ AI Gate: score={ai_score} | rec={ai_rec}"
+                 + (" | model=NOT_TRAINED" if not ai_trained else ""))
 
     if ai_trained and ai_rec == 'SKIP':
         log.info(f"🚫  {symbol}: AI model rejected signal — {ai_result.get('note')}")

@@ -16,6 +16,12 @@ from datetime import datetime, timezone
 from core.logger import get_logger
 from data_layer.price_feed import get_candles
 from strategies.strategy_registry import get_active_strategies, REGISTRY
+
+# Import verbose setting
+try:
+    from config.settings import SCAN_VERBOSE
+except ImportError:
+    SCAN_VERBOSE = False
 from strategies.smc_ob_reversal import evaluate as ob_evaluate
 from strategies.liquidity_sweep_entry import evaluate as sweep_evaluate
 from strategies.vwap_mean_reversion import evaluate as vwap_evaluate
@@ -108,7 +114,8 @@ def run_strategies(symbol: str,
 
     # Gate 1: Market score minimum
     if final_score < 45:
-        log.debug(f"[ENGINE] {symbol} — final_score {final_score} < 45, skip")
+        if SCAN_VERBOSE:
+            log.info(f"[ENGINE] {symbol} — ❌ score {final_score} < 45, skip all strategies")
         return None
 
     # Gate 2: Institutional confirmation check (STRICT)
@@ -134,14 +141,15 @@ def run_strategies(symbol: str,
     # Gate 2: Institutional confirmation (SOFT — no longer hard blocks)
     # Passes through for ML Gate to evaluate. ML learns when this matters.
     if not institutional_confirmed:
-        log.debug(f"[ENGINE] {symbol} — no institutional activity "
-                  f"(imb={imb_value:+.2f}/{imb_strength}, surge={has_volume}, "
-                  f"scalpable={is_scalpable}) — soft pass to ML Gate")
+        if SCAN_VERBOSE:
+            log.info(f"[ENGINE] {symbol} — ⚠️ no institutional activity "
+                     f"(imb={imb_value:+.2f}/{imb_strength}, surge={has_volume}) — soft pass")
         # SOFT: no return None — continues to strategy evaluation
 
     # Hard gate: never trade choppy markets
     if is_choppy and not surge_active:
-        log.debug(f"[ENGINE] {symbol} — choppy + no surge, skip")
+        if SCAN_VERBOSE:
+            log.info(f"[ENGINE] {symbol} — ❌ choppy + no surge, skip all strategies")
         return None
 
     # Fetch candles
@@ -158,6 +166,10 @@ def run_strategies(symbol: str,
     active  = get_active_strategies()
     signals = []
 
+    if SCAN_VERBOSE:
+        log.info(f"[ENGINE] {symbol} — evaluating {len(active)} strategies "
+                 f"(state={market_state}, session={session}, score={final_score})")
+
     for strategy_name in active:
         try:
             signal = _run_one_strategy(
@@ -167,6 +179,8 @@ def run_strategies(symbol: str,
                 market_state, session, master_report)
 
             if signal is None:
+                if SCAN_VERBOSE:
+                    log.info(f"         └─ {strategy_name:<30} → no signal")
                 continue
 
             direction = str(signal.get('direction', ''))
@@ -175,8 +189,8 @@ def run_strategies(symbol: str,
             # Apply per-strategy minimum score
             min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
             if score < min_score:
-                log.debug(f"[ENGINE] {symbol} {strategy_name} "
-                          f"score {score} < {min_score}, skip")
+                if SCAN_VERBOSE:
+                    log.info(f"         └─ {strategy_name:<30} → score {score} < {min_score} (too low)")
                 continue
 
             signal['symbol']       = symbol
@@ -196,16 +210,25 @@ def run_strategies(symbol: str,
             log.error(f"[ENGINE] Error in {strategy_name}: {e}")
 
     if not signals:
+        if SCAN_VERBOSE:
+            log.info(f"[ENGINE] {symbol} — 📭 all strategies returned no signal")
         return None
 
     # Gate 3: Bias direction filter
     if combined_bias == 'BULLISH':
+        before = len(signals)
         signals = [s for s in signals if s['direction'] == 'BUY']
+        if SCAN_VERBOSE and len(signals) < before:
+            log.info(f"[ENGINE] {symbol} — bias filter: removed {before - len(signals)} SELL signals (bias=BULLISH)")
     elif combined_bias == 'BEARISH':
+        before = len(signals)
         signals = [s for s in signals if s['direction'] == 'SELL']
+        if SCAN_VERBOSE and len(signals) < before:
+            log.info(f"[ENGINE] {symbol} — bias filter: removed {before - len(signals)} BUY signals (bias=BEARISH)")
 
     if not signals:
-        log.debug(f"[ENGINE] {symbol} — all signals filtered by bias")
+        if SCAN_VERBOSE:
+            log.info(f"[ENGINE] {symbol} — ❌ all signals filtered by bias")
         return None
 
     # Gate 4: Multi-group consensus
@@ -229,6 +252,9 @@ def run_strategies(symbol: str,
         final_signals = sell_signals
         final_groups  = sell_groups
     else:
+        if SCAN_VERBOSE:
+            log.info(f"[ENGINE] {symbol} — ❌ insufficient multi-group consensus "
+                     f"(BUY groups:{buy_groups}, SELL groups:{sell_groups})")
         log.info(f"[ENGINE] {symbol} — insufficient multi-group consensus "
                  f"(BUY groups:{buy_groups}, SELL groups:{sell_groups})")
         return None
@@ -325,8 +351,8 @@ def _run_one_strategy(name, symbol,
         if name in HARD_STATE_GATES:
             allowed_states = HARD_STATE_GATES[name]
             if market_state not in allowed_states:
-                log.debug(f"[ENGINE] {name} blocked — state {market_state} "
-                          f"not in {allowed_states}")
+                if SCAN_VERBOSE:
+                    log.info(f"         └─ {name:<30} → state gate (need {allowed_states}, got {market_state})")
                 return None
 
     # ── Check session gate ───────────────────────────────────────
@@ -334,14 +360,15 @@ def _run_one_strategy(name, symbol,
         if session:
             # v2.0: GLOBAL session block — no strategy trades in blocked sessions
             if session in GLOBAL_SESSION_BLOCK:
-                log.debug(f"[ENGINE] {name} blocked — session {session} is globally blocked")
+                if SCAN_VERBOSE:
+                    log.info(f"         └─ {name:<30} → session blocked ({session})")
                 return None
             # Per-strategy session gate
             if name in HARD_SESSION_GATES_STRAT:
                 allowed_sessions = HARD_SESSION_GATES_STRAT[name]
                 if session not in allowed_sessions:
-                    log.debug(f"[ENGINE] {name} blocked — session {session} "
-                              f"not in {allowed_sessions}")
+                    if SCAN_VERBOSE:
+                        log.info(f"         └─ {name:<30} → session gate (need {allowed_sessions}, got {session})")
                     return None
 
     # Route to strategy evaluate function

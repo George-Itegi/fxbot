@@ -107,6 +107,11 @@ MAX_DAILY_LOSS_PERCENT = 8.0    # Bot shuts down if this is hit
 MAX_WEEKLY_LOSS_PERCENT= 8.0    # Weekly circuit breaker
 MAGIC_NUMBER           = 200001 # Unique ID for this bot's trades
 
+# --- SCANNING MODE (v4.3) ---
+SCAN_MODE         = "sequential"   # "sequential" (one pair at a time) or "parallel"
+SCAN_PAIR_INTERVAL= 3.0            # Seconds between sequential pair scans (parallel ignores this)
+SCAN_VERBOSE      = True           # Detailed per-strategy logs on console (like backtesting)
+
 # --- SIGNAL QUALITY (v4.3 STRICT MODE) ---
 MIN_AI_SCORE           = 85     # Only trade on very high quality signals
 MIN_CONFLUENCE_COUNT   = 6      # At least 6 factors must agree (was 4)
