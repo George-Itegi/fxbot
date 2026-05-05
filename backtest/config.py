@@ -62,8 +62,6 @@ PAIR_WHITELIST = [
 # v2.0: 8-pair optimized portfolio (removed GBPAUD/GBPCAD/XAUUSD/EURGBP/AUDCAD)
 SYMBOLS = PAIR_WHITELIST
 
-# Alias: AVG_SPREAD_PIPS maps to MAX_SPREAD for backward compat with engine.py
-AVG_SPREAD_PIPS = MAX_SPREAD
 # Cut pairs: negative P&L, low Sharpe, or structural dependency (see config/settings.py)
 # Cut sessions: NY_AFTERNOON and SYDNEY — enforced in data_loader.py _tag_session
 # --- Timeframes to download ---
@@ -122,6 +120,9 @@ MAX_SPREAD = {
     # Default fallback
     "DEFAULT": 4.0,
 }
+
+# Alias: AVG_SPREAD_PIPS maps to MAX_SPREAD for backward compat with engine.py
+AVG_SPREAD_PIPS = MAX_SPREAD
 
 # --- Slippage (pips) ---
 SLIPPAGE_PIPS = 0.3
