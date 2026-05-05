@@ -1,5 +1,5 @@
 # =============================================================
-# strategies/liquidity_sweep_entry.py  v2.1
+# strategies/liquidity_sweep_entry.py  v2.2
 # Strategy 3: Liquidity Sweep Entry
 # Price sweeps a liquidity pool then reverses with BOS confirmation.
 #
@@ -15,6 +15,12 @@
 #   2. TP1 stays at 1.5xATR (= 1R with new SL) — used as partial TP
 #   3. TP2 stays at 3.0xATR (= 2R) — used as final target by engine
 #   4. Engine wired to use TP2 as primary target + 33% partial at TP1
+#
+# v2.2 CHANGES (sweep recency + data source fix):
+#   1. All sweep data read from smc_report (single source of truth)
+#   2. Sweep recency guard: reject sweeps older than 3 H1 bars
+#   3. Follow-through confirmation required (smc_builder v2)
+#   4. Minimum distance from swept level: 3 pips (avoid re-test zone)
 # =============================================================
 
 import pandas as pd
@@ -24,7 +30,9 @@ log = get_logger(__name__)
 
 STRATEGY_NAME = "LIQUIDITY_SWEEP_ENTRY"
 MIN_SCORE     = 70
-VERSION       = "2.1"
+VERSION       = "2.2"
+MAX_SWEEP_AGE_H1_BARS = 3  # Sweep must be within 3 H1 bars to be actionable
+MIN_DIST_FROM_SWEPT_PIPS = 3.0  # Minimum distance from swept level (pips)
 
 
 def evaluate(symbol: str,
@@ -77,22 +85,36 @@ def evaluate(symbol: str,
     if atr_pips < 3.0:
         return None
 
-    # Get sweep data
-    last_sweep_bias = features.get("last_sweep_bias", "NONE")
-    last_sweep_reversal = features.get("last_sweep_reversal", 0)
-    swept_level = smc_report.get("last_sweep", {}).get("swept_level")
-    if swept_level is None:
+    # ── Get ALL sweep data from smc_report (single source of truth) ──
+    sweep_data = smc_report.get('last_sweep', {})
+    last_sweep_bias    = sweep_data.get('bias', 'NONE')
+    last_sweep_reversal = sweep_data.get('reversal_pips', 0)
+    swept_level         = sweep_data.get('swept_level')
+    bars_since_sweep    = sweep_data.get('bars_since_sweep', 99)
+    follow_through      = sweep_data.get('follow_through', False)
+
+    # Must have a recent sweep (not stale — within 3 H1 bars)
+    if last_sweep_bias == "NONE" or swept_level is None:
         return None
 
+    # ── Recency guard: sweep must be fresh ──
+    # A sweep older than 3 H1 bars has already played out.
+    if bars_since_sweep > MAX_SWEEP_AGE_H1_BARS:
+        return None
+
+    # ── Follow-through confirmation required ──
+    # The next H1 bar after the sweep must have continued the reversal.
+    if not follow_through:
+        return None
+
+    # ── Get other data from feature_store (updated every scan) ──
     smc_bias = features.get("smc_bias", "NEUTRAL")
     htf_ok = features.get("htf_approved", False)
     pd_zone = features.get("pd_zone", "UNKNOWN")
-
-    # Delta data
     delta_bias = features.get("delta_bias", "NEUTRAL")
     delta_strength = features.get("delta_strength", "WEAK")
 
-    # BOS data — MANDATORY in v2.0
+    # BOS data
     bos = smc_report.get("structure", {}).get("bos")
 
     # Order flow and volume from market report
@@ -102,33 +124,19 @@ def evaluate(symbol: str,
     vol_surge_detected = volume_surge.get('surge_detected', False)
     price_vs_swept_level = (current_price - float(swept_level)) / pip_size
 
-    # Must have a recent sweep
-    if last_sweep_bias == "NONE":
-        return None
-
     # Reversal must be meaningful (at least 3 pips)
     if last_sweep_reversal < 3.0:
         return None
 
     # ── Reversal depth cap: real stop hunts sweep 3-12 pips ──
-    # A 30+ pip "sweep" is a real breakdown, not a stop hunt.
-    # Institutional liquidity grabs are shallow — they pierce
-    # the level by a few pips then reverse hard.
     if last_sweep_reversal > 15.0:
         return None
 
     # ── MANDATORY: Delta must confirm the reversal direction ──
-    # FIXED: In v1.0, delta was a bonus. Now it's required.
-    # A sweep without flow confirmation is just noise.
     if last_sweep_bias == "BULLISH" and delta_bias != "BULLISH":
-        return None  # Bullish sweep but delta doesn't confirm — skip
+        return None
     if last_sweep_bias == "BEARISH" and delta_bias != "BEARISH":
-        return None  # Bearish sweep but delta doesn't confirm — skip
-
-    # ── BOS confirmation (STRONG BONUS, not mandatory) ──
-    # In backtesting, BOS detection on H1 is too coarse — it rarely
-    # aligns with sweep timing. Keep delta + sweep as core requirements.
-    bos = smc_report.get("structure", {}).get("bos")
+        return None
 
     sweep_bias = last_sweep_bias
     reversal_p = last_sweep_reversal
@@ -139,10 +147,20 @@ def evaluate(symbol: str,
     # ── BULLISH SWEEP ENTRY (BUY) ──────────────────────────
     if sweep_bias == 'BULLISH':
         # Price must be above the swept level (reversal confirmed)
-        if current_price <= swept_level:
+        if current_price <= float(swept_level):
+            return None
+
+        # ── Minimum distance from swept level (avoid re-test zone) ──
+        if price_vs_swept_level < MIN_DIST_FROM_SWEPT_PIPS:
             return None
 
         score += 20; confluence.append("BULLISH_SWEEP_CONFIRMED")
+
+        # Sweep recency bonus
+        if bars_since_sweep == 0:
+            score += 10; confluence.append("FRESH_SWEEP_BAR0")
+        elif bars_since_sweep == 1:
+            score += 5; confluence.append(f"FRESH_SWEEP_{bars_since_sweep}BAR")
 
         # MANDATORY: Delta confirms
         score += 15; confluence.append("DELTA_BULL_MANDATORY")
@@ -208,8 +226,6 @@ def evaluate(symbol: str,
         if score >= MIN_SCORE:
             # Entry near swept level (better R:R than arbitrary candle close)
             entry_price = max(current_price, float(swept_level))
-            # v2.1: SL widened to 1.5xATR (was 0.3xATR — too tight,
-            # causing -0.12 avg R despite 59.9% WR on shadow trades)
             sl_price  = round(entry_price - atr_pips * 1.5 * pip_size, 5)
             tp1_price = round(entry_price + atr_pips * 1.5 * pip_size, 5)
             tp2_price = round(entry_price + atr_pips * 3.0 * pip_size, 5)
@@ -261,10 +277,21 @@ def evaluate(symbol: str,
     confluence = []
 
     if sweep_bias == 'BEARISH':
-        if current_price >= swept_level:
+        # Price must be below the swept level (reversal confirmed)
+        if current_price >= float(swept_level):
+            return None
+
+        # ── Minimum distance from swept level (avoid re-test zone) ──
+        if abs(price_vs_swept_level) < MIN_DIST_FROM_SWEPT_PIPS:
             return None
 
         score += 20; confluence.append("BEARISH_SWEEP_CONFIRMED")
+
+        # Sweep recency bonus
+        if bars_since_sweep == 0:
+            score += 10; confluence.append("FRESH_SWEEP_BAR0")
+        elif bars_since_sweep == 1:
+            score += 5; confluence.append(f"FRESH_SWEEP_{bars_since_sweep}BAR")
 
         # MANDATORY: Delta confirms
         score += 15; confluence.append("DELTA_BEAR_MANDATORY")
@@ -321,7 +348,6 @@ def evaluate(symbol: str,
 
         if score >= MIN_SCORE:
             entry_price = min(current_price, float(swept_level))
-            # v2.1: SL widened to 1.5xATR (was 0.3xATR — too tight)
             sl_price  = round(entry_price + atr_pips * 1.5 * pip_size, 5)
             tp1_price = round(entry_price - atr_pips * 1.5 * pip_size, 5)
             tp2_price = round(entry_price - atr_pips * 3.0 * pip_size, 5)

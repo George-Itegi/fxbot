@@ -211,6 +211,9 @@ def _find_last_sweep(df_h1: pd.DataFrame) -> dict:
     """
     Find the most recent liquidity sweep using proper swing point detection.
     A sweep occurs when price pierces a swing high/low then reverses.
+
+    v2: Added bars_since_sweep (recency) and follow_through confirmation.
+    Only returns sweeps where the next H1 candle continued the reversal.
     """
     recent = df_h1.tail(50)
     if len(recent) < 20:
@@ -221,6 +224,7 @@ def _find_last_sweep(df_h1: pd.DataFrame) -> dict:
     lows = recent['low'].values
     closes = recent['close'].values
     n = len(highs)
+    last_bar_idx = n - 1
 
     # Detect proper swing points (local extrema with lookback=5)
     swing_length = 5
@@ -238,6 +242,7 @@ def _find_last_sweep(df_h1: pd.DataFrame) -> dict:
 
     best_sweep = None
     sweep_min_reversal = 3.0  # Minimum 3 pips reversal
+    max_bars_since = 3  # Sweep must be within 3 H1 bars (hours) to be actionable
 
     # Check for HIGH sweeps (price pierced above swing high, then reversed)
     for si, (sidx, sprice) in enumerate(swing_highs):
@@ -251,9 +256,25 @@ def _find_last_sweep(df_h1: pd.DataFrame) -> dict:
                 # Pierced above swing high — check for reversal
                 reversal_pips = (highs[j] - closes[j]) / pip_size
                 if reversal_pips >= sweep_min_reversal and closes[j] < sprice:
-                    if best_sweep is None or sidx > best_sweep[0]:
+                    # Recency check: how many bars since this sweep?
+                    bars_since = last_bar_idx - j
+                    if bars_since > max_bars_since:
+                        break  # Too old, skip this swing high entirely
+
+                    # Follow-through check: next bar must continue bearish
+                    follow_through = False
+                    if j + 1 < n:
+                        next_close = closes[j + 1]
+                        # For bearish sweep: next close should be below sweep close
+                        if next_close < closes[j]:
+                            follow_through = True
+                    else:
+                        # Last bar in window — accept without follow-through
+                        follow_through = True
+
+                    if follow_through and (best_sweep is None or j > best_sweep[5]):
                         best_sweep = (sidx, sprice, 'HIGH_SWEEP', 'BEARISH',
-                                      reversal_pips, j)
+                                      reversal_pips, j, bars_since, follow_through)
                     break
             elif closes[j] > sprice * 1.003:
                 # Price moved above and stayed — not a sweep, break
@@ -269,21 +290,38 @@ def _find_last_sweep(df_h1: pd.DataFrame) -> dict:
             if lows[j] < sprice:
                 reversal_pips = (closes[j] - lows[j]) / pip_size
                 if reversal_pips >= sweep_min_reversal and closes[j] > sprice:
-                    if best_sweep is None or sidx > best_sweep[0]:
+                    # Recency check
+                    bars_since = last_bar_idx - j
+                    if bars_since > max_bars_since:
+                        break
+
+                    # Follow-through check: next bar must continue bullish
+                    follow_through = False
+                    if j + 1 < n:
+                        next_close = closes[j + 1]
+                        # For bullish sweep: next close should be above sweep close
+                        if next_close > closes[j]:
+                            follow_through = True
+                    else:
+                        follow_through = True
+
+                    if follow_through and (best_sweep is None or j > best_sweep[5]):
                         best_sweep = (sidx, sprice, 'LOW_SWEEP', 'BULLISH',
-                                      reversal_pips, j)
+                                      reversal_pips, j, bars_since, follow_through)
                     break
             elif closes[j] < sprice * 0.997:
                 break
 
     if best_sweep:
-        sidx, sprice, stype, bias, rev_pips, sweep_bar = best_sweep
+        sidx, sprice, stype, bias, rev_pips, sweep_bar, bars_since, ft = best_sweep
         return {
             'type': stype,
             'swept_level': round(sprice, 5),
             'bias': bias,
             'reversal_pips': round(rev_pips, 1),
             'time': str(recent.iloc[sweep_bar].get('time', '')),
+            'bars_since_sweep': bars_since,
+            'follow_through': ft,
         }
 
     return {}
