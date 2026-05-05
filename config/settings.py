@@ -9,39 +9,46 @@
 # insufficient sample size, or structural dependency issues.
 #
 # CUT PAIRS (do NOT trade — backtest proven negative):
-#   GBPAUD  -$818  Sharpe -0.44  27.4% WR  (consistently losing)
-#   GBPCAD  -$692  Sharpe -1.47  22.8% WR  (worst Sharpe of all 13)
 #   XAUUSD  -$246  Sharpe -0.92  21.4% WR  (gold microstructure mismatch)
-#   EURGBP    -$8  Sharpe -0.23  25.0% WR  (4 trades in 180 days = dead)
 #   AUDCAD +$1886 Sharpe  0.20  30.0% WR  (one-strategy dependency, thin edge)
+#   EURUSD  -$4538 Sharpe -3.82  20.5% WR  (EUR base toxic for momentum)
+#   EURAUD  -$3304 Sharpe -2.89  22.0% WR  (EUR base toxic for momentum)
+#   EURNZD  -$4162 Sharpe -2.89  23.7% WR  (EUR base toxic for momentum)
+#   EURCAD  -$3041 Sharpe -2.11  23.0% WR  (EUR base toxic for momentum)
 #
 # To ADD a new pair: backtest 180 days, must beat GBPUSD minimum bar
 #   (Sharpe > 1.79, PF > 1.55, positive P&L, 30+ trades).
 # To CUT an existing pair: add to PAIR_BLACKLIST with reason.
 
 PAIR_WHITELIST = [
-    # JPY Crosses (Core Edge — 69% of portfolio P&L)
-    "CHFJPY",  # Sharpe 4.92 | +$10,442 | 87 trades | BEST PAIR
-    "GBPJPY",  # Sharpe 3.58 | +$7,241  | 119 trades
-    "CADJPY",  # Sharpe 3.71 | +$5,699  | 38 trades
-    "AUDJPY",  # Sharpe 3.25 | +$4,506  | 65 trades
-    "EURJPY",  # Sharpe 2.29 | +$4,181  | 95 trades
+    # GBP Crosses (NEW — GBP shares volatility/momentum DNA with JPY)
+    "GBPCAD",  # Walk-forward 60d: +$1,493 | Sharpe 1.33 | PF 1.53 | PROMISING
+    "GBPAUD",  # Walk-forward 60d: -$524 | Low trades (21) | Needs more data
 
-    # GBP Base (Secondary Edge)
-    "GBPNZD",  # Sharpe 2.63 | +$4,597  | 62 trades
-    "GBPUSD",  # Sharpe 1.79 | +$2,120  | 41 trades | diversifier
+    # GBP Core (Proven Edge)
+    "GBPJPY",  # Walk-forward 60d: +$10,430 | Sharpe 4.39 | ELITE
+    "GBPNZD",  # Walk-forward 60d: +$4,738 | Sharpe 3.62 | PF 2.21 (retrained model)
+    "GBPUSD",  # Walk-forward 60d: +$1,355 | Sharpe 1.86 | PF 1.69
+
+    # JPY Crosses (Core Edge — 69% of portfolio P&L)
+    "CHFJPY",  # Walk-forward 60d: +$3,971 | Sharpe 3.63 | PF 2.44 (retrained model)
+    "AUDJPY",  # Walk-forward 60d: +$4,662 | Sharpe 3.14 | PF 2.04
+    "CADJPY",  # Walk-forward 60d: +$1,662 | Sharpe 2.30 | PF 2.92 (retrained model)
+    "EURJPY",  # Walk-forward 60d: +$4,365 | Sharpe 3.65 | PF 2.62 (retrained model)
 
     # Commodities
-    "XAGUSD",  # Sharpe 3.11 | +$5,074  | 52 trades | Silver only
+    "XAGUSD",  # Walk-forward 60d: -$773 (retrained model over-filtered) | Historical Sharpe 4.53
 ]
 
 PAIR_BLACKLIST = {
     # Pair: (date_cut, reason, backtest_pnl, backtest_sharpe)
-    "GBPAUD": ("2025-05", "Consistently losing across all metrics", -818, -0.44),
-    "GBPCAD": ("2025-05", "Worst Sharpe of all 13 pairs", -692, -1.47),
     "XAUUSD": ("2025-05", "Gold microstructure mismatch", -246, -0.92),
-    "EURGBP": ("2025-05", "4 trades in 180 days — insufficient sample", -8, -0.23),
     "AUDCAD": ("2025-05", "One-strategy dependency, 0.20 Sharpe", 1886, 0.20),
+    "EURUSD": ("2025-05", "EUR base toxic for momentum strategies", -4538, -3.82),
+    "EURAUD": ("2025-05", "EUR base toxic for momentum strategies", -3304, -2.89),
+    "EURNZD": ("2025-05", "EUR base toxic for momentum strategies", -4162, -2.89),
+    "EURCAD": ("2025-05", "EUR base toxic for momentum strategies", -3041, -2.11),
+    "EURGBP": ("2025-05", "Model rejects all signals, pair too rangy", 0, 0.30),
 }
 
 # Alias for backward compat — WATCHLIST = WHITELIST
@@ -136,11 +143,13 @@ SIZING_CONSEC_LOSS_HALVE    = 3      # Halve all sizes after N consecutive losse
 # --- SPREAD LIMITS (in pips) ---
 # Only whitelisted pairs. Cut pairs removed.
 MAX_SPREAD = {
+    # GBP Crosses (NEW)
+    "GBPAUD": 3.0, "GBPCAD": 3.5,
+    # GBP Core
+    "GBPJPY": 4.0, "GBPNZD": 6.0, "GBPUSD": 2.0,
     # JPY Crosses (Core Edge)
-    "CHFJPY": 3.5, "GBPJPY": 4.0, "EURJPY": 3.0,
+    "CHFJPY": 3.5, "EURJPY": 3.0,
     "AUDJPY": 3.5, "CADJPY": 4.0,
-    # GBP Base
-    "GBPNZD": 6.0, "GBPUSD": 2.0,
     # Commodities
     "XAGUSD": 5.0,
     # Default fallback
