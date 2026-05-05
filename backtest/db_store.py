@@ -1,5 +1,5 @@
 # =============================================================
-# backtest/db_store.py  v1.1
+# backtest/db_store.py  v1.2
 # Stores backtest trades and signals into MySQL for model training.
 #
 # WHY: The XGBoost and LSTM models need 200+ trades with rich
@@ -471,6 +471,139 @@ def _ensure_tables(conn):
             vol_surge           INT,
             is_choppy           INT,
             atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Supply/Demand Zone-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_sd_zone_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            zone_type           VARCHAR(20),
+            zone_range_pips     DOUBLE,
+            price_at_zone       INT,
+            displacement_pips   DOUBLE,
+            age_bars            INT,
+            trend               VARCHAR(15),
+            delta_bias          VARCHAR(15),
+            delta_strength      VARCHAR(15),
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            stoch_rsi_k         DOUBLE,
+            supertrend_dir_h1   INT,
+            supertrend_dir_h4   INT,
+            htf_ok              INT,
+            smc_bias            VARCHAR(15),
+            pd_zone             VARCHAR(20),
+            vol_surge           INT,
+            has_bos             INT,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Break of Structure Momentum-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_bos_momentum_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            bos_type            VARCHAR(20),
+            broken_level        DOUBLE,
+            displacement_pips   DOUBLE,
+            bars_since_bos      INT,
+            pullback_depth_pips DOUBLE,
+            rejection_strength  VARCHAR(20),
+            trend               VARCHAR(15),
+            delta_bias          VARCHAR(15),
+            delta_strength      VARCHAR(15),
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            stoch_rsi_k         DOUBLE,
+            supertrend_dir_h1   INT,
+            supertrend_dir_h4   INT,
+            htf_ok              INT,
+            smc_bias            VARCHAR(15),
+            pd_zone             VARCHAR(20),
+            vol_surge           INT,
+            has_smc_bos         INT,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Optimal Trade Entry (Fibonacci)-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_ote_fib_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            fib_direction       VARCHAR(10),
+            ote_zone_low        DOUBLE,
+            ote_zone_high       DOUBLE,
+            in_gz               INT,
+            fib_bias            VARCHAR(15),
+            fib_confluence_score INT,
+            delta_bias          VARCHAR(15),
+            delta_strength      VARCHAR(15),
+            supertrend_dir_h1   INT,
+            supertrend_dir_h4   INT,
+            stoch_rsi_k         DOUBLE,
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            of_direction        VARCHAR(15),
+            vol_surge           INT,
+            htf_ok              INT,
+            smc_bias            VARCHAR(15),
+            pd_zone             VARCHAR(20),
+            has_bull_bos        INT,
+            has_bear_bos        INT,
+            displacement_pips   DOUBLE,
+            has_displacement    INT,
+            swing_high          DOUBLE,
+            swing_low           DOUBLE,
+            atr_pips            DOUBLE,
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # ── Institutional Candles-specific features table (1:1 with backtest_trades) ──
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_inst_candles_features (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            trade_id            INT NOT NULL,
+            pattern_type        VARCHAR(30),
+            direction           VARCHAR(10),
+            body_pips           DOUBLE,
+            wick_ratio          DOUBLE,
+            quality             VARCHAR(15),
+            context_types       VARCHAR(200),
+            context_count       INT,
+            context_score       INT,
+            delta_bias          VARCHAR(15),
+            delta_strength      VARCHAR(15),
+            spread_pips         DOUBLE,
+            of_imbalance        DOUBLE,
+            of_strength         VARCHAR(20),
+            stoch_rsi_k         DOUBLE,
+            supertrend_dir_h1   INT,
+            supertrend_dir_h4   INT,
+            htf_ok              INT,
+            smc_bias            VARCHAR(15),
+            pd_zone             VARCHAR(20),
+            vol_surge           INT,
+            has_bos             INT,
+            fib_bonus           INT,
+            atr_pips            DOUBLE,
+            sl_pips             DOUBLE,
+            trend               VARCHAR(15),
             created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (trade_id) REFERENCES backtest_trades(id)
                 ON DELETE CASCADE
@@ -961,6 +1094,191 @@ def store_structure_features(cursor, trade_id: int, structure_features: dict):
         log.warning(f"[DB_STORE] Failed to store Structure Alignment features for trade {trade_id}: {e}")
 
 
+def store_sd_zone_features(cursor, trade_id: int, sd_zone_features: dict):
+    """Store Supply/Demand Zone-specific strategy features for a trade."""
+    if not sd_zone_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_sd_zone_features
+                (trade_id, zone_type, zone_range_pips, price_at_zone,
+                 displacement_pips, age_bars, trend,
+                 delta_bias, delta_strength, of_imbalance, of_strength,
+                 stoch_rsi_k, supertrend_dir_h1, supertrend_dir_h4,
+                 htf_ok, smc_bias, pd_zone, vol_surge, has_bos, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            sd_zone_features.get('zone_type'),
+            sd_zone_features.get('zone_range_pips'),
+            sd_zone_features.get('price_at_zone'),
+            sd_zone_features.get('displacement_pips'),
+            sd_zone_features.get('age_bars'),
+            sd_zone_features.get('trend'),
+            sd_zone_features.get('delta_bias'),
+            sd_zone_features.get('delta_strength'),
+            sd_zone_features.get('of_imbalance'),
+            sd_zone_features.get('of_strength'),
+            sd_zone_features.get('stoch_rsi_k'),
+            sd_zone_features.get('supertrend_dir_h1'),
+            sd_zone_features.get('supertrend_dir_h4'),
+            sd_zone_features.get('htf_ok'),
+            sd_zone_features.get('smc_bias'),
+            sd_zone_features.get('pd_zone'),
+            sd_zone_features.get('vol_surge'),
+            sd_zone_features.get('has_bos'),
+            sd_zone_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored S&D Zone features for trade {trade_id}: "
+                 f"zone_type={sd_zone_features.get('zone_type','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store S&D Zone features for trade {trade_id}: {e}")
+
+
+def store_bos_momentum_features(cursor, trade_id: int, bos_momentum_features: dict):
+    """Store Break of Structure Momentum-specific strategy features for a trade."""
+    if not bos_momentum_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_bos_momentum_features
+                (trade_id, bos_type, broken_level, displacement_pips,
+                 bars_since_bos, pullback_depth_pips, rejection_strength,
+                 trend, delta_bias, delta_strength, of_imbalance, of_strength,
+                 stoch_rsi_k, supertrend_dir_h1, supertrend_dir_h4,
+                 htf_ok, smc_bias, pd_zone, vol_surge, has_smc_bos, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            bos_momentum_features.get('bos_type'),
+            bos_momentum_features.get('broken_level'),
+            bos_momentum_features.get('displacement_pips'),
+            bos_momentum_features.get('bars_since_bos'),
+            bos_momentum_features.get('pullback_depth_pips'),
+            bos_momentum_features.get('rejection_strength'),
+            bos_momentum_features.get('trend'),
+            bos_momentum_features.get('delta_bias'),
+            bos_momentum_features.get('delta_strength'),
+            bos_momentum_features.get('of_imbalance'),
+            bos_momentum_features.get('of_strength'),
+            bos_momentum_features.get('stoch_rsi_k'),
+            bos_momentum_features.get('supertrend_dir_h1'),
+            bos_momentum_features.get('supertrend_dir_h4'),
+            bos_momentum_features.get('htf_ok'),
+            bos_momentum_features.get('smc_bias'),
+            bos_momentum_features.get('pd_zone'),
+            bos_momentum_features.get('vol_surge'),
+            bos_momentum_features.get('has_smc_bos'),
+            bos_momentum_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored BOS Momentum features for trade {trade_id}: "
+                 f"bos_type={bos_momentum_features.get('bos_type','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store BOS Momentum features for trade {trade_id}: {e}")
+
+
+def store_ote_fib_features(cursor, trade_id: int, ote_fib_features: dict):
+    """Store Optimal Trade Entry (Fibonacci)-specific strategy features for a trade."""
+    if not ote_fib_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_ote_fib_features
+                (trade_id, fib_direction, ote_zone_low, ote_zone_high,
+                 in_gz, fib_bias, fib_confluence_score,
+                 delta_bias, delta_strength, supertrend_dir_h1, supertrend_dir_h4,
+                 stoch_rsi_k, of_imbalance, of_strength, of_direction,
+                 vol_surge, htf_ok, smc_bias, pd_zone,
+                 has_bull_bos, has_bear_bos, displacement_pips, has_displacement,
+                 swing_high, swing_low, atr_pips)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            ote_fib_features.get('fib_direction'),
+            ote_fib_features.get('ote_zone_low'),
+            ote_fib_features.get('ote_zone_high'),
+            ote_fib_features.get('in_gz'),
+            ote_fib_features.get('fib_bias'),
+            ote_fib_features.get('fib_confluence_score'),
+            ote_fib_features.get('delta_bias'),
+            ote_fib_features.get('delta_strength'),
+            ote_fib_features.get('supertrend_dir_h1'),
+            ote_fib_features.get('supertrend_dir_h4'),
+            ote_fib_features.get('stoch_rsi_k'),
+            ote_fib_features.get('of_imbalance'),
+            ote_fib_features.get('of_strength'),
+            ote_fib_features.get('of_direction'),
+            ote_fib_features.get('vol_surge'),
+            ote_fib_features.get('htf_ok'),
+            ote_fib_features.get('smc_bias'),
+            ote_fib_features.get('pd_zone'),
+            ote_fib_features.get('has_bull_bos'),
+            ote_fib_features.get('has_bear_bos'),
+            ote_fib_features.get('displacement_pips'),
+            ote_fib_features.get('has_displacement'),
+            ote_fib_features.get('swing_high'),
+            ote_fib_features.get('swing_low'),
+            ote_fib_features.get('atr_pips'),
+        ))
+        log.info(f"[DB_STORE] Stored OTE Fib features for trade {trade_id}: "
+                 f"fib_dir={ote_fib_features.get('fib_direction','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store OTE Fib features for trade {trade_id}: {e}")
+
+
+def store_inst_candles_features(cursor, trade_id: int, inst_candles_features: dict):
+    """Store Institutional Candles-specific strategy features for a trade."""
+    if not inst_candles_features or not trade_id:
+        return
+    try:
+        cursor.execute("""
+            INSERT INTO backtest_inst_candles_features
+                (trade_id, pattern_type, direction, body_pips, wick_ratio,
+                 quality, context_types, context_count, context_score,
+                 delta_bias, delta_strength, spread_pips,
+                 of_imbalance, of_strength, stoch_rsi_k,
+                 supertrend_dir_h1, supertrend_dir_h4,
+                 htf_ok, smc_bias, pd_zone, vol_surge,
+                 has_bos, fib_bonus, atr_pips, sl_pips, trend)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trade_id,
+            inst_candles_features.get('pattern_type'),
+            inst_candles_features.get('direction'),
+            inst_candles_features.get('body_pips'),
+            inst_candles_features.get('wick_ratio'),
+            inst_candles_features.get('quality'),
+            inst_candles_features.get('context_types'),
+            inst_candles_features.get('context_count'),
+            inst_candles_features.get('context_score'),
+            inst_candles_features.get('delta_bias'),
+            inst_candles_features.get('delta_strength'),
+            inst_candles_features.get('spread_pips'),
+            inst_candles_features.get('of_imbalance'),
+            inst_candles_features.get('of_strength'),
+            inst_candles_features.get('stoch_rsi_k'),
+            inst_candles_features.get('supertrend_dir_h1'),
+            inst_candles_features.get('supertrend_dir_h4'),
+            inst_candles_features.get('htf_ok'),
+            inst_candles_features.get('smc_bias'),
+            inst_candles_features.get('pd_zone'),
+            inst_candles_features.get('vol_surge'),
+            inst_candles_features.get('has_bos'),
+            inst_candles_features.get('fib_bonus'),
+            inst_candles_features.get('atr_pips'),
+            inst_candles_features.get('sl_pips'),
+            inst_candles_features.get('trend'),
+        ))
+        log.info(f"[DB_STORE] Stored Institutional Candles features for trade {trade_id}: "
+                 f"pattern={inst_candles_features.get('pattern_type','')}")
+    except Exception as e:
+        log.warning(f"[DB_STORE] Failed to store Institutional Candles features for trade {trade_id}: {e}")
+
+
 def store_trade(trade, master_report: dict = None,
                 market_report: dict = None, smc_report: dict = None,
                 flow_data: dict = None, run_id: str = 'default',
@@ -978,7 +1296,11 @@ def store_trade(trade, master_report: dict = None,
                 fvg_features: dict = None,
                 ema_cross_features: dict = None,
                 rsi_div_features: dict = None,
-                structure_features: dict = None):
+                structure_features: dict = None,
+                sd_zone_features: dict = None,
+                bos_momentum_features: dict = None,
+                ote_fib_features: dict = None,
+                inst_candles_features: dict = None):
     """
     Store a completed backtest trade into MySQL.
     Includes ALL features needed for ML model training.
@@ -1163,6 +1485,42 @@ def store_trade(trade, master_report: dict = None,
                         log.info(f"[DB_STORE] Backfilled Structure Alignment features for existing trade {existing_id}")
                 except Exception as e:
                     log.warning(f"[DB_STORE] Structure Alignment backfill error: {e}")
+            if sd_zone_features and trade.strategy == 'SUPPLY_DEMAND_ZONE_ENTRY':
+                try:
+                    c.execute("SELECT id FROM backtest_sd_zone_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_sd_zone_features(c, existing_id, sd_zone_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled S&D Zone features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] S&D Zone backfill error: {e}")
+            if bos_momentum_features and trade.strategy == 'BREAK_OF_STRUCTURE_MOMENTUM':
+                try:
+                    c.execute("SELECT id FROM backtest_bos_momentum_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_bos_momentum_features(c, existing_id, bos_momentum_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled BOS Momentum features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] BOS Momentum backfill error: {e}")
+            if ote_fib_features and trade.strategy == 'OPTIMAL_TRADE_ENTRY_FIB':
+                try:
+                    c.execute("SELECT id FROM backtest_ote_fib_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_ote_fib_features(c, existing_id, ote_fib_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled OTE Fib features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] OTE Fib backfill error: {e}")
+            if inst_candles_features and trade.strategy == 'INSTITUTIONAL_CANDLES':
+                try:
+                    c.execute("SELECT id FROM backtest_inst_candles_features WHERE trade_id = %s LIMIT 1", (existing_id,))
+                    if not c.fetchone():
+                        store_inst_candles_features(c, existing_id, inst_candles_features)
+                        conn.commit()
+                        log.info(f"[DB_STORE] Backfilled Institutional Candles features for existing trade {existing_id}")
+                except Exception as e:
+                    log.warning(f"[DB_STORE] Institutional Candles backfill error: {e}")
             c.close()
             conn.close()
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
@@ -1320,6 +1678,18 @@ def store_trade(trade, master_report: dict = None,
             conn.commit()
         if structure_features and trade.strategy == 'STRUCTURE_ALIGNMENT':
             store_structure_features(c, trade_id, structure_features)
+            conn.commit()
+        if sd_zone_features and trade.strategy == 'SUPPLY_DEMAND_ZONE_ENTRY':
+            store_sd_zone_features(c, trade_id, sd_zone_features)
+            conn.commit()
+        if bos_momentum_features and trade.strategy == 'BREAK_OF_STRUCTURE_MOMENTUM':
+            store_bos_momentum_features(c, trade_id, bos_momentum_features)
+            conn.commit()
+        if ote_fib_features and trade.strategy == 'OPTIMAL_TRADE_ENTRY_FIB':
+            store_ote_fib_features(c, trade_id, ote_fib_features)
+            conn.commit()
+        if inst_candles_features and trade.strategy == 'INSTITUTIONAL_CANDLES':
+            store_inst_candles_features(c, trade_id, inst_candles_features)
             conn.commit()
 
         c.close()
