@@ -28,6 +28,8 @@ from strategies.breakout_momentum import evaluate as breakout_evaluate
 from strategies.structure_alignment import evaluate as struct_align_evaluate
 from strategies.supply_demand_zone import evaluate as sd_zone_evaluate
 from strategies.bos_momentum import evaluate as bos_momentum_evaluate
+from strategies.optimal_trade_entry_fib import evaluate as ote_fib_evaluate
+from strategies.institutional_candles import evaluate as inst_candles_evaluate
 
 log = get_logger(__name__)
 
@@ -43,6 +45,8 @@ STRATEGY_MIN_SCORES = {
     "RSI_DIVERGENCE_SMC":          68,   # RSI divergence + BOS/CHoCH
     "SUPPLY_DEMAND_ZONE_ENTRY":    70,   # S&D zone retest + delta + displacement
     "BREAK_OF_STRUCTURE_MOMENTUM": 70,   # Fresh BOS + pullback + delta
+    "OPTIMAL_TRADE_ENTRY_FIB":     70,   # OTE zone (0.618-0.786 Fib) + delta + displacement
+    "INSTITUTIONAL_CANDLES":        70,   # Candle pattern at institutional level + delta + OF
     # Retired (kept for reference):
     # "VWAP_MEAN_REVERSION":       65,  # RETIRED
     # "FVG_REVERSION":              68,  # RETIRED
@@ -66,11 +70,14 @@ STRATEGY_GROUPS = {
         "SMC_OB_REVERSAL", "LIQUIDITY_SWEEP_ENTRY",
         "SUPPLY_DEMAND_ZONE_ENTRY", "BREAK_OF_STRUCTURE_MOMENTUM"],
     "TREND_FOLLOWING": [
-        "TREND_CONTINUATION", "EMA_CROSS_MOMENTUM"],
+        "TREND_CONTINUATION", "EMA_CROSS_MOMENTUM",
+        "OPTIMAL_TRADE_ENTRY_FIB"],
     "ORDER_FLOW": [
         "DELTA_DIVERGENCE"],
     "OSCILLATOR": [
         "RSI_DIVERGENCE_SMC"],
+    "PRICE_ACTION": [
+        "INSTITUTIONAL_CANDLES"],
     # Retired groups preserved for reference:
     # "MEAN_REVERSION": ["VWAP_MEAN_REVERSION"],  # RETIRED — overfit
 }
@@ -275,6 +282,8 @@ def _run_one_strategy(name, symbol,
                                   "TRENDING_EXTENDED"],
         "EMA_CROSS_MOMENTUM":    ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
                                   "TRENDING_EXTENDED"],
+        "OPTIMAL_TRADE_ENTRY_FIB": ["TRENDING_STRONG", "BREAKOUT_ACCEPTED",
+                                  "TRENDING_EXTENDED"],
         # Divergence — needs reversal/breakdown setups
         "DELTA_DIVERGENCE":      ["REVERSAL_RISK", "BREAKOUT_REJECTED",
                                   "BALANCED", "TRENDING_EXTENDED"],
@@ -301,6 +310,8 @@ def _run_one_strategy(name, symbol,
         "TREND_CONTINUATION":    ["LONDON_OPEN", "LONDON_SESSION",
                                   "NY_LONDON_OVERLAP"],
         "EMA_CROSS_MOMENTUM":    ["LONDON_OPEN", "LONDON_SESSION",
+                                  "NY_LONDON_OVERLAP"],
+        "OPTIMAL_TRADE_ENTRY_FIB": ["LONDON_OPEN", "LONDON_SESSION",
                                   "NY_LONDON_OVERLAP"],
         # Retired: BREAKOUT_MOMENTUM session gate removed
     }
@@ -413,6 +424,22 @@ def _run_one_strategy(name, symbol,
 
         elif name == "BREAK_OF_STRUCTURE_MOMENTUM":
             return bos_momentum_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report,
+                relaxed=relaxed)
+
+        elif name == "OPTIMAL_TRADE_ENTRY_FIB":
+            return ote_fib_evaluate(
+                symbol, df_m1, df_m5, df_m15, df_h1,
+                smc_report=smc_report,
+                market_report=market_report,
+                df_h4=df_h4, master_report=master_report,
+                relaxed=relaxed)
+
+        elif name == "INSTITUTIONAL_CANDLES":
+            return inst_candles_evaluate(
                 symbol, df_m1, df_m5, df_m15, df_h1,
                 smc_report=smc_report,
                 market_report=market_report,

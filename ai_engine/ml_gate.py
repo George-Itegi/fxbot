@@ -1076,8 +1076,11 @@ def collect_all_strategy_scores(symbol: str,
     Retired strategies are excluded from scoring:
       FVG_REVERSION, BREAKOUT_MOMENTUM, STRUCTURE_ALIGNMENT, VWAP_MEAN_REVERSION
 
-    New strategies (v1.0):
+    Batch 1 strategies (v1.0):
       SUPPLY_DEMAND_ZONE_ENTRY, BREAK_OF_STRUCTURE_MOMENTUM
+
+    Batch 2 strategies (v1.0):
+      OPTIMAL_TRADE_ENTRY_FIB, INSTITUTIONAL_CANDLES
 
     Returns dict: {strategy_name: score_or_None}
     """
@@ -1089,6 +1092,7 @@ def collect_all_strategy_scores(symbol: str,
         'DELTA_DIVERGENCE', 'TREND_CONTINUATION',
         'EMA_CROSS_MOMENTUM', 'RSI_DIVERGENCE_SMC',
         'SUPPLY_DEMAND_ZONE_ENTRY', 'BREAK_OF_STRUCTURE_MOMENTUM',
+        'OPTIMAL_TRADE_ENTRY_FIB', 'INSTITUTIONAL_CANDLES',
         # Retired — excluded from scoring:
         # 'VWAP_MEAN_REVERSION', 'FVG_REVERSION', 'BREAKOUT_MOMENTUM', 'STRUCTURE_ALIGNMENT',
     ]
