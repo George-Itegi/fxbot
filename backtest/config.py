@@ -24,27 +24,24 @@ import datetime
 #     "XAGUSD",  # Silver
 # ]
 PAIR_WHITELIST = [
-    # EUR Base (NEW — Currency Commodity)
-    "EURUSD",  # MUST TEST — Most liquid pair on earth, if bot can't read EURUSD something's wrong
-    "EURAUD",  # Test — EUR works well, AUD is mixed, worth a shot
-    "EURNZD",  # Test — NZD trends well
-    "EURCAD",  # Maybe — EUR-CAD cross
+    # GBP Crosses (NEW — GBP shares volatility/momentum DNA with JPY)
+    "GBPAUD",  # MUST TEST — GBP momentum + AUD volatility, models should read this
+    "GBPCAD",  # MUST TEST — GBP base + CAD commodity, similar profile to GBPJPY
+    "EURGBP",  # Test — GBP quote drives the pair, test if GBP behavior transfers
 
-    # CHF Pair (Retained — Best performer)
-    "CHFJPY",  # Sharpe 4.92 | +$10,442 | 87 trades | BEST PAIR (existing)
+    # GBP Core (Proven Edge)
+    "GBPJPY",  # Sharpe 3.58 | Walk-forward 60d: +$10,429 | 50% win | ELITE
+    "GBPNZD",  # Sharpe 2.63 | Historical: +$4,597 | 62 trades
+    "GBPUSD",  # Sharpe 1.79 | Historical: +$2,120 | 41 trades | diversifier
 
     # JPY Crosses (Core Edge — 69% of portfolio P&L)
-    "GBPJPY",  # Sharpe 3.58 | +$7,241  | 119 trades
-    "CADJPY",  # Sharpe 3.71 | +$5,699  | 38 trades
-    "AUDJPY",  # Sharpe 3.25 | +$4,506  | 65 trades
-    "EURJPY",  # Sharpe 2.29 | +$4,181  | 95 trades
-
-    # GBP Base (Secondary Edge)
-    "GBPNZD",  # Sharpe 2.63 | +$4,597  | 62 trades
-    "GBPUSD",  # Sharpe 1.79 | +$2,120  | 41 trades | diversifier
+    "CHFJPY",  # Walk-forward 60d: +$2,753 | Sharpe 1.27 | BEST HISTORICAL
+    "CADJPY",  # Walk-forward 60d: +$1,787 (EMA_CROSS) | Fixable with exclusions
+    "AUDJPY",  # Sharpe 3.25 | Historical: +$4,506
+    "EURJPY",  # Sharpe 2.29 | Historical: +$4,181 | JPY quote may help
 
     # Commodities
-    "XAGUSD",  # Sharpe 3.11 | +$5,074  | 52 trades | Silver only
+    "XAGUSD",  # Sharpe 3.11 | Historical: +$5,074 | Silver only
 ]
 
 # SYMBOLS = [
@@ -105,15 +102,13 @@ START_DATE = END_DATE - datetime.timedelta(days=180)  # 6 months
 #     "DEFAULT": 0.5,
 # }
 MAX_SPREAD = {
-    # EUR Base (Currency Commodity)
-    "EURUSD": 1.5, "EURAUD": 2.5, "EURNZD": 3.0, "EURCAD": 2.5,
-    # CHF Pair
-    "CHFJPY": 3.5,
+    # GBP Crosses (NEW)
+    "GBPAUD": 3.0, "GBPCAD": 3.5, "EURGBP": 2.5,
+    # GBP Core
+    "GBPJPY": 4.0, "GBPNZD": 6.0, "GBPUSD": 2.0,
     # JPY Crosses (Core Edge)
-    "GBPJPY": 4.0, "EURJPY": 3.0,
+    "CHFJPY": 3.5, "EURJPY": 3.0,
     "AUDJPY": 3.5, "CADJPY": 4.0,
-    # GBP Base
-    "GBPNZD": 6.0, "GBPUSD": 2.0,
     # Commodities
     "XAGUSD": 5.0,
     # Default fallback
@@ -200,15 +195,13 @@ STRATEGIES_FILTER = []
 # For JPY pairs = varies (~$6.50-$9.50 depending on rate)
 # Simplified — we compute dynamically based on current rate
 PIP_VALUE_PER_LOT = {
-    # EUR Base (Currency Commodity)
-    "EURUSD": 10.0, "EURAUD": 6.50, "EURNZD": 6.00, "EURCAD": 6.50,
-    # CHF Pair
-    "CHFJPY": 6.50,
+    # GBP Crosses (NEW)
+    "GBPAUD": 6.50, "GBPCAD": 6.50, "EURGBP": 10.0,
+    # GBP Core
+    "GBPJPY": 6.50, "GBPNZD": 6.00, "GBPUSD": 10.0,
     # JPY Crosses
-    "EURJPY": 6.50, "GBPJPY": 6.50,
+    "CHFJPY": 6.50, "EURJPY": 6.50,
     "AUDJPY": 6.50, "CADJPY": 6.50,
-    # GBP Base
-    "GBPUSD": 10.0, "GBPNZD": 6.00,
     # Commodities
     "XAGUSD": 50.0,
     # Fallback
