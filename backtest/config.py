@@ -60,6 +60,10 @@ PAIR_WHITELIST = [
 #     "XAGUSD",  # Silver
 # ]
 # v2.0: 8-pair optimized portfolio (removed GBPAUD/GBPCAD/XAUUSD/EURGBP/AUDCAD)
+SYMBOLS = PAIR_WHITELIST
+
+# Alias: AVG_SPREAD_PIPS maps to MAX_SPREAD for backward compat with engine.py
+AVG_SPREAD_PIPS = MAX_SPREAD
 # Cut pairs: negative P&L, low Sharpe, or structural dependency (see config/settings.py)
 # Cut sessions: NY_AFTERNOON and SYDNEY — enforced in data_loader.py _tag_session
 # --- Timeframes to download ---
@@ -196,8 +200,11 @@ STRATEGIES_FILTER = []
 # For JPY pairs = varies (~$6.50-$9.50 depending on rate)
 # Simplified — we compute dynamically based on current rate
 PIP_VALUE_PER_LOT = {
+    # CHF Pairs
+    "USDCHF": 10.0, "GBPCHF": 10.0, "CHFJPY": 6.50,
+    "EURCHF": 10.0, "AUDCHF": 10.0, "CADCHF": 10.0, "NZDCHF": 10.0,
     # JPY Crosses
-    "CHFJPY": 6.50, "EURJPY": 6.50, "GBPJPY": 6.50,
+    "EURJPY": 6.50, "GBPJPY": 6.50,
     "AUDJPY": 6.50, "CADJPY": 6.50,
     # GBP Base
     "GBPUSD": 10.0, "GBPNZD": 6.00,
