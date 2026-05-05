@@ -145,6 +145,14 @@ def run():
     trade_count        = 0
     global TRADE_COUNT_SINCE_TRAIN
 
+    from data_layer.market_regime import get_session as _gs
+    _current_session = _gs()
+    log.info(f"[STARTUP] Current session: {_current_session} "
+             f"(whitelisted: {_current_session in SESSION_WHITELIST})")
+    if _current_session not in SESSION_WHITELIST:
+        log.warning(f"[STARTUP] ⚠️ Session {_current_session} is NOT in whitelist! "
+                     f"Bot will wait for: {SESSION_WHITELIST}")
+
     log.info("[STARTUP] All modules loaded. Starting main loop...\n")
 
     try:
@@ -163,7 +171,8 @@ def run():
 
             # ── v2.0: Hard session gate — skip entire cycle if blocked ──
             if session not in SESSION_WHITELIST:
-                log.debug(f"[CYCLE] Session {session} not in whitelist — sleeping {SCAN_INTERVAL}s")
+                log.info(f"[CYCLE] Session {session} not in whitelist — sleeping {SCAN_INTERVAL}s "
+                         f"(allowed: {SESSION_WHITELIST})")
                 time.sleep(SCAN_INTERVAL)
                 continue
 
