@@ -1,5 +1,5 @@
 # =============================================================
-# ai_engine/strategy_model.py  v1.0 — Layer 1 Strategy Model
+# ai_engine/strategy_model.py  v1.1 — Layer 1 Strategy Model
 #
 # PURPOSE: Per-strategy XGBoost models that replace hard-coded
 # gates inside individual strategy files. Each model learns
@@ -137,6 +137,8 @@ class StrategyModel:
             'DELTA_DIVERGENCE': 'delta_div',
             'SUPPLY_DEMAND_ZONE_ENTRY': 'sd_zone',
             'BREAK_OF_STRUCTURE_MOMENTUM': 'bos_momentum',
+            'OPTIMAL_TRADE_ENTRY_FIB': 'ote_fib',
+            'INSTITUTIONAL_CANDLES': 'inst_candles',
         }
         return known.get(name, name.lower().replace('_', '_')[:15])
 
@@ -474,6 +476,8 @@ class StrategyModelManager:
         'DELTA_DIVERGENCE': 'delta_div',
         'SUPPLY_DEMAND_ZONE_ENTRY': 'sd_zone',
         'BREAK_OF_STRUCTURE_MOMENTUM': 'bos_momentum',
+        'OPTIMAL_TRADE_ENTRY_FIB': 'ote_fib',
+        'INSTITUTIONAL_CANDLES': 'inst_candles',
     }
 
     def __init__(self):
@@ -699,6 +703,8 @@ class StrategyModelManager:
                 t.ss_delta_divergence, t.ss_trend_continuation,
                 t.ss_fvg_reversion, t.ss_ema_cross, t.ss_rsi_divergence,
                 t.ss_breakout_momentum, t.ss_structure_align,
+                t.ss_supply_demand, t.ss_bos_momentum,
+                t.ss_optimal_trade, t.ss_institutional,
                 t.profit_pips, t.profit_r, t.win,
                 t.source, t.model_predicted_r, t.entry_time
             """

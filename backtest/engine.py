@@ -81,6 +81,8 @@ _STRATEGY_FEATURE_KEYS = {
     'RSI_DIVERGENCE_SMC': '_rsi_div_features',
     'SUPPLY_DEMAND_ZONE_ENTRY': '_sd_zone_features',
     'BREAK_OF_STRUCTURE_MOMENTUM': '_bos_momentum_features',
+    'OPTIMAL_TRADE_ENTRY_FIB': '_ote_fib_features',
+    'INSTITUTIONAL_CANDLES': '_inst_candles_features',
 }
 
 # Mapping from feature dict keys to store_trade() parameter names
@@ -97,6 +99,8 @@ _FEATURE_PARAM_MAP = {
     '_rsi_div_features': 'rsi_div_features',
     '_sd_zone_features': 'sd_zone_features',
     '_bos_momentum_features': 'bos_momentum_features',
+    '_ote_fib_features': 'ote_fib_features',
+    '_inst_candles_features': 'inst_candles_features',
 }
 
 

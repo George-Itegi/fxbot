@@ -1,5 +1,5 @@
 # =============================================================
-# backtest/db_store.py  v1.0
+# backtest/db_store.py  v1.1
 # Stores backtest trades and signals into MySQL for model training.
 #
 # WHY: The XGBoost and LSTM models need 200+ trades with rich
@@ -139,6 +139,8 @@ def _ensure_tables(conn):
             ss_structure_align  INT DEFAULT 0,
             ss_supply_demand    INT DEFAULT 0,
             ss_bos_momentum     INT DEFAULT 0,
+            ss_optimal_trade    INT DEFAULT 0,
+            ss_institutional    INT DEFAULT 0,
 
             -- Fibonacci confluence (3 features for ML Gate v3.1)
             fib_confluence_score DOUBLE DEFAULT 0,
@@ -500,6 +502,8 @@ def _auto_migrate_trades(cursor, conn):
         ('backtest_trades', 'ss_structure_align',  'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'ss_supply_demand',     'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'ss_bos_momentum',      'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_optimal_trade',     'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'ss_institutional',     'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'fib_confluence_score', 'DOUBLE DEFAULT 0'),
         ('backtest_trades', 'fib_in_golden_zone',   'TINYINT DEFAULT 0'),
         ('backtest_trades', 'fib_bias_aligned',     'TINYINT DEFAULT 0'),
@@ -1021,6 +1025,8 @@ def store_trade(trade, master_report: dict = None,
         ss_structure_align  = _safe_float(ss.get('STRUCTURE_ALIGNMENT', 0))
         ss_supply_demand    = _safe_float(ss.get('SUPPLY_DEMAND_ZONE_ENTRY', 0))
         ss_bos_momentum     = _safe_float(ss.get('BREAK_OF_STRUCTURE_MOMENTUM', 0))
+        ss_optimal_trade    = _safe_float(ss.get('OPTIMAL_TRADE_ENTRY_FIB', 0))
+        ss_institutional    = _safe_float(ss.get('INSTITUTIONAL_CANDLES', 0))
 
         # Fibonacci confluence (from strategy_scores._fib_data)
         # check_fib_confluence returns: {fib_bonus, in_golden_zone, fib_bias_aligned, ...}
@@ -1162,7 +1168,7 @@ def store_trade(trade, master_report: dict = None,
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
             return
 
-        # 82 columns = 81 %s + 1 literal 'BACKTEST'
+        # 88 columns
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -1187,6 +1193,7 @@ def store_trade(trade, master_report: dict = None,
                 ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
                 ss_breakout_momentum, ss_structure_align,
                 ss_supply_demand, ss_bos_momentum,
+                ss_optimal_trade, ss_institutional,
                 fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
                 source,
                 model_predicted_r,
@@ -1201,7 +1208,7 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s
             )
         """, (
             run_id, trade.ticket, trade.symbol, trade.direction,
@@ -1268,6 +1275,7 @@ def store_trade(trade, master_report: dict = None,
             ss_fvg_reversion, ss_ema_cross, ss_rsi_divergence,
             ss_breakout_momentum, ss_structure_align,
             ss_supply_demand, ss_bos_momentum,
+            ss_optimal_trade, ss_institutional,
             # ── Fibonacci confluence (3 features for ML Gate v3.1) ──
             fib_confluence_score, fib_in_golden_zone, fib_bias_aligned,
             # ── Source: BACKTEST (real) or SHADOW (simulated) ──
