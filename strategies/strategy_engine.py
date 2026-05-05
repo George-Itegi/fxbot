@@ -19,9 +19,10 @@ from strategies.strategy_registry import get_active_strategies, REGISTRY
 
 # Import verbose setting
 try:
-    from config.settings import SCAN_VERBOSE
+    from config.settings import SCAN_VERBOSE, SESSION_WHITELIST
 except ImportError:
     SCAN_VERBOSE = False
+    SESSION_WHITELIST = []
 from strategies.smc_ob_reversal import evaluate as ob_evaluate
 from strategies.liquidity_sweep_entry import evaluate as sweep_evaluate
 from strategies.vwap_mean_reversion import evaluate as vwap_evaluate
@@ -323,24 +324,13 @@ def _run_one_strategy(name, symbol,
     }
 
     # ── HARD session gates ──────────────────────────────────────
-    # v2.0: NY_AFTERNOON and SYDNEY are HARD BLOCKED for ALL strategies.
-    # No strategy may trade during these sessions — backtest proven.
-    #   NY_AFTERNOON: 36 trades, 11.1% WR, -$2,607
-    #   SYDNEY:       ~67 trades, ~20% WR, -$3,361
+    # v2.0: Sessions NOT in SESSION_WHITELIST are hard blocked.
+    # This respects the config/settings.py whitelist dynamically.
     # Per-strategy session gates below are ADDITIONAL restrictions.
-    GLOBAL_SESSION_BLOCK = {"SYDNEY", "NY_AFTERNOON", "TOKYO"}
 
     # Per-strategy additional session restrictions
-    HARD_SESSION_GATES_STRAT = {
-        # Trend strategies — only fire in allowed sessions
-        "TREND_CONTINUATION":    ["LONDON_OPEN", "LONDON_SESSION",
-                                  "NY_LONDON_OVERLAP"],
-        "EMA_CROSS_MOMENTUM":    ["LONDON_OPEN", "LONDON_SESSION",
-                                  "NY_LONDON_OVERLAP"],
-        "OPTIMAL_TRADE_ENTRY_FIB": ["LONDON_OPEN", "LONDON_SESSION",
-                                  "NY_LONDON_OVERLAP"],
-        # Retired: BREAKOUT_MOMENTUM session gate removed
-    }
+    # (empty = no per-strategy restrictions; all use SESSION_WHITELIST from config)
+    HARD_SESSION_GATES_STRAT = {}
 
     # ── Check market state gate ─────────────────────────────────
     # In relaxed mode: bypass hard gates for strategies that need relaxation
@@ -358,10 +348,11 @@ def _run_one_strategy(name, symbol,
     # ── Check session gate ───────────────────────────────────────
     if not skip_hard_gates:
         if session:
-            # v2.0: GLOBAL session block — no strategy trades in blocked sessions
-            if session in GLOBAL_SESSION_BLOCK:
+            # v2.0: Respect SESSION_WHITELIST from config — if session
+            # is not in the whitelist, block all strategies.
+            if SESSION_WHITELIST and session not in SESSION_WHITELIST:
                 if SCAN_VERBOSE:
-                    log.info(f"         └─ {name:<30} → session blocked ({session})")
+                    log.info(f"         └─ {name:<30} → session not whitelisted ({session})")
                 return None
             # Per-strategy session gate
             if name in HARD_SESSION_GATES_STRAT:
