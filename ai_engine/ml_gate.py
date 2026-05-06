@@ -72,6 +72,11 @@ META_PATH = os.path.join(os.path.dirname(__file__),
 MIN_TRADES_TO_TRAIN = 80   # Minimum trades before training
 RETRAIN_EVERY_N_TRADES = 50  # Auto-retrain frequency
 
+# ── Incremental training constants ──
+INCREMENTAL_RECENT_WEIGHT = 5.0   # Weight multiplier for recent trades
+INCREMENTAL_NEW_TREES = 100       # Number of new trees to add in incremental mode
+INCREMENTAL_MIN_NEW = 20          # Minimum new trades required for incremental update
+
 # ── Regression-specific constants ──
 R_CLIP_MIN = -2.0    # Clip R-multiple outliers below this
 R_CLIP_MAX = 5.0     # Clip R-multiple outliers above this
@@ -733,7 +738,7 @@ def _json_default(obj):
     return str(obj)
 
 
-def train_model(source: str = 'auto') -> dict:
+def train_model(source: str = 'auto', incremental: bool = False) -> dict:
     """
     Train the ML gate REGRESSION model from database.
 
@@ -744,6 +749,8 @@ def train_model(source: str = 'auto') -> dict:
 
     Args:
         source: 'backtest' | 'live' | 'auto'
+        incremental: If True, loads existing model and continues training
+                     with weighted recent data (hybrid approach).
 
     Returns dict with training results and regression metrics.
     """
@@ -877,10 +884,72 @@ def train_model(source: str = 'auto') -> dict:
                  f"({win_count}W / {loss_count}L = {wr:.1f}% WR, "
                  f"mean_R={mean_r:.3f}, median_R={median_r:.3f})")
 
-        # ── Train/val split (no stratify — regression target is continuous) ──
+        # ── Determine training mode ──
+        existing_model = None
+        last_trained_at = None
+        n_existing_trees = 0
+
+        if incremental and os.path.exists(MODEL_PATH):
+            try:
+                existing_model = joblib.load(MODEL_PATH)
+                n_existing_trees = getattr(existing_model, 'best_iteration',
+                                           existing_model.n_estimators) \
+                                   if hasattr(existing_model, 'best_iteration') \
+                                   else existing_model.n_estimators
+                # Read last training timestamp from metadata
+                if os.path.exists(META_PATH):
+                    with open(META_PATH, 'r') as f:
+                        old_meta = json.load(f)
+                    last_trained_at = old_meta.get('trained_at')
+                log.info(f"[ML_GATE] INCREMENTAL mode — loading existing model "
+                         f"({n_existing_trees} trees, trained: {last_trained_at})")
+            except Exception as e:
+                log.warning(f"[ML_GATE] Failed to load existing model: {e} "
+                            f"— falling back to full retrain")
+                existing_model = None
+                incremental = False
+
+        # If incremental but no existing model or too few new trades, fall back
+        if incremental and existing_model is not None:
+            # Count trades since last training
+            new_trades_count = len(y)
+            if last_trained_at and len(rows) > 0:
+                try:
+                    from datetime import datetime as dt
+                    last_dt = dt.fromisoformat(last_trained_at.replace('Z', '+00:00'))
+                    new_count = sum(
+                        1 for r in rows
+                        if r.get('entry_time') and
+                        dt.fromisoformat(str(r['entry_time']).replace('Z', '+00:00')) > last_dt
+                    )
+                    new_trades_count = new_count
+                except Exception:
+                    pass
+
+            if new_trades_count < INCREMENTAL_MIN_NEW:
+                log.info(f"[ML_GATE] Only {new_trades_count} new trades since last train "
+                         f"(need {INCREMENTAL_MIN_NEW}) — falling back to full retrain")
+                incremental = False
+
+        # ── Train/val split ──
         from sklearn.model_selection import train_test_split
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.2, random_state=42)
+
+        if incremental and existing_model is not None:
+            # Time-aware split: most recent 20% as validation
+            split_idx = int(len(X) * 0.8)
+            X_train, X_val = X[:split_idx], X[split_idx:]
+            y_train, y_val = y[:split_idx], y[split_idx:]
+            # Sample weights: recent trades get higher weight
+            weights = np.ones(len(X), dtype=np.float32)
+            weights[split_idx:] = INCREMENTAL_RECENT_WEIGHT
+            log.info(f"[ML_GATE] Incremental: {new_trades_count} new trades, "
+                     f"recent weight={INCREMENTAL_RECENT_WEIGHT}x, "
+                     f"time-aware split (last 20% = validation)")
+        else:
+            # Standard random split (from-scratch mode)
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=0.2, random_state=42)
+            weights = None
 
         # ── XGBoost Regressor ──
         # Overfitting control: with 63 features and ~250-500 samples,
@@ -903,23 +972,46 @@ def train_model(source: str = 'auto') -> dict:
             alpha, lam = 0.1, 1.0
             cols = 0.7
 
-        model = xgb.XGBRegressor(
-            n_estimators=500,
-            max_depth=depth,
-            learning_rate=eta,
-            objective='reg:squarederror',
-            random_state=42,
-            min_child_weight=child_w,
-            subsample=0.8,
-            colsample_bytree=cols,
-            reg_alpha=alpha,
-            reg_lambda=lam,
-            early_stopping_rounds=50,
-        )
-
-        model.fit(X_train, y_train,
-                  eval_set=[(X_val, y_val)],
-                  verbose=False)
+        if incremental and existing_model is not None:
+            # ── INCREMENTAL: Continue training from existing model ──
+            model = xgb.XGBRegressor(
+                n_estimators=n_existing_trees + INCREMENTAL_NEW_TREES,
+                max_depth=depth,
+                learning_rate=eta,
+                objective='reg:squarederror',
+                random_state=42,
+                min_child_weight=child_w,
+                subsample=0.8,
+                colsample_bytree=cols,
+                reg_alpha=alpha,
+                reg_lambda=lam,
+                early_stopping_rounds=50,
+            )
+            model.fit(X_train, y_train,
+                      eval_set=[(X_val, y_val)],
+                      sample_weight=weights[:len(X_train)] if weights is not None else None,
+                      xgb_model=existing_model.get_booster(),
+                      verbose=False)
+            log.info(f"[ML_GATE] Incremental fit complete: "
+                     f"{n_existing_trees} existing + new trees")
+        else:
+            # ── FROM SCRATCH: Standard training ──
+            model = xgb.XGBRegressor(
+                n_estimators=500,
+                max_depth=depth,
+                learning_rate=eta,
+                objective='reg:squarederror',
+                random_state=42,
+                min_child_weight=child_w,
+                subsample=0.8,
+                colsample_bytree=cols,
+                reg_alpha=alpha,
+                reg_lambda=lam,
+                early_stopping_rounds=50,
+            )
+            model.fit(X_train, y_train,
+                      eval_set=[(X_val, y_val)],
+                      verbose=False)
 
         # ── Regression metrics ──
         train_preds = model.predict(X_train)
@@ -948,22 +1040,42 @@ def train_model(source: str = 'auto') -> dict:
         # ── Quintile calibration ──
         calibration = _check_regression_calibration(val_preds, y_val)
 
-        # ── Retrain on full data for production ──
-        # Use same adaptive params as training model
-        best_n = getattr(model, 'best_iteration', 500)
-        model_final = xgb.XGBRegressor(
-            n_estimators=best_n,
-            max_depth=depth,
-            learning_rate=eta,
-            objective='reg:squarederror',
-            random_state=42,
-            min_child_weight=child_w,
-            subsample=0.8,
-            colsample_bytree=cols,
-            reg_alpha=alpha,
-            reg_lambda=lam,
-        )
-        model_final.fit(X, y, verbose=False)
+        # ── Build production model ──
+        best_n = getattr(model, 'best_iteration', model.n_estimators)
+
+        if incremental and existing_model is not None:
+            # Incremental: continue from existing model with full weighted data
+            model_final = xgb.XGBRegressor(
+                n_estimators=best_n,
+                max_depth=depth,
+                learning_rate=eta,
+                objective='reg:squarederror',
+                random_state=42,
+                min_child_weight=child_w,
+                subsample=0.8,
+                colsample_bytree=cols,
+                reg_alpha=alpha,
+                reg_lambda=lam,
+            )
+            model_final.fit(X, y,
+                           sample_weight=weights,
+                           xgb_model=existing_model.get_booster(),
+                           verbose=False)
+        else:
+            # From scratch: train fresh on full data
+            model_final = xgb.XGBRegressor(
+                n_estimators=best_n,
+                max_depth=depth,
+                learning_rate=eta,
+                objective='reg:squarederror',
+                random_state=42,
+                min_child_weight=child_w,
+                subsample=0.8,
+                colsample_bytree=cols,
+                reg_alpha=alpha,
+                reg_lambda=lam,
+            )
+            model_final.fit(X, y, verbose=False)
 
         # ── Save model + metadata ──
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
@@ -971,7 +1083,7 @@ def train_model(source: str = 'auto') -> dict:
 
         meta = {
             'status': 'trained',
-            'version': '3.1-regression',
+            'version': '3.2-regression-incremental' if (incremental and existing_model is not None) else '3.1-regression',
             'model_type': 'XGBRegressor',
             'target': 'profit_r (R-multiple, continuous)',
             'n_features': len(FEATURE_NAMES),
@@ -996,6 +1108,11 @@ def train_model(source: str = 'auto') -> dict:
             'best_iteration': int(best_n),
             'take_threshold': TAKE_THRESHOLD,
             'caution_threshold': CAUTION_THRESHOLD,
+            # Incremental training info
+            'training_mode': 'incremental' if (incremental and existing_model is not None) else 'from_scratch',
+            'previous_trees': n_existing_trees if (incremental and existing_model is not None) else 0,
+            'new_trades_since_last': new_trades_count if incremental else int(len(y)),
+            'recent_weight': INCREMENTAL_RECENT_WEIGHT if incremental else 1.0,
             # Feature importance
             'top_features': [(f, float(round(i, 4))) for f, i in top_features],
             'calibration': calibration,

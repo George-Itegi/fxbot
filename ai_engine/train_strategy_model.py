@@ -109,10 +109,11 @@ def _print_strategy_status():
     print("=" * 65 + "\n")
 
 
-def _train_strategy(strategy_name: str):
+def _train_strategy(strategy_name: str, incremental: bool = False):
     """Train a specific strategy model."""
     print("\n" + "=" * 65)
     print(f"  APEX TRADER — Layer 1 Training: {strategy_name}")
+    print(f"  Mode: {'INCREMENTAL (hybrid)' if incremental else 'FROM SCRATCH'}")
     print("=" * 65)
 
     try:
@@ -127,7 +128,7 @@ def _train_strategy(strategy_name: str):
         print(f"  Layer:    1 (per-strategy)")
         print(f"  Training...\n")
 
-        result = mgr.train_strategy(strategy_name)
+        result = mgr.train_strategy(strategy_name, incremental=incremental)
 
         if result['status'] == 'trained':
             print(f"  Training: SUCCESS")
@@ -208,7 +209,7 @@ def _train_strategy(strategy_name: str):
         print(f"  ERROR: {e}")
 
 
-def _train_all_eligible():
+def _train_all_eligible(incremental: bool = False):
     """Train all strategies that have enough data."""
     print("\n" + "=" * 65)
     print("  APEX TRADER — Layer 1: Train All Eligible Strategies")
@@ -259,7 +260,7 @@ def _train_all_eligible():
                 print(f"  Action:   Set DISABLED_STRATEGIES = [] to re-enable")
                 print(f"  {'='*65}\n")
                 continue
-            _train_strategy(r['strategy'])
+            _train_strategy(r['strategy'], incremental=incremental)
 
     except Exception as e:
         print(f"  ERROR: {e}")
@@ -279,15 +280,19 @@ def main():
     parser.add_argument(
         '--train-all', action='store_true',
         help='Train all strategies with 50+ trades in DB')
+    parser.add_argument(
+        '--incremental', action='store_true',
+        help='Hybrid incremental: load existing model, weight recent trades 5x, '
+             'add new trees (fast adaptation to market changes)')
 
     args = parser.parse_args()
 
     if args.status:
         _print_strategy_status()
     elif args.train_all:
-        _train_all_eligible()
+        _train_all_eligible(incremental=args.incremental)
     else:
-        _train_strategy(args.strategy)
+        _train_strategy(args.strategy, incremental=args.incremental)
 
 
 if __name__ == "__main__":

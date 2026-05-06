@@ -62,6 +62,11 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 MIN_TRADES_TO_TRAIN = 50
 RETRAIN_EVERY_N_TRADES = 50
 
+# ── Incremental training constants ──
+INCREMENTAL_RECENT_WEIGHT = 5.0   # Weight multiplier for recent trades
+INCREMENTAL_NEW_TREES = 100       # Number of new trees to add in incremental mode
+INCREMENTAL_MIN_NEW = 15          # Minimum new trades required for incremental update
+
 # ── Regression-specific constants ──
 R_CLIP_MIN = -2.0
 R_CLIP_MAX = 5.0
@@ -221,12 +226,14 @@ class StrategyModel:
                 'trained': True,
             }
 
-    def train(self, rows: list) -> dict:
+    def train(self, rows: list, incremental: bool = False) -> dict:
         """
         Train the strategy model from a list of DB row dicts.
 
         Args:
             rows: List of dicts from backtest_trades WHERE strategy = self.strategy_name
+            incremental: If True, loads existing model and continues training
+                         with weighted recent data (hybrid approach).
 
         Returns:
             Training result dict with metrics.
@@ -234,6 +241,7 @@ class StrategyModel:
         try:
             import xgboost as xgb
             import joblib
+            import json as _json
             from sklearn.model_selection import train_test_split
 
             if len(rows) < MIN_TRADES_TO_TRAIN:
@@ -299,9 +307,68 @@ class StrategyModel:
                      f"({win_count}W/{loss_count}L = {wr:.1f}% WR, "
                      f"mean_R={mean_r:.3f})")
 
+            # ── Determine training mode ──
+            existing_model = None
+            last_trained_at = None
+            n_existing_trees = 0
+            new_trades_count = len(y)
+
+            if incremental and os.path.exists(self.model_path):
+                try:
+                    existing_model = joblib.load(self.model_path)
+                    n_existing_trees = getattr(existing_model, 'best_iteration',
+                                               existing_model.n_estimators) \
+                                       if hasattr(existing_model, 'best_iteration') \
+                                       else existing_model.n_estimators
+                    # Read last training timestamp from metadata
+                    if os.path.exists(self.meta_path):
+                        with open(self.meta_path, 'r') as f:
+                            old_meta = _json.load(f)
+                        last_trained_at = old_meta.get('trained_at')
+                    log.info(f"[STRAT_MODEL:{self.strategy_key}] INCREMENTAL — "
+                             f"loading existing model ({n_existing_trees} trees, "
+                             f"trained: {last_trained_at})")
+                except Exception as e:
+                    log.warning(f"[STRAT_MODEL:{self.strategy_key}] Failed to load "
+                                f"existing model: {e} — falling back to full retrain")
+                    existing_model = None
+                    incremental = False
+
+            # If incremental but too few new trades, fall back
+            if incremental and existing_model is not None and last_trained_at:
+                try:
+                    from datetime import datetime as dt
+                    last_dt = dt.fromisoformat(last_trained_at.replace('Z', '+00:00'))
+                    new_count = sum(
+                        1 for r in rows
+                        if r.get('entry_time') and
+                        dt.fromisoformat(str(r['entry_time']).replace('Z', '+00:00')) > last_dt
+                    )
+                    new_trades_count = new_count
+                except Exception:
+                    pass
+
+                if new_trades_count < INCREMENTAL_MIN_NEW:
+                    log.info(f"[STRAT_MODEL:{self.strategy_key}] Only {new_trades_count} "
+                             f"new trades (need {INCREMENTAL_MIN_NEW}) — full retrain")
+                    incremental = False
+
             # ── Train/val split ──
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=0.2, random_state=42)
+            if incremental and existing_model is not None:
+                # Time-aware split: most recent 20% as validation
+                split_idx = int(len(X) * 0.8)
+                X_train, X_val = X[:split_idx], X[split_idx:]
+                y_train, y_val = y[:split_idx], y[split_idx:]
+                # Sample weights: recent trades get higher weight
+                weights = np.ones(len(X), dtype=np.float32)
+                weights[split_idx:] = INCREMENTAL_RECENT_WEIGHT
+                log.info(f"[STRAT_MODEL:{self.strategy_key}] Incremental: "
+                         f"{new_trades_count} new trades, "
+                         f"weight={INCREMENTAL_RECENT_WEIGHT}x")
+            else:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X, y, test_size=0.2, random_state=42)
+                weights = None
 
             # ── Adaptive XGBoost params by dataset size ──
             n_trades = len(y)
@@ -315,23 +382,47 @@ class StrategyModel:
                 depth, eta, child_w = 5, 0.05, 5
                 alpha, lam, cols = 0.1, 1.0, 0.7
 
-            model = xgb.XGBRegressor(
-                n_estimators=500,
-                max_depth=depth,
-                learning_rate=eta,
-                objective='reg:squarederror',
-                random_state=42,
-                min_child_weight=child_w,
-                subsample=0.8,
-                colsample_bytree=cols,
-                reg_alpha=alpha,
-                reg_lambda=lam,
-                early_stopping_rounds=50,
-            )
+            if incremental and existing_model is not None:
+                # ── INCREMENTAL: Continue training from existing model ──
+                model = xgb.XGBRegressor(
+                    n_estimators=n_existing_trees + INCREMENTAL_NEW_TREES,
+                    max_depth=depth,
+                    learning_rate=eta,
+                    objective='reg:squarederror',
+                    random_state=42,
+                    min_child_weight=child_w,
+                    subsample=0.8,
+                    colsample_bytree=cols,
+                    reg_alpha=alpha,
+                    reg_lambda=lam,
+                    early_stopping_rounds=50,
+                )
+                model.fit(X_train, y_train,
+                          eval_set=[(X_val, y_val)],
+                          sample_weight=weights[:len(X_train)] if weights is not None else None,
+                          xgb_model=existing_model.get_booster(),
+                          verbose=False)
+                log.info(f"[STRAT_MODEL:{self.strategy_key}] Incremental fit: "
+                         f"{n_existing_trees} existing + new trees")
+            else:
+                # ── FROM SCRATCH: Standard training ──
+                model = xgb.XGBRegressor(
+                    n_estimators=500,
+                    max_depth=depth,
+                    learning_rate=eta,
+                    objective='reg:squarederror',
+                    random_state=42,
+                    min_child_weight=child_w,
+                    subsample=0.8,
+                    colsample_bytree=cols,
+                    reg_alpha=alpha,
+                    reg_lambda=lam,
+                    early_stopping_rounds=50,
+                )
 
-            model.fit(X_train, y_train,
-                      eval_set=[(X_val, y_val)],
-                      verbose=False)
+                model.fit(X_train, y_train,
+                          eval_set=[(X_val, y_val)],
+                          verbose=False)
 
             # ── Regression metrics ──
             val_preds = model.predict(X_val)
@@ -359,21 +450,42 @@ class StrategyModel:
             # ── Quintile calibration ──
             calibration = _check_calibration(val_preds, y_val)
 
-            # ── Retrain on full data for production ──
-            best_n = getattr(model, 'best_iteration', 500)
-            model_final = xgb.XGBRegressor(
-                n_estimators=best_n,
-                max_depth=depth,
-                learning_rate=eta,
-                objective='reg:squarederror',
-                random_state=42,
-                min_child_weight=child_w,
-                subsample=0.8,
-                colsample_bytree=cols,
-                reg_alpha=alpha,
-                reg_lambda=lam,
-            )
-            model_final.fit(X, y, verbose=False)
+            # ── Build production model ──
+            best_n = getattr(model, 'best_iteration', model.n_estimators)
+
+            if incremental and existing_model is not None:
+                # Incremental: continue from existing model with full weighted data
+                model_final = xgb.XGBRegressor(
+                    n_estimators=best_n,
+                    max_depth=depth,
+                    learning_rate=eta,
+                    objective='reg:squarederror',
+                    random_state=42,
+                    min_child_weight=child_w,
+                    subsample=0.8,
+                    colsample_bytree=cols,
+                    reg_alpha=alpha,
+                    reg_lambda=lam,
+                )
+                model_final.fit(X, y,
+                               sample_weight=weights,
+                               xgb_model=existing_model.get_booster(),
+                               verbose=False)
+            else:
+                # From scratch: train fresh on full data
+                model_final = xgb.XGBRegressor(
+                    n_estimators=best_n,
+                    max_depth=depth,
+                    learning_rate=eta,
+                    objective='reg:squarederror',
+                    random_state=42,
+                    min_child_weight=child_w,
+                    subsample=0.8,
+                    colsample_bytree=cols,
+                    reg_alpha=alpha,
+                    reg_lambda=lam,
+                )
+                model_final.fit(X, y, verbose=False)
 
             # ── Save model + metadata ──
             os.makedirs(MODELS_DIR, exist_ok=True)
@@ -393,7 +505,7 @@ class StrategyModel:
 
             meta = {
                 'status': 'trained',
-                'version': '1.0-strategy',
+                'version': '1.1-strategy-incremental' if (incremental and existing_model is not None) else '1.0-strategy',
                 'model_type': 'XGBRegressor',
                 'target': 'profit_r (R-multiple)',
                 'strategy': self.strategy_name,
@@ -415,6 +527,10 @@ class StrategyModel:
                 # Thresholds
                 'pass_threshold': threshold,
                 'best_iteration': int(best_n),
+                # Incremental training info
+                'training_mode': 'incremental' if (incremental and existing_model is not None) else 'from_scratch',
+                'previous_trees': n_existing_trees if (incremental and existing_model is not None) else 0,
+                'new_trades_since_last': new_trades_count if incremental else int(len(y)),
                 # Selection stats (model's own filtering)
                 'pass_count': pass_count,
                 'reject_count': reject_count,
@@ -546,13 +662,15 @@ class StrategyModelManager:
         result['has_model'] = True
         return result
 
-    def train_strategy(self, strategy_name: str, rows: list = None) -> dict:
+    def train_strategy(self, strategy_name: str, rows: list = None,
+                       incremental: bool = False) -> dict:
         """
         Train a specific strategy model.
 
         Args:
             strategy_name: Strategy to train
             rows: Optional pre-fetched DB rows. If None, will query DB.
+            incremental: If True, uses hybrid incremental training.
 
         Returns:
             Training result dict.
@@ -570,7 +688,7 @@ class StrategyModelManager:
         if rows is None:
             rows = self._fetch_strategy_trades(strategy_name)
 
-        result = model.train(rows)
+        result = model.train(rows, incremental=incremental)
 
         if result.get('status') == 'trained':
             self._models[strategy_name] = model

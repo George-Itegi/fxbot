@@ -19,28 +19,32 @@ log = get_logger(__name__)
 MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 
 
-def train_all_models(df_candles=None, source: str = 'auto') -> dict:
+def train_all_models(df_candles=None, source: str = 'auto',
+                     incremental: bool = False) -> dict:
     """
     Train the ML gate model (primary) + legacy XGBoost (fallback).
 
     Args:
         df_candles: Unused (kept for backward compatibility)
         source: 'backtest' | 'live' | 'auto'
+        incremental: If True, uses hybrid incremental training for ML Gate
     """
     os.makedirs(MODELS_DIR, exist_ok=True)
     results = {}
 
-    log.info("[TRAINER] Starting ML Gate v3.0 training...")
+    mode_str = 'INCREMENTAL (hybrid)' if incremental else 'FROM SCRATCH'
+    log.info(f"[TRAINER] Starting ML Gate v3.0 training... mode={mode_str}")
 
     # Train ML Gate v3.0 (Strategy-Informed)
     try:
         from ai_engine.ml_gate import train_model as train_ml_gate
-        ml_result = train_ml_gate(source=source)
+        ml_result = train_ml_gate(source=source, incremental=incremental)
         results['ml_gate'] = ml_result
     except Exception as e:
         results['ml_gate'] = {'status': 'error', 'reason': str(e)}
 
     # Also train legacy XGBoost (for backward compatibility)
+    # Legacy model does not support incremental — always from scratch
     try:
         from ai_engine.xgboost_classifier import train_model as train_xgb
         xgb_result = train_xgb()
@@ -49,6 +53,7 @@ def train_all_models(df_candles=None, source: str = 'auto') -> dict:
         results['xgboost_legacy'] = {'status': 'error', 'reason': str(e)}
 
     results['timestamp'] = datetime.now(timezone.utc).isoformat()
+    results['training_mode'] = mode_str
     log.info(f"[TRAINER] Complete: {results}")
     return results
 

@@ -59,11 +59,12 @@ TRADE_COUNT_SINCE_TRAIN= 0      # Counter for retraining trigger
 _relaxed       = False
 _no_post_gates = False
 _no_limit      = False
+_incremental   = False          # Hybrid incremental training mode
 
 
 def run():
     """Main entry point — starts the full bot loop."""
-    global _consecutive_losses, _relaxed, _no_post_gates, _no_limit
+    global _consecutive_losses, _relaxed, _no_post_gates, _no_limit, _incremental
 
     log.info("=" * 60)
     log.info("  APEX TRADER — INSTITUTIONAL GRADE BOT")
@@ -75,6 +76,7 @@ def run():
     _relaxed       = args.relaxed
     _no_post_gates = args.no_post_gates
     _no_limit      = args.no_limit
+    _incremental   = args.incremental
 
     mode_label = []
     if _relaxed:
@@ -83,6 +85,8 @@ def run():
         mode_label.append("NO_POST_GATES")
     if _no_limit:
         mode_label.append("NO_LIMIT")
+    if _incremental:
+        mode_label.append("INCREMENTAL (hybrid training)")
     if mode_label:
         log.info(f"[STARTUP] Mode flags: {' | '.join(mode_label)}")
 
@@ -227,10 +231,11 @@ def run():
 
             # ── Retrain models if enough new trades ───────────
             if TRADE_COUNT_SINCE_TRAIN >= MODEL_RETRAIN_TRADES:
-                log.info("[CYCLE] Triggering model retraining...")
+                mode_tag = "incremental" if _incremental else "scratch"
+                log.info(f"[CYCLE] Triggering model retraining... (mode={mode_tag})")
                 try:
                     from ai_engine.model_trainer import train_all_models
-                    train_all_models()
+                    train_all_models(incremental=_incremental)
                     check_all_promotions()
                     log.info(get_summary())
                     TRADE_COUNT_SINCE_TRAIN = 0
@@ -264,6 +269,9 @@ def _parse_args():
                         help="Use L2 ML Gate model")
     parser.add_argument("--store-db", action="store_true",
                         help="Store trades in MySQL database")
+    parser.add_argument("--incremental", action="store_true",
+                        help="Hybrid incremental training: load existing models, "
+                             "weight recent trades 5x, add new trees instead of retraining from scratch")
     # Backwards compat: silently accept these flags (they're already defaults in live)
     parser.add_argument("--clear-data", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
