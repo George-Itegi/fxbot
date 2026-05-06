@@ -119,6 +119,69 @@ def master_scan(symbol: str, session: str = None) -> dict | None:
     block_reason = ""
     log.debug(f"[MASTER] {symbol}: session={session} (all sessions allowed)")
 
+    # ── NEW: Currency Strength ──
+    cs_data = {}
+    pair_bias = {}
+    try:
+        from data_layer.currency_strength import calculate_currency_strength, get_pair_strength_bias
+        from config.settings import PAIR_WHITELIST
+        cs_data = calculate_currency_strength(pairs=PAIR_WHITELIST)
+        pair_bias = get_pair_strength_bias(symbol, cs_data) if cs_data else {}
+    except Exception as e:
+        log.debug(f"[MASTER] Currency strength error: {e}")
+
+    # ── NEW: ATR Percentile ──
+    atr_pct = {}
+    try:
+        from data_layer.market_regime import calculate_atr_percentile
+        atr_pct = calculate_atr_percentile(symbol)
+    except Exception as e:
+        log.debug(f"[MASTER] ATR percentile error: {e}")
+
+    # ── NEW: MTF RSI & Continuous Score ──
+    mtf_rsi = {}
+    mtf_score = {}
+    try:
+        from data_layer.mtf_analysis import calculate_mtf_rsi, calculate_mtf_continuous_score
+        mtf_rsi = calculate_mtf_rsi(symbol)
+        mtf_score = calculate_mtf_continuous_score(symbol)
+    except Exception as e:
+        log.debug(f"[MASTER] MTF analysis error: {e}")
+
+    # ── NEW: External Data for VIX/DXY ──
+    ext_data = {}
+    try:
+        from data_layer.external_data.external_scanner import get_external_data
+        ext_data = get_external_data([symbol])
+    except Exception as e:
+        log.debug(f"[MASTER] External data error: {e}")
+
+    # ── NEW: Streak & Z-Score ──
+    streak = {}
+    zscore_data = {}
+    try:
+        from data_layer.streak_tracker import calculate_streak, calculate_signal_zscore
+        streak = calculate_streak(symbol)
+        # Z-Score of current signal
+        current_score_val = market.get('trade_score', 0)
+        if current_score_val == 0:
+            current_score_val = final_score
+        if current_score_val > 0:
+            zscore_data = calculate_signal_zscore(symbol, current_score_val)
+        else:
+            zscore_data = {'z_score': 0.0, 'percentile': 50.0, 'is_rare': False,
+                           'mean_score': 0.0, 'std_score': 1.0, 'rarity_label': 'COMMON'}
+    except Exception as e:
+        log.debug(f"[MASTER] Streak/Z-score error: {e}")
+
+    # ── NEW: Smart Money Footprint Score (simplified) ──
+    sm_footprint = {}
+    try:
+        from data_layer.smart_money_score import calculate_smart_money_score_simple
+        sm_footprint = calculate_smart_money_score_simple(symbol)
+    except Exception as e:
+        log.debug(f"[MASTER] Smart money score error: {e}")
+
     recommendation = _get_recommendation(
         final_score, bias_confidence,
         market.get("market_state"),
@@ -155,6 +218,17 @@ def master_scan(symbol: str, session: str = None) -> dict | None:
         # --- Convenience shortcuts (avoid nested dict lookups in strategies) ---
         "volume_profile":  market.get("profile", {}),
         "vwap_context":    market.get("vwap", {}),
+
+        # ── NEW: Feature pipeline enrichment data ──
+        "currency_strength":   cs_data,
+        "pair_strength_bias":  pair_bias,
+        "atr_percentile":      atr_pct,
+        "mtf_rsi":             mtf_rsi,
+        "mtf_continuous":      mtf_score,
+        "external_data":       ext_data,
+        "streak":              streak,
+        "zscore":              zscore_data,
+        "smart_money_score":   sm_footprint,
     }
 
 

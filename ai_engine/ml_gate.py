@@ -1,5 +1,5 @@
 # =============================================================
-# ai_engine/ml_gate.py  v3.5 — Strategy-Informed ML Gate (Regression)
+# ai_engine/ml_gate.py  v4.0 — Strategy-Informed ML Gate (Regression)
 #
 # PURPOSE: Replace ALL 7 hardcoded gates with a single ML model
 # that learns which combinations of strategy scores + market features
@@ -7,26 +7,33 @@
 # instead of classification (predict win/loss).
 #
 # ARCHITECTURE:
-#   Layer 1 — Feature Engineering (71 features):
-#     - 8  market quality features (score, delta, OF, volume)
+#   Layer 1 — Feature Engineering (93 features):
+#     - 7  market quality features (score, delta, OF, volume)
+#     - 6  order flow features
 #     - 4  VWAP features
 #     - 8  SMC features (BOS, OBs, FVGs, sweeps, P/D zone)
-#     - 3  HTF alignment features
 #     - 5  trade parameter features (SL, TP, R:R)
 #     - 10 strategy scores (active strategies only)
 #     - 3  consensus features (groups, counts, direction split)
 #     - 5  session/time features
-#     - 6  volatility/state features
+#     - 5  volatility/state features
 #     - 3  symbol type features
 #     - 3  self-improvement features (recent win rates)
-#     - 3  Fibonacci confluence features
 #     - 1  price context (spread)
-#     - 3  self-calibration features (v3.3: source, predicted_r, error)
-#     - 9  pair-strategy performance features
-#     = 71 named features (+ 3 unnamed self-calibration = 74 total)
+#     - 3  Fibonacci confluence features
+#     - 8  historical pair-strategy performance features
+#     - 4  currency strength features (base, quote, delta, bias)      [v4.0]
+#     - 2  ATR percentile features (percentile, ratio)                 [v4.0]
+#     - 6  MTF RSI features (M5, M15, M30, H1, H4, D1)               [v4.0]
+#     - 3  MTF continuous score features (score, trend, RSI agree)     [v4.0]
+#     - 3  intermarket features (VIX, DXY change, risk env)            [v4.0]
+#     - 2  streak features (current streak, recent WR)                 [v4.0]
+#     - 1  z-score feature (signal z-score)                           [v4.0]
+#     - 1  smart money footprint score                                  [v4.0]
+#     = 93 named features (+ 3 unnamed self-calibration = 96 total)
 #
 #   Layer 2 — ML Model (XGBoost Regressor):
-#     Input:  74-feature vector (71 named + 3 unnamed self-calibration)
+#     Input:  96-feature vector (93 named + 3 unnamed self-calibration)
 #     Output: Predicted R-multiple (continuous float) per trade
 #     Trained on: backtest_trades + shadow_trades with profit_r as target
 #     v3.1: Switched from XGBClassifier (binary) to XGBRegressor
@@ -50,9 +57,10 @@
 #     3. True edge measurement (expected R per signal)
 #
 # BACKWARD COMPATIBLE:
-#   - Works with existing backtest_trades DB table (no schema change)
+#   - Works with existing backtest_trades DB table (new columns auto-migrated)
 #   - Falls back to rule-based gates if no model exists
 #   - Seeds from backtest DB on first run
+#   - Old trades use sensible defaults for new feature columns
 # =============================================================
 
 import os
@@ -85,9 +93,10 @@ CAUTION_THRESHOLD = 0.0  # Below this → SKIP
 
 
 # ════════════════════════════════════════════════════════════════
-# FEATURE NAMES (71 total) — must match extract_features exactly
-# v3.5: Removed 4 retired strategy scores, added 4 new (Batch 1 + Batch 2)
-#        Net change: 71 features (was 71, replaced 4 retired with 4 new)
+# FEATURE NAMES (93 total) — must match extract_features exactly
+# v4.0: Added 22 new features (currency strength, ATR percentile,
+#        MTF RSI, MTF continuous, intermarket, streak, z-score, smart money)
+#        Total: 93 named + 3 unnamed self-calibration = 96 features
 # ════════════════════════════════════════════════════════════════
 
 FEATURE_NAMES = [
@@ -193,10 +202,48 @@ FEATURE_NAMES = [
     'hist_ps_trades_all',     # Trade count for (pair, strat) all-time
     'hist_ps_avg_r_decay',    # Exp decay weighted avg R (half-life ~14d)
     'hist_ps_avg_r_trend',    # Recent - all-time avg R (improving?)
+
+    # ── Group 15: Currency Strength (4) ── [v4.0 NEW] ────
+    'cs_base_strength',      # Base currency strength (-100 to +100)
+    'cs_quote_strength',     # Quote currency strength (-100 to +100)
+    'cs_strength_delta',     # base - quote strength delta
+    'cs_pair_bias',          # Pair directional bias from currency strength
+
+    # ── Group 16: ATR Percentile (2) ── [v4.0 NEW] ───────
+    'ap_atr_percentile',     # ATR percentile rank (0-100)
+    'ap_atr_ratio',          # Current ATR / Average ATR ratio
+
+    # ── Group 17: MTF RSI (6) ── [v4.0 NEW] ─────────────
+    'mr_m5_rsi',            # RSI(14) on M5
+    'mr_m15_rsi',           # RSI(14) on M15
+    'mr_m30_rsi',           # RSI(14) on M30
+    'mr_h1_rsi',            # RSI(14) on H1
+    'mr_h4_rsi',            # RSI(14) on H4
+    'mr_d1_rsi',            # RSI(14) on D1
+
+    # ── Group 18: MTF Continuous Score (3) ── [v4.0 NEW] ─
+    'mt_mtf_score',         # Continuous MTF alignment score (0-100)
+    'mt_trend_agreement',   # Timeframe trend agreement (0-1)
+    'mt_rsi_agreement',     # Timeframe RSI agreement (-1 to +1)
+
+    # ── Group 19: Intermarket (3) ── [v4.0 NEW] ─────────
+    'im_vix',               # VIX level
+    'im_dxy_change',        # DXY % change
+    'im_risk_env',          # Risk environment encoded (-1, 0, +1)
+
+    # ── Group 20: Streak (2) ── [v4.0 NEW] ───────────────
+    'sk_current_streak',    # Current win/loss streak
+    'sk_recent_wr',         # Recent win rate (last 10 trades)
+
+    # ── Group 21: Z-Score (1) ── [v4.0 NEW] ──────────────
+    'zs_signal_zscore',     # Z-score of current signal vs history
+
+    # ── Group 22: Smart Money Score (1) ── [v4.0 NEW] ───────
+    'sm_footprint_score',   # Smart money footprint score (-100 to +100)
 ]
 
-# Should be 71 features (67 original + 4 new strategy scores, retired 4 removed)
-assert len(FEATURE_NAMES) == 71, f"Expected 71 features, got {len(FEATURE_NAMES)}"
+# 93 named features + 3 unnamed self-calibration = 96 total
+assert len(FEATURE_NAMES) == 93, f"Expected 93 features, got {len(FEATURE_NAMES)}"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -266,8 +313,8 @@ def extract_features(signal: dict,
                      self_improvement: dict = None,
                      hist_ps_features: dict = None) -> np.ndarray:
     """
-    Extract 74 numerical features from the full market context.
-    v3.5: 71 named features + 3 unnamed self-calibration features = 74 total.
+    Extract 96 numerical features from the full market context.
+    v4.0: 93 named features + 3 unnamed self-calibration features = 96 total.
 
     Args:
         signal:              The best strategy signal dict (with score, direction, SL/TP, etc.)
@@ -284,7 +331,7 @@ def extract_features(signal: dict,
                              (from PairStrategyFeatureProvider.get_features)
 
     Returns:
-        np.ndarray of shape (1, 74) or None on error
+        np.ndarray of shape (1, 96) or None on error
     """
     try:
         mr = market_report or {}
@@ -373,7 +420,17 @@ def extract_features(signal: dict,
         from ai_engine.pair_strategy_features import PairStrategyFeatureProvider
         hist_ps = hist_ps_features or PairStrategyFeatureProvider._get_defaults()
 
-        # ── Build the 71-feature vector (+ 3 unnamed self-calibration = 74) ──
+        # ── v4.0 NEW: Extract enrichment data from master_report ──
+        # (populated by master_scan from new data layer modules)
+        pair_bias = (master_report or {}).get('pair_strength_bias', {})
+        atr_pct = (master_report or {}).get('atr_percentile', {})
+        mtf_rsi = (master_report or {}).get('mtf_rsi', {})
+        mtf_score = (master_report or {}).get('mtf_continuous', {})
+        ext_data = (master_report or {}).get('external_data', {})
+        streak = (master_report or {}).get('streak', {})
+        sm_score = (master_report or {}).get('smart_money_score', {})
+
+        # ── Build the 93-feature vector (+ 3 unnamed self-calibration = 96) ──
         features = [
             # Market quality (7)
             float(master_report.get('final_score', 0)),
@@ -477,6 +534,44 @@ def extract_features(signal: dict,
             float(hist_ps.get('hist_ps_avg_r_decay', 0.0)),
             float(hist_ps.get('hist_ps_avg_r_trend', 0.0)),
 
+            # Currency Strength (4) — v4.0
+            float(pair_bias.get('base_strength', 0.0)),
+            float(pair_bias.get('quote_strength', 0.0)),
+            float(pair_bias.get('strength_delta', 0.0)),
+            float(pair_bias.get('bias_score', 0.0)),
+
+            # ATR Percentile (2) — v4.0
+            float(atr_pct.get('atr_percentile', 50.0)),
+            float(atr_pct.get('atr_ratio', 1.0)),
+
+            # MTF RSI (6) — v4.0
+            float(mtf_rsi.get('m5_rsi', 50.0)),
+            float(mtf_rsi.get('m15_rsi', 50.0)),
+            float(mtf_rsi.get('m30_rsi', 50.0)),
+            float(mtf_rsi.get('h1_rsi', 50.0)),
+            float(mtf_rsi.get('h4_rsi', 50.0)),
+            float(mtf_rsi.get('d1_rsi', 50.0)),
+
+            # MTF Continuous Score (3) — v4.0
+            float(mtf_score.get('mtf_score', 50.0)),
+            float(mtf_score.get('mtf_trend_agreement', 0.5)),
+            float(mtf_score.get('mtf_rsi_agreement', 0.0)),
+
+            # Intermarket (3) — v4.0
+            float(ext_data.get('vix', 20.0)),
+            float(ext_data.get('dxy_change', 0.0)),
+            float({'RISK_ON': 1.0, 'CAUTIOUS': 0.5, 'RISK_OFF': -1.0}.get(str(ext_data.get('risk_env', 'UNKNOWN')), 0.0)),
+
+            # Streak (2) — v4.0
+            float(streak.get('current_streak', 0.0)),
+            float(streak.get('recent_wr', 50.0)),
+
+            # Z-Score (1) — v4.0
+            float(streak.get('z_score', 0.0)),
+
+            # Smart Money Score (1) — v4.0
+            float(sm_score.get('score', 0.0)),
+
             # Self-calibration (3) — v3.3: always 0.0 for live scoring
             # (model knows this is a live signal, not historical)
             0.0,  # source: N/A for live (always 0.0)
@@ -494,9 +589,10 @@ def extract_features(signal: dict,
 def extract_features_from_db(row: dict, all_strategy_scores: dict = None,
                               hist_ps_features: dict = None) -> np.ndarray:
     """
-    Extract 74 features from a backtest_trades DB row.
-    v3.5: 71 named features + 3 unnamed self-calibration features = 74 total.
+    Extract 96 features from a backtest_trades DB row.
+    v4.0: 93 named features + 3 unnamed self-calibration features = 96 total.
     Used for training from stored historical data.
+    Old trades that lack new columns get sensible defaults.
 
     Args:
         row:               DB row dict
@@ -611,6 +707,44 @@ def extract_features_from_db(row: dict, all_strategy_scores: dict = None,
             float(hist_ps.get('hist_ps_trades_all', 0.0)),
             float(hist_ps.get('hist_ps_avg_r_decay', 0.0)),
             float(hist_ps.get('hist_ps_avg_r_trend', 0.0)),
+
+            # Currency Strength (4) — v4.0 (from DB, defaults for old trades)
+            float(row.get('cs_base_strength', 0.0) or 0.0),
+            float(row.get('cs_quote_strength', 0.0) or 0.0),
+            float(row.get('cs_strength_delta', 0.0) or 0.0),
+            float(row.get('cs_pair_bias', 0.0) or 0.0),
+
+            # ATR Percentile (2) — v4.0 (from DB, defaults for old trades)
+            float(row.get('ap_atr_percentile', 50.0) or 50.0),
+            float(row.get('ap_atr_ratio', 1.0) or 1.0),
+
+            # MTF RSI (6) — v4.0 (from DB, defaults for old trades)
+            float(row.get('mr_m5_rsi', 50.0) or 50.0),
+            float(row.get('mr_m15_rsi', 50.0) or 50.0),
+            float(row.get('mr_m30_rsi', 50.0) or 50.0),
+            float(row.get('mr_h1_rsi', 50.0) or 50.0),
+            float(row.get('mr_h4_rsi', 50.0) or 50.0),
+            float(row.get('mr_d1_rsi', 50.0) or 50.0),
+
+            # MTF Continuous Score (3) — v4.0 (from DB, defaults for old trades)
+            float(row.get('mt_mtf_score', 50.0) or 50.0),
+            float(row.get('mt_trend_agreement', 0.5) or 0.5),
+            float(row.get('mt_rsi_agreement', 0.0) or 0.0),
+
+            # Intermarket (3) — v4.0 (from DB, defaults for old trades)
+            float(row.get('im_vix', 20.0) or 20.0),
+            float(row.get('im_dxy_change', 0.0) or 0.0),
+            float(row.get('im_risk_env', 0.0) or 0.0),
+
+            # Streak (2) — v4.0 (from DB, defaults for old trades)
+            float(row.get('sk_current_streak', 0.0) or 0.0),
+            float(row.get('sk_recent_wr', 50.0) or 50.0),
+
+            # Z-Score (1) — v4.0 (from DB, defaults for old trades)
+            float(row.get('zs_signal_zscore', 0.0) or 0.0),
+
+            # Smart Money Score (1) — v4.0 (from DB, defaults for old trades)
+            float(row.get('sm_footprint_score', 0.0) or 0.0),
 
             # Self-calibration (3) — v3.3: model learns from its own past decisions
             # source: 1.0 if SHADOW (model was unsure), 0.0 if BACKTEST (model was confident)

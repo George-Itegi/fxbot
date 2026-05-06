@@ -647,6 +647,37 @@ def _auto_migrate_trades(cursor, conn):
         # ── Layer 1 Strategy Model ──
         ('backtest_trades', 'strategy_model_verdict',      "VARCHAR(10) DEFAULT NULL"),
         ('backtest_trades', 'strategy_model_predicted_r',  'DOUBLE DEFAULT NULL'),
+        # ── ML Gate v4.0: 25 new feature columns ──
+        # Currency Strength (4)
+        ('backtest_trades', 'cs_base_strength',    'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'cs_quote_strength',   'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'cs_strength_delta',   'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'cs_pair_bias',        'DOUBLE DEFAULT 0'),
+        # ATR Percentile (2)
+        ('backtest_trades', 'ap_atr_percentile',   'DOUBLE DEFAULT 50'),
+        ('backtest_trades', 'ap_atr_ratio',        'DOUBLE DEFAULT 1'),
+        # MTF RSI (6)
+        ('backtest_trades', 'mr_m5_rsi',           'DOUBLE DEFAULT 50'),
+        ('backtest_trades', 'mr_m15_rsi',          'DOUBLE DEFAULT 50'),
+        ('backtest_trades', 'mr_m30_rsi',          'DOUBLE DEFAULT 50'),
+        ('backtest_trades', 'mr_h1_rsi',           'DOUBLE DEFAULT 50'),
+        ('backtest_trades', 'mr_h4_rsi',           'DOUBLE DEFAULT 50'),
+        ('backtest_trades', 'mr_d1_rsi',           'DOUBLE DEFAULT 50'),
+        # MTF Continuous Score (3)
+        ('backtest_trades', 'mt_mtf_score',        'DOUBLE DEFAULT 50'),
+        ('backtest_trades', 'mt_trend_agreement',  'DOUBLE DEFAULT 0.5'),
+        ('backtest_trades', 'mt_rsi_agreement',    'DOUBLE DEFAULT 0'),
+        # Intermarket (3)
+        ('backtest_trades', 'im_vix',              'DOUBLE DEFAULT 20'),
+        ('backtest_trades', 'im_dxy_change',       'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'im_risk_env',         'DOUBLE DEFAULT 0'),
+        # Streak (2)
+        ('backtest_trades', 'sk_current_streak',   'DOUBLE DEFAULT 0'),
+        ('backtest_trades', 'sk_recent_wr',        'DOUBLE DEFAULT 50'),
+        # Z-Score (1)
+        ('backtest_trades', 'zs_signal_zscore',    'DOUBLE DEFAULT 0'),
+        # Smart Money Footprint Score (1)
+        ('backtest_trades', 'sm_footprint_score',   'DOUBLE DEFAULT 0'),
     ]
 
 
@@ -1321,6 +1352,7 @@ def store_trade(trade, master_report: dict = None,
         mr = market_report or {}
         sr = smc_report or {}
         fd = flow_data or {}
+        master = master_report or {}
 
         delta_d = fd.get('delta', {})
         rd_d = fd.get('rolling_delta', {})
@@ -1332,6 +1364,15 @@ def store_trade(trade, master_report: dict = None,
         struct_d = sr.get('structure', {})
         vwap_d = mr.get('vwap', {})
         prof_d = mr.get('profile', {})
+
+        # ── v4.0 NEW: Extract enrichment data from master_report ──
+        pair_bias = master.get('pair_strength_bias', {})
+        atr_pct = master.get('atr_percentile', {})
+        mtf_rsi = master.get('mtf_rsi', {})
+        mtf_score = master.get('mtf_continuous', {})
+        ext_data = master.get('external_data', {})
+        streak = master.get('streak', {})
+        sm_footprint = master.get('smart_money_score', {})
 
         # Encode bias values
         bias_map = {'BULLISH': 1.0, 'BEARISH': -1.0, 'NEUTRAL': 0.0}
@@ -1531,7 +1572,7 @@ def store_trade(trade, master_report: dict = None,
             log.debug(f"[DB_STORE] Skipping duplicate trade: {trade.symbol} {trade.strategy} {entry_time_str}")
             return
 
-        # 88 columns
+        # 110 columns (88 original + 22 v4.0 new)
         c.execute("""
             INSERT INTO backtest_trades (
                 run_id, ticket, symbol, direction, strategy, strategy_group,
@@ -1561,7 +1602,15 @@ def store_trade(trade, master_report: dict = None,
                 source,
                 model_predicted_r,
                 strategy_model_verdict,
-                strategy_model_predicted_r
+                strategy_model_predicted_r,
+                cs_base_strength, cs_quote_strength, cs_strength_delta, cs_pair_bias,
+                ap_atr_percentile, ap_atr_ratio,
+                mr_m5_rsi, mr_m15_rsi, mr_m30_rsi, mr_h1_rsi, mr_h4_rsi, mr_d1_rsi,
+                mt_mtf_score, mt_trend_agreement, mt_rsi_agreement,
+                im_vix, im_dxy_change, im_risk_env,
+                sk_current_streak, sk_recent_wr,
+                zs_signal_zscore,
+                sm_footprint_score
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
@@ -1571,7 +1620,14 @@ def store_trade(trade, master_report: dict = None,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s,
+                %s, %s
             )
         """, (
             run_id, trade.ticket, trade.symbol, trade.direction,
@@ -1648,6 +1704,29 @@ def store_trade(trade, master_report: dict = None,
             # ── Layer 1 Strategy Model ──
             strategy_model_verdict,
             strategy_model_predicted_r,
+            # ── ML Gate v4.0: 25 new feature columns ──
+            _safe_float(pair_bias.get('base_strength', 0)),
+            _safe_float(pair_bias.get('quote_strength', 0)),
+            _safe_float(pair_bias.get('strength_delta', 0)),
+            _safe_float(pair_bias.get('bias_score', 0)),
+            _safe_float(atr_pct.get('atr_percentile', 50)),
+            _safe_float(atr_pct.get('atr_ratio', 1.0)),
+            _safe_float(mtf_rsi.get('m5_rsi', 50)),
+            _safe_float(mtf_rsi.get('m15_rsi', 50)),
+            _safe_float(mtf_rsi.get('m30_rsi', 50)),
+            _safe_float(mtf_rsi.get('h1_rsi', 50)),
+            _safe_float(mtf_rsi.get('h4_rsi', 50)),
+            _safe_float(mtf_rsi.get('d1_rsi', 50)),
+            _safe_float(mtf_score.get('mtf_score', 50)),
+            _safe_float(mtf_score.get('mtf_trend_agreement', 0.5)),
+            _safe_float(mtf_score.get('mtf_rsi_agreement', 0)),
+            _safe_float(ext_data.get('vix', 20)),
+            _safe_float(ext_data.get('dxy_change', 0)),
+            _safe_float({'RISK_ON': 1.0, 'CAUTIOUS': 0.5, 'RISK_OFF': -1.0}.get(str(ext_data.get('risk_env', 'UNKNOWN')), 0)),
+            _safe_float(streak.get('current_streak', 0)),
+            _safe_float(streak.get('recent_wr', 50)),
+            _safe_float(streak.get('z_score', 0)),
+            _safe_float(sm_footprint.get('score', 0)),
         ))
 
         conn.commit()

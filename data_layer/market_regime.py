@@ -149,3 +149,101 @@ def get_session_quality() -> float:
         "LONDON_OPEN":       0.7,   # Manipulation — volatile, Judas swings
     }
     return quality_map.get(session, 0.0)
+
+
+# ════════════════════════════════════════════════════════════════
+# ATR PERCENTILE CALCULATOR
+# Where does the current ATR sit vs recent history?
+# ════════════════════════════════════════════════════════════════
+
+def calculate_atr_percentile(symbol: str, timeframe: str = 'H1',
+                             period: int = 100) -> dict:
+    """
+    Calculate ATR percentile — where current ATR ranks vs last N periods.
+
+    Fetches candles, computes ATR(14) for the whole series, then ranks
+    the current ATR value within the last `period` ATR values.
+
+    Args:
+        symbol:    Forex pair symbol (e.g. 'EURJPY')
+        timeframe: MT5 timeframe string (e.g. 'H1', 'M15')
+        period:    Number of ATR periods to compare against
+
+    Returns:
+        dict with:
+            - atr_current:  float  (current ATR value)
+            - atr_percentile: float (0-100, where current ranks)
+            - atr_avg:      float  (average ATR over lookback)
+            - atr_ratio:    float  (current / average)
+            - volatility_state: str ('EXTREME'|'HIGH'|'NORMAL'|'LOW'|'DEAD')
+    """
+    # Safe defaults
+    _default = {
+        'atr_current': 0.0,
+        'atr_percentile': 50.0,
+        'atr_avg': 0.0,
+        'atr_ratio': 1.0,
+        'volatility_state': 'NORMAL',
+    }
+
+    from data_layer.price_feed import get_candles
+
+    # Fetch enough bars for ATR warmup + period comparison
+    bars_needed = period + 60  # 60 extra for ATR(14) warmup
+    df = get_candles(symbol, timeframe, bars_needed)
+
+    if df is None or len(df) < period + 20:
+        log.warning(f"[ATR_PERCENTILE] Insufficient data for {symbol} {timeframe}")
+        return _default
+
+    try:
+        # Use the ATR already computed by price_feed._add_indicators()
+        atr_series = df['atr'].dropna()
+
+        if len(atr_series) < period:
+            log.warning(f"[ATR_PERCENTILE] Only {len(atr_series)} ATR values "
+                        f"(need {period}) for {symbol}")
+            return _default
+
+        # Take the last `period` values for comparison
+        atr_window = atr_series.iloc[-period:]
+        atr_current = float(atr_window.iloc[-1])
+        atr_avg = float(atr_window.mean())
+
+        # Percentile ranking: what % of values is current ATR above?
+        # percentile = (values below current) / total * 100
+        below_count = int((atr_window < atr_current).sum())
+        atr_percentile = round(below_count / len(atr_window) * 100, 1)
+
+        # Ratio of current to average
+        atr_ratio = round(atr_current / atr_avg, 3) if atr_avg > 0 else 1.0
+
+        # Volatility state classification
+        if atr_percentile > 80:
+            volatility_state = 'EXTREME'
+        elif atr_percentile > 60:
+            volatility_state = 'HIGH'
+        elif atr_percentile > 40:
+            volatility_state = 'NORMAL'
+        elif atr_percentile > 20:
+            volatility_state = 'LOW'
+        else:
+            volatility_state = 'DEAD'
+
+        result = {
+            'atr_current': round(atr_current, 6),
+            'atr_percentile': atr_percentile,
+            'atr_avg': round(atr_avg, 6),
+            'atr_ratio': atr_ratio,
+            'volatility_state': volatility_state,
+        }
+
+        log.debug(f"[ATR_PERCENTILE] {symbol} {timeframe}: "
+                  f"ATR={atr_current:.6f} pctl={atr_percentile:.1f}% "
+                  f"ratio={atr_ratio:.3f} state={volatility_state}")
+
+        return result
+
+    except Exception as e:
+        log.error(f"[ATR_PERCENTILE] Error for {symbol} {timeframe}: {e}")
+        return _default
