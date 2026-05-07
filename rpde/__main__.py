@@ -317,6 +317,42 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show continuous learning loop status (Phase 3)",
     )
 
+    # ── live-start (Phase 3: Live Engine) ──────────────────
+    live_start_parser = subparsers.add_parser(
+        "live-start",
+        help="Start the RPDE live trading engine (Phase 3)",
+        description="Initialize and start the LiveEngine decision chain. "
+                    "Connects M5 bars -> Features -> PatternGate -> RL -> "
+                    "Safety -> Execute. Use --live to enable real execution "
+                    "(default: paper mode).",
+    )
+    live_start_parser.add_argument(
+        "--live",
+        action="store_true",
+        default=False,
+        dest="live_mode",
+        help="Enable live execution (default: paper mode)",
+    )
+    live_start_parser.add_argument(
+        "--pair",
+        default=None,
+        action="append",
+        dest="pairs",
+        help="Specific pair(s) to trade. Can be repeated.",
+    )
+
+    # ── live-stop (Phase 3: Live Engine) ────────────────────
+    subparsers.add_parser(
+        "live-stop",
+        help="Stop the RPDE live trading engine gracefully",
+    )
+
+    # ── live-status (Phase 3: Live Engine) ──────────────────
+    subparsers.add_parser(
+        "live-status",
+        help="Show RPDE live engine status (positions, P&L, signals)",
+    )
+
     return parser
 
 
@@ -1236,6 +1272,234 @@ def _cmd_learning_status(args):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  LIVE ENGINE COMMAND HANDLERS (Phase 3)
+# ═══════════════════════════════════════════════════════════════
+
+# Module-level reference to the running engine (for live-stop)
+_running_engine = None
+
+
+def _cmd_live_start(args):
+    """Handle the 'live-start' command."""
+    global _running_engine
+
+    try:
+        from rpde.live_engine import LiveEngine
+    except ImportError as e:
+        print(f"ERROR: LiveEngine not available: {e}")
+        return 1
+
+    paper_mode = not args.live_mode
+    pairs = [p.upper() for p in args.pairs] if args.pairs else None
+
+    mode_str = "PAPER" if paper_mode else "LIVE (REAL MONEY)"
+    print(f"\n  Starting RPDE Live Engine...")
+    print(f"  Mode:   {mode_str}")
+    if pairs:
+        print(f"  Pairs:  {', '.join(pairs)}")
+    print(f"  Time:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    print(f"  {'─' * 50}")
+
+    if not paper_mode:
+        print(f"\n  WARNING: LIVE MODE ENABLED — REAL ORDERS WILL BE PLACED")
+        print(f"  Press Ctrl+C within 5 seconds to abort...")
+        try:
+            time.sleep(5)
+        except KeyboardInterrupt:
+            print(f"\n  Aborted by user.\n")
+            return 130
+
+    try:
+        engine = LiveEngine(pairs=pairs, paper_mode=paper_mode)
+        ok = engine.initialize()
+
+        if not ok:
+            print(f"\n  ERROR: LiveEngine initialization failed.")
+            print(f"  Check logs for details.\n")
+            return 1
+
+        _running_engine = engine
+
+        status = engine.get_status()
+        rl_count = status.get('rl_agents_loaded', 0)
+        total_pairs = status.get('pairs', 0)
+
+        print(f"\n  {'=' * 55}")
+        print(f"  LIVE ENGINE STARTED")
+        print(f"  {'=' * 55}")
+        print(f"  Mode:            {mode_str}")
+        print(f"  Pairs:           {total_pairs}")
+        print(f"  RL agents:       {rl_count}/{total_pairs}")
+        print(f"  PatternGate:     {'READY' if status.get('gate_ready') else 'NOT READY'}")
+        print(f"  SafetyGuards:    {'ACTIVE' if status.get('safety_ready') else 'NOT READY'}")
+        print(f"  LearningLoop:    {'ACTIVE' if status.get('learning_ready') else 'NOT READY'}")
+        print(f"  {'=' * 55}")
+
+        print(f"\n  Engine is running. Waiting for M5 bar signals...")
+        print(f"  Press Ctrl+C to stop gracefully.\n")
+
+        # Block until interrupted
+        try:
+            while engine.is_running:
+                time.sleep(5)
+                # Periodically print a status line
+                s = engine.get_status()
+                stats = s.get('stats', {})
+                if stats.get('total_signals', 0) > 0:
+                    print(f"  [{datetime.now().strftime('%H:%M:%S')}] "
+                          f"signals={stats['total_signals']} "
+                          f"gate_skips={stats['gate_skips']} "
+                          f"rl_skips={stats['rl_skips']} "
+                          f"safety={stats['safety_blocks']} "
+                          f"exec={stats['executed']} "
+                          f"paper={stats['paper_executed']} "
+                          f"daily_pnl=${s.get('daily_pnl_usd', 0):+.2f}")
+        except KeyboardInterrupt:
+            print(f"\n\n  Stopping live engine...")
+
+        engine.shutdown()
+        _running_engine = None
+
+        final = engine.get_status()
+        stats = final.get('stats', {})
+        print(f"\n  {'=' * 55}")
+        print(f"  LIVE ENGINE STOPPED")
+        print(f"  {'=' * 55}")
+        print(f"  Total signals:    {stats.get('total_signals', 0)}")
+        print(f"  Gate skips:       {stats.get('gate_skips', 0)}")
+        print(f"  RL skips:         {stats.get('rl_skips', 0)}")
+        print(f"  Safety blocks:    {stats.get('safety_blocks', 0)}")
+        print(f"  Executed (live):  {stats.get('executed', 0)}")
+        print(f"  Executed (paper): {stats.get('paper_executed', 0)}")
+        print(f"  Outcomes:         {stats.get('outcomes_recorded', 0)}")
+        print(f"  Daily P&L:        ${final.get('daily_pnl_usd', 0):+.2f}")
+        print(f"  {'=' * 55}\n")
+
+        return 0
+
+    except Exception as e:
+        print(f"\n  FATAL ERROR: {e}\n")
+        log.exception("[RPDE_CLI] live-start failed")
+        return 1
+
+
+def _cmd_live_stop(args):
+    """Handle the 'live-stop' command."""
+    global _running_engine
+
+    if _running_engine is None:
+        print(f"\n  No live engine is running.\n")
+        return 0
+
+    print(f"\n  Stopping RPDE Live Engine...")
+    _running_engine.shutdown()
+    _running_engine = None
+    print(f"  Done.\n")
+    return 0
+
+
+def _cmd_live_status(args):
+    """Handle the 'live-status' command."""
+    global _running_engine
+
+    if _running_engine is None:
+        # No running engine — try to show a static status report
+        try:
+            from rpde.live_engine import LiveEngine
+            from rpde.config import LIVE_PAPER_MODE_DEFAULT
+        except ImportError as e:
+            print(f"ERROR: LiveEngine not available: {e}")
+            return 1
+
+        print(f"\n  {'=' * 65}")
+        print(f"  LIVE ENGINE STATUS (Phase 3)")
+        print(f"  {'=' * 65}")
+        print(f"  Engine state:    NOT RUNNING")
+
+        # Show subsystem readiness without starting
+        print(f"\n  Subsystem Check:")
+        try:
+            from rpde.pattern_gate import PatternGate
+            gate = PatternGate()
+            print(f"    PatternGate:    IMPORTABLE (not initialized)")
+        except Exception:
+            print(f"    PatternGate:    NOT AVAILABLE")
+
+        try:
+            from rpde.rl_agent import RLDecisionEngine
+            print(f"    RL Agent:       IMPORTABLE (not loaded)")
+        except Exception:
+            print(f"    RL Agent:       NOT AVAILABLE")
+
+        try:
+            from rpde.safety_guards import SafetyGuardSystem
+            print(f"    SafetyGuards:   IMPORTABLE")
+        except Exception:
+            print(f"    SafetyGuards:   NOT AVAILABLE")
+
+        try:
+            from rpde.experience_buffer import ContinuousLearningLoop
+            print(f"    LearningLoop:   IMPORTABLE")
+        except Exception:
+            print(f"    LearningLoop:   NOT AVAILABLE")
+
+        try:
+            import MetaTrader5 as mt5
+            connected = mt5.connection_status() == mt5.ConnectionStatus.CONNECTED
+            print(f"    MT5 Connection: {'CONNECTED' if connected else 'NOT CONNECTED'}")
+        except Exception:
+            print(f"    MT5 Connection: NOT AVAILABLE")
+
+        print(f"\n  Default mode:     {'PAPER' if LIVE_PAPER_MODE_DEFAULT else 'LIVE'}")
+        print(f"  {'=' * 65}\n")
+        return 0
+
+    # Engine is running — show live status
+    status = _running_engine.get_status()
+    stats = status.get('stats', {})
+    account = status.get('account', {})
+
+    print(f"\n  {'=' * 65}")
+    print(f"  LIVE ENGINE STATUS")
+    print(f"  {'=' * 65}")
+    print(f"  Mode:            {'PAPER' if status.get('paper_mode') else 'LIVE'}")
+    print(f"  Running:         {'YES' if status.get('running') else 'NO'}")
+    print(f"  Pairs:           {status.get('pairs', 0)}")
+    print(f"  RL agents:       {status.get('rl_agents_loaded', 0)}/{status.get('pairs', 0)}")
+    print(f"  PatternGate:     {'READY' if status.get('gate_ready') else 'NOT READY'}")
+    print(f"  SafetyGuards:    {'ACTIVE' if status.get('safety_ready') else 'NOT READY'}")
+    print(f"  LearningLoop:    {'ACTIVE' if status.get('learning_ready') else 'NOT READY'}")
+
+    print(f"\n  Signal Pipeline:")
+    print(f"    Total signals:    {stats.get('total_signals', 0)}")
+    print(f"    Gate skips:       {stats.get('gate_skips', 0)}")
+    print(f"    RL skips:         {stats.get('rl_skips', 0)}")
+    print(f"    Safety blocks:    {stats.get('safety_blocks', 0)}")
+    print(f"    Executed (live):  {stats.get('executed', 0)}")
+    print(f"    Executed (paper): {stats.get('paper_executed', 0)}")
+    print(f"    Execution fails:  {stats.get('execution_failures', 0)}")
+    print(f"    Outcomes:         {stats.get('outcomes_recorded', 0)}")
+
+    print(f"\n  Account:")
+    print(f"    Balance:      ${account.get('balance', 0):,.2f}")
+    print(f"    Equity:       ${account.get('equity', 0):,.2f}")
+    print(f"    Margin level: {account.get('margin_level', 0):,.1f}%")
+    print(f"    Daily P&L:    ${status.get('daily_pnl_usd', 0):+.2f}")
+    print(f"    Weekly P&L:   ${status.get('weekly_pnl_usd', 0):+.2f}")
+
+    open_positions = status.get('active_positions', 0)
+    print(f"\n  Positions: {open_positions} open")
+
+    print(f"\n  Performance:")
+    print(f"    Consecutive wins:  {status.get('consecutive_wins', 0)}")
+    print(f"    Consecutive losses: {status.get('consecutive_losses', 0)}")
+
+    print(f"\n  Uptime: {status.get('uptime_seconds', 0)}s")
+    print(f"  {'=' * 65}\n")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
 #  HELPERS
 # ═══════════════════════════════════════════════════════════════
 
@@ -1305,6 +1569,9 @@ def main():
         "rl-decide": _cmd_rl_decide,
         "safety-check": _cmd_safety_check,
         "learning-status": _cmd_learning_status,
+        "live-start": _cmd_live_start,
+        "live-stop": _cmd_live_stop,
+        "live-status": _cmd_live_status,
     }
 
     handler = handlers.get(args.command)

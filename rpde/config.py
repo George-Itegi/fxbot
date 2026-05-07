@@ -372,3 +372,44 @@ SPREAD_LIMITS = {
     "CHFJPY": 3.0, "CADJPY": 3.0, "XAGUSD": 5.0,
     "AUDCAD": 3.5,
 }
+
+# ── LIVE ENGINE (Phase 3: Live Trading Orchestrator) ──────────
+
+# Default risk percent per trade (fraction of equity)
+LIVE_RISK_PERCENT_PER_TRADE = 0.01    # 1% of equity per trade
+
+# Minimum SL in pips (broker floor)
+LIVE_MIN_SL_PIPS = 3.0
+
+# RL mid-trade check interval (seconds)
+LIVE_MID_TRADE_INTERVAL_SEC = 30
+
+# Trailing stop activation threshold (R-multiples in profit)
+LIVE_TRAILING_ACTIVATE_R = 1.0
+
+# Trailing stop distance (fraction of ATR once activated)
+LIVE_TRAILING_ATR_FRACTION = 0.5
+
+# Breakeven move threshold (R-multiples in profit to move SL to entry)
+LIVE_BREAKEVEN_ACTIVATE_R = 0.5
+
+# Partial exit thresholds — close 50% at 1R, let rest run to TP
+LIVE_PARTIAL_EXIT_R = 1.0
+LIVE_PARTIAL_EXIT_PCT = 0.5          # Close 50% of position
+
+# Early exit — RL can suggest early close if confidence drops
+LIVE_EARLY_EXIT_ENABLED = True
+LIVE_EARLY_EXIT_MIN_CONFIDENCE = 0.3  # Below this, RL suggests exit
+
+# Real-time P&L feedback → RL env
+LIVE_PNL_FEEDBACK_ENABLED = True
+LIVE_PNL_UPDATE_INTERVAL_SEC = 10
+
+# Max execution delay (ms) before abandoning a signal
+LIVE_MAX_EXECUTION_DELAY_MS = 5000
+
+# Position management loop interval (seconds)
+LIVE_MANAGE_INTERVAL_SEC = 1.0
+
+# Paper mode default (always True for safety)
+LIVE_PAPER_MODE_DEFAULT = True

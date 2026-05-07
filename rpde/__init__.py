@@ -58,6 +58,8 @@
 #   rl_agent.py           — PPO Decision Engine — Actor-Critic (Phase 3)
 #   experience_buffer.py  — Experience Replay + Continuous Learning (Phase 3)
 #   safety_guards.py      — Non-overridable safety rails (Phase 3)
+#   live_engine.py        — Live Trading Orchestrator + MT5 Bridge (Phase 3)
+#   dashboard_panels.py   — Streamlit dashboard panels (Phase 3)
 #   database.py           — Separate RPDE database tables
 #   config.py             — All tunable parameters
 #   trainer.py            — Full training pipeline orchestrator
@@ -65,3 +67,32 @@
 # =============================================================
 
 __version__ = "5.0.0"
+
+# ── Lazy Exports ──────────────────────────────────────────────
+# Phase 3: Live Engine
+from rpde.live_engine import LiveEngine, ActiveTrade
+
+# Phase 3: Dashboard Panels (optional — Streamlit may not be installed)
+try:
+    from rpde.dashboard_panels import (
+        PatternLibraryPanel,
+        FusionSignalPanel,
+        RLConfidencePanel,
+        SafetyGuardPanel,
+        LearningHealthPanel,
+        render_rpde_dashboard,
+    )
+except ImportError:
+    # Streamlit not installed — panels unavailable
+    pass
+
+__all__ = [
+    "LiveEngine",
+    "ActiveTrade",
+    "PatternLibraryPanel",
+    "FusionSignalPanel",
+    "RLConfidencePanel",
+    "SafetyGuardPanel",
+    "LearningHealthPanel",
+    "render_rpde_dashboard",
+]
