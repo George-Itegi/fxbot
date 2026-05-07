@@ -219,6 +219,45 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Number of M5 bars to load (default: 200)",
     )
 
+    # ── tft-train (Phase 2) ────────────────────────────────
+    tft_train_parser = subparsers.add_parser(
+        "tft-train",
+        help="Train TFT model for a pair (Phase 2: Temporal Fusion Transformer)",
+        description="Train a multi-timeframe Temporal Fusion Transformer "
+                    "model using golden moments from the RPDE database. "
+                    "Requires PyTorch and sufficient golden moments.",
+    )
+    tft_train_parser.add_argument(
+        "pair",
+        nargs="?",
+        default=None,
+        help="Currency pair to train. Omit to train all pairs.",
+    )
+    tft_train_parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="Days of golden moments to use (default: all available)",
+    )
+    tft_train_parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Max training epochs (default: from config)",
+    )
+    tft_train_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Training batch size (default: from config)",
+    )
+
+    # ── tft-status (Phase 2) ──────────────────────────────
+    subparsers.add_parser(
+        "tft-status",
+        help="Show TFT model status for all pairs (Phase 2)",
+    )
+
     return parser
 
 
@@ -666,6 +705,163 @@ def _cmd_test(args):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  TFT COMMAND HANDLERS (Phase 2)
+# ═══════════════════════════════════════════════════════════════
+
+def _cmd_tft_train(args):
+    """Handle the 'tft-train' command."""
+    try:
+        from rpde.tft_model import train_tft_model, get_device, get_gpu_info
+        from rpde.tft_dataset import build_training_dataset, build_dataloaders
+        from rpde.config import (
+            TFT_BATCH_SIZE, TFT_EPOCHS, TFT_PATIENCE,
+            TFT_MIN_TRAINING_SAMPLES, TFT_NUM_WORKERS,
+        )
+    except ImportError as e:
+        print(f"ERROR: TFT dependencies not available: {e}")
+        print(f"  Install PyTorch: pip install torch")
+        return 1
+
+    pair = args.pair.upper() if args.pair else None
+
+    print(f"\n  Training TFT model{' for ' + pair if pair else ' for all pairs'}...")
+    print(f"  {'─' * 50}")
+
+    gpu_info = get_gpu_info()
+    if gpu_info['available']:
+        print(f"  GPU: {gpu_info['name']} ({gpu_info['memory_total_gb']}GB)")
+    else:
+        print(f"  GPU: Not available (using CPU)")
+    print(f"  Device: {get_device()}")
+
+    try:
+        if pair:
+            # Train single pair
+            dataset = build_training_dataset(pair, days=args.days)
+            if len(dataset) < TFT_MIN_TRAINING_SAMPLES:
+                print(f"\n  ERROR: Insufficient data for {pair}: "
+                      f"{len(dataset)} samples (need {TFT_MIN_TRAINING_SAMPLES})")
+                return 1
+
+            train_loader, val_loader, train_ds, val_ds = build_dataloaders(
+                dataset,
+                batch_size=args.batch_size or TFT_BATCH_SIZE,
+                num_workers=TFT_NUM_WORKERS,
+            )
+
+            model = train_tft_model(
+                dataset, train_loader, val_loader,
+                pair=pair,
+                n_timeframes=len(train_ds.timeframes),
+                n_features=train_ds.n_features,
+            )
+
+            print(f"\n  {'=' * 50}")
+            print(f"  TFT TRAINING COMPLETE: {pair}")
+            print(f"  {'=' * 50}")
+            print(f"  Train samples: {len(train_ds)}")
+            print(f"  Val samples:   {len(val_ds)}")
+            print(f"  Duration:      {model.get('duration_seconds', '?')}s")
+            return 0
+
+        else:
+            # Train all pairs
+            from config.settings import PAIR_WHITELIST
+            results = {}
+
+            for p in PAIR_WHITELIST:
+                print(f"\n  ── Training {p}... ──")
+                try:
+                    dataset = build_training_dataset(p)
+                    if len(dataset) < TFT_MIN_TRAINING_SAMPLES:
+                        print(f"  SKIPPED: {len(dataset)} samples "
+                              f"(need {TFT_MIN_TRAINING_SAMPLES})")
+                        results[p] = {'status': 'SKIPPED', 'samples': len(dataset)}
+                        continue
+
+                    train_loader, val_loader, train_ds, val_ds = build_dataloaders(
+                        dataset,
+                        batch_size=TFT_BATCH_SIZE,
+                        num_workers=TFT_NUM_WORKERS,
+                    )
+
+                    result = train_tft_model(
+                        dataset, train_loader, val_loader,
+                        pair=p,
+                        n_timeframes=len(train_ds.timeframes),
+                        n_features=train_ds.n_features,
+                    )
+                    results[p] = result
+                except Exception as ex:
+                    results[p] = {'status': 'FAILED', 'error': str(ex)}
+                    print(f"  FAILED: {ex}")
+
+            # Summary
+            print(f"\n  {'=' * 55}")
+            print(f"  TFT BATCH TRAINING SUMMARY")
+            print(f"  {'=' * 55}")
+            trained = sum(1 for r in results.values()
+                        if r.get('status') == 'COMPLETED')
+            for p, r in results.items():
+                status = r.get('status', '?')
+                epochs = r.get('epochs_trained', '?')
+                print(f"  {p:<12} {status:<12} epochs={epochs}")
+            print(f"  Total trained: {trained}/{len(results)}")
+            print(f"  {'=' * 55}\n")
+            return 0
+
+    except Exception as e:
+        print(f"\n  FATAL ERROR: {e}\n")
+        log.exception("[RPDE_CLI] TFT training failed")
+        return 1
+
+
+def _cmd_tft_status(args):
+    """Handle the 'tft-status' command."""
+    try:
+        from rpde.tft_model import get_device, get_gpu_info, load_tft_model
+    except ImportError as e:
+        print(f"ERROR: TFT not available: {e}")
+        return 1
+
+    from config.settings import PAIR_WHITELIST
+
+    gpu = get_gpu_info()
+    print(f"\n  {'=' * 55}")
+    print(f"  TFT MODEL STATUS (Phase 2)")
+    print(f"  {'=' * 55}")
+    print(f"  PyTorch:     AVAILABLE")
+    print(f"  GPU:         {'YES - ' + gpu['name'] + ' (' + gpu['memory_total_gb'] + 'GB)' if gpu['available'] else 'NO (CPU only)'}")
+    print(f"  Device:      {get_device()}")
+
+    trained = 0
+    print(f"\n  {'Pair':<12} {'Status':<10} {'Samples':>8} {'Epochs':>7} "
+          f"{'Val Loss':>10} {'Trained':<20}")
+    print(f"  {'─' * 12} {'─' * 10} {'─' * 8} {'─' * 7} "
+          f"{'─' * 10} {'─' * 20}")
+
+    for pair in PAIR_WHITELIST:
+        try:
+            meta = load_tft_model(pair)
+            if meta is not None:
+                trained += 1
+                samples = meta.get('training_samples', '?')
+                epochs = meta.get('epochs_trained', '?')
+                val_loss = f"{meta.get('best_val_loss', 0):.4f}"
+                trained_at = meta.get('trained_at', '?')[:19]
+                print(f"  {pair:<12} {'TRAINED':<10} {samples:>8} {epochs:>7} "
+                      f"{val_loss:>10} {trained_at:<20}")
+            else:
+                print(f"  {pair:<12} {'NOT TRAINED':<10}")
+        except Exception:
+            print(f"  {pair:<12} {'ERROR':<10}")
+
+    print(f"\n  Models trained: {trained}/{len(PAIR_WHITELIST)}")
+    print(f"  {'=' * 55}\n")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
 #  HELPERS
 # ═══════════════════════════════════════════════════════════════
 
@@ -728,6 +924,8 @@ def main():
         "report": _cmd_report,
         "list": _cmd_list,
         "test": _cmd_test,
+        "tft-train": _cmd_tft_train,
+        "tft-status": _cmd_tft_status,
     }
 
     handler = handlers.get(args.command)

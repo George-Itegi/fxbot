@@ -11,6 +11,8 @@
 #   rpde_pattern_library   — Discovered and validated patterns
 #   rpde_pattern_trades    — Trades taken by RPDE in live/paper trading
 #   rpde_pattern_stats     — Rolling performance statistics per pattern
+#   rpde_tft_training_log  — TFT model training history and metrics
+#   rpde_tft_models        — TFT model registry with metadata
 # =============================================================
 
 import json
@@ -198,8 +200,69 @@ def init_rpde_tables():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+        # ── 6. rpde_tft_training_log ──────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS rpde_tft_training_log (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                pair                VARCHAR(20),
+                training_id         VARCHAR(50) UNIQUE,
+                started_at          DATETIME,
+                completed_at        DATETIME,
+                duration_seconds    INT,
+                status              VARCHAR(20),
+                n_samples           INT,
+                train_samples       INT,
+                val_samples         INT,
+                epochs_trained      INT,
+                best_epoch          INT,
+                best_val_loss       DOUBLE,
+                final_val_loss      DOUBLE,
+                train_loss          DOUBLE,
+                val_pattern_mae     DOUBLE,
+                val_momentum_mae    DOUBLE,
+                val_reversal_mae    DOUBLE,
+                device              VARCHAR(20),
+                n_parameters        INT,
+                config_json         TEXT,
+                history_json        TEXT,
+                notes               TEXT,
+                INDEX idx_pair (pair),
+                INDEX idx_training_id (training_id),
+                INDEX idx_status (status),
+                INDEX idx_started_at (started_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        # ── 7. rpde_tft_models ─────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS rpde_tft_models (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                pair                VARCHAR(20) UNIQUE,
+                model_path           VARCHAR(300),
+                meta_path            VARCHAR(300),
+                model_size_kb        INT,
+                trained_at          DATETIME,
+                last_retrained_at    DATETIME,
+                training_samples    INT,
+                val_corr             DOUBLE,
+                val_r2               DOUBLE,
+                val_pattern_mae      DOUBLE,
+                val_momentum_mae     DOUBLE,
+                val_reversal_mae     DOUBLE,
+                best_val_loss        DOUBLE,
+                epochs_trained      INT,
+                device              VARCHAR(20),
+                n_parameters        INT,
+                is_active           TINYINT DEFAULT 1,
+                config_snapshot_json TEXT,
+                INDEX idx_pair (pair),
+                INDEX idx_is_active (is_active),
+                INDEX idx_trained_at (trained_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
         _tables_initialized = True
-        log.info("[RPDE_DB] All 5 RPDE tables initialized successfully.")
+        log.info("[RPDE_DB] All 7 RPDE tables initialized successfully.")
 
     except Exception as e:
         log.error(f"[RPDE_DB] Failed to create RPDE tables: {e}")

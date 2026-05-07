@@ -168,6 +168,105 @@ CURRENCY_CORRELATION_THRESHOLD = 0.65
 # Confidence boost when pattern confirmed across same-base-currency pairs
 CURRENCY_CONFIRM_BOOST = 0.08
 
+# ── PHASE 2: TEMPORAL FUSION TRANSFORMER (TFT) ────────────
+
+# Multi-timeframe sequence lengths (number of candles per timeframe)
+# Chosen to capture meaningful price action at each granularity:
+#   H4: 30 candles = 5 days of 4H bars
+#   H1: 48 candles = 2 days of 1H bars
+#   M15: 96 candles = 24 hours of 15min bars
+#   M5: 60 candles = 5 hours of 5min bars (recent microstructure)
+TFT_TIMEFRAMES = {
+    "H4":  30,
+    "H1":  48,
+    "M15": 96,
+    "M5":  60,
+}
+
+# Raw OHLCV features per candle fed to TFT (no engineered features)
+# The TFT learns its own representations from raw price data
+TFT_RAW_FEATURES = [
+    "open", "high", "low", "close", "tick_volume",
+    # Derived per-candle features (computed in dataset builder)
+    "body_ratio",      # |close - open| / (high - low)
+    "upper_wick",      # (high - max(open, close)) / (high - low)
+    "lower_wick",      # (min(open, close) - low) / (high - low)
+    "range_pct",       # (high - low) / close (normalized range)
+    "return_1",        # close / prev_close - 1
+    "return_3",        # close / close_3bars_ago - 1
+]  # 11 features per candle per timeframe
+
+# TFT model hyperparameters
+TFT_HIDDEN_SIZE = 64           # Hidden dimension for all encoders/decoders
+TFT_ATTENTION_HEADS = 4        # Multi-head attention heads
+TFT_NUM_ENCODER_LAYERS = 2     # Transformer encoder layers per timeframe
+TFT_DROPOUT = 0.15             # Dropout rate (regularization)
+TFT_LEARNING_RATE = 1e-4       # AdamW learning rate
+TFT_WEIGHT_DECAY = 1e-5        # L2 regularization
+TFT_BATCH_SIZE = 32            # Training batch size
+TFT_EPOCHS = 50                # Maximum training epochs
+TFT_PATIENCE = 8               # Early stopping patience (epochs)
+TFT_GRADIENT_CLIP = 1.0        # Max gradient norm for clipping
+
+# Variable Selection Network (VSN) — per-timeframe importance weights
+VSN_ENABLED = True             # Enable variable selection per timeframe
+VSN_HIDDEN_SIZE = 16           # VSN MLP hidden size
+
+# Cross-timeframe attention
+CROSS_TF_ATTENTION_ENABLED = True   # Enable cross-TF attention mechanism
+CROSS_TF_ATTENTION_HEADS = 4        # Heads for cross-TF attention
+CROSS_TF_ATTENTION_LAYERS = 2       # Layers of cross-TF attention
+
+# TFT output heads (3 prediction targets)
+TFT_OUTPUT_HEADS = {
+    "candle_pattern_match": {
+        "type": "classification",    # Binary: does current state match known pattern?
+        "hidden_dim": 32,
+    },
+    "momentum_score": {
+        "type": "regression",        # Continuous: how strong is the momentum? [-1, 1]
+        "hidden_dim": 32,
+    },
+    "reversal_probability": {
+        "type": "regression",        # Continuous: probability of imminent reversal [0, 1]
+        "hidden_dim": 32,
+    },
+}
+
+# TFT minimum training data
+TFT_MIN_TRAINING_SAMPLES = 500    # Minimum sequences to start training
+TFT_TRAIN_VAL_SPLIT = 0.8         # Time-based split (80% train, 20% val)
+TFT_SEQUENCE_STRIDE = 5           # Steps between consecutive training sequences
+TFT_RETRAIN_DAYS = 14             # Bi-weekly retraining cadence (days)
+TFT_MIN_PAIR_TRADES = 30          # Min trades on a pair before including in TFT training
+
+# TFT device configuration
+TFT_DEVICE = "auto"               # "auto" (GPU if available, else CPU), "cuda", "cpu"
+TFT_MIXED_PRECISION = True        # Use fp16 for faster GPU training
+TFT_NUM_WORKERS = 2               # DataLoader workers
+
+# ── PHASE 2: FUSION LAYER ──────────────────────────────────
+
+# How to combine XGBoost and TFT predictions
+# Weights are LEARNED per pair via a small meta-learner
+FUSION_DEFAULT_XGB_WEIGHT = 0.55  # Default: XGBoost slightly favored (more mature)
+FUSION_DEFAULT_TFT_WEIGHT = 0.45  # Default: TFT weight (adjusts with training)
+
+# Fusion layer meta-learner
+FUSION_META_LR = 0.01            # Learning rate for fusion weight optimizer
+FUSION_WEIGHT_SMOOTHING = 0.9    # EMA smoothing for weight updates (prevents jitter)
+FUSION_MIN_WEIGHT = 0.1          # Minimum weight for either signal (never fully ignore)
+FUSION_MAX_WEIGHT = 0.9          # Maximum weight for either signal
+
+# Direction agreement boost — when XGB and TFT agree on direction
+FUSION_DIRECTION_AGREE_BOOST = 0.10   # +10% confidence when both agree
+FUSION_DIRECTION_DISAGREE_PENALTY = 0.20  # -20% confidence when they disagree
+
+# TFT contribution thresholds for gate decisions
+TFT_MIN_PATTERN_MATCH = 0.5      # Minimum pattern match score from TFT
+TFT_MIN_MOMENTUM_SCORE = 0.3     # Minimum momentum to consider TFT signal valid
+TFT_REVERSAL_THRESHOLD = 0.7     # Above this, consider reversal warning
+
 # ── LIVE TRADING ─────────────────────────────────────────
 
 # Minimum time between pattern-based trades on same pair (minutes)

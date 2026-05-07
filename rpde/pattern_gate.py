@@ -35,6 +35,14 @@ from typing import Optional, List
 from core.logger import get_logger
 from rpde.pattern_model import PatternModel
 
+# TFT availability check
+_TFT_AVAILABLE = False
+try:
+    from rpde.tft_model import TFTModelManager
+    _TFT_AVAILABLE = True
+except ImportError:
+    pass
+
 log = get_logger(__name__)
 
 
@@ -56,6 +64,7 @@ class PatternGate:
     def __init__(self):
         self.models = {}           # {pair: PatternModel}
         self.pattern_cache = {}    # {pair: [active_patterns]}
+        self.tft_managers = {}     # {pair: TFTModelManager}
         self.is_initialized = False
 
     # ════════════════════════════════════════════════════════════════
@@ -76,6 +85,7 @@ class PatternGate:
 
         loaded_models = 0
         loaded_patterns = 0
+        loaded_tft = 0
 
         for pair in pairs:
             pair_upper = pair.upper()
@@ -98,9 +108,21 @@ class PatternGate:
                 log.debug(f"[RPDE_GATE] Failed to load patterns for "
                           f"{pair_upper}: {e}")
 
+            # Load TFT model (Phase 2)
+            if _TFT_AVAILABLE:
+                try:
+                    tft_mgr = TFTModelManager(pair_upper)
+                    if tft_mgr.is_trained():
+                        self.tft_managers[pair_upper] = tft_mgr
+                        loaded_tft += 1
+                except Exception as e:
+                    log.debug(f"[RPDE_GATE] Failed to load TFT for "
+                              f"{pair_upper}: {e}")
+
         self.is_initialized = True
         log.info(
-            f"[RPDE_GATE] Initialized: {loaded_models} models, "
+            f"[RPDE_GATE] Initialized: {loaded_models} XGB models, "
+            f"{loaded_tft} TFT models, "
             f"{loaded_patterns} patterns across {len(pairs)} pairs")
 
     # ════════════════════════════════════════════════════════════════
@@ -141,6 +163,11 @@ class PatternGate:
 
         # ── Step 3: Combine signals ──
         combined = self._combine_signals(model_result, pattern_match)
+
+        # ── Step 3.5: Apply TFT fusion (Phase 2) ──
+        if _TFT_AVAILABLE and self.tft_managers.get(pair_upper):
+            combined = self._apply_tft_fusion(
+                pair_upper, combined, master_report)
 
         # ── Step 4: Apply human guards ──
         guards = self._apply_human_guards(pair_upper, mr)
@@ -479,6 +506,105 @@ class PatternGate:
                        f'Pattern WR={pattern_wr:.0%} R={pattern_r:.2f} '
                        f'({pattern_weight:.0%})'),
         }
+
+    # ════════════════════════════════════════════════════════════════
+    # TFT FUSION (Phase 2)
+    # ════════════════════════════════════════════════════════════════
+
+    def _apply_tft_fusion(self, pair: str, combined: dict,
+                          master_report: dict) -> dict:
+        """
+        Enhance the combined signal with TFT predictions (Phase 2).
+
+        Uses the FusionLayer to combine XGB + TFT + Pattern Library
+        into a 3-way fused signal. If TFT disagrees strongly, it
+        dampens the combined confidence or forces a SKIP.
+
+        Args:
+            pair: Uppercase pair string
+            combined: Existing XGB+Pattern combined signal dict
+            master_report: Market context dict
+
+        Returns:
+            Updated combined signal dict with TFT enrichment.
+        """
+        from rpde.fusion_layer import fuse_all_signals
+
+        tft_mgr = self.tft_managers.get(pair)
+        if tft_mgr is None:
+            return combined
+
+        try:
+            from rpde.tft_dataset import build_live_inputs
+            import torch
+
+            # Get multi-TF candle data for live prediction
+            tft_inputs = build_live_inputs(pair)
+
+            # Move tensors to correct device
+            device = torch.device('cpu')
+            if torch.cuda.is_available():
+                device = torch.device('cuda')
+            tft_inputs_device = {
+                tf: t.to(device) for tf, t in tft_inputs.items()
+            }
+
+            # Get TFT prediction
+            tft_result = tft_mgr.predict(tft_inputs_device)
+
+            # Build XGB result dict for fusion
+            xgb_for_fusion = {
+                'predicted_r': combined.get('expected_r', 0.0),
+                'confidence': combined.get('combined_confidence', 0.0),
+                'direction': combined.get('direction'),
+                'is_pattern': combined.get('model_confidence', 0.0) > 0.3,
+            }
+
+            # Build pattern match dict for fusion
+            pattern_for_fusion = {
+                'win_rate': combined.get('pattern_win_rate'),
+                'expected_r': combined.get('pattern_expected_r', 0.0),
+                'match_score': combined.get('pattern_match_score', 0.0),
+                'tier': combined.get('pattern_tier'),
+                'direction': combined.get('direction'),
+            }
+
+            # Run fusion
+            fused = fuse_all_signals(pair, xgb_for_fusion,
+                                      tft_result, pattern_for_fusion)
+
+            # Merge fusion results into combined
+            combined['tft_contribution'] = fused.get('tft_contribution', 0.0)
+            combined['signal_agreement'] = fused.get('signal_agreement', 'N/A')
+            combined['reversal_warning'] = fused.get('reversal_warning', False)
+            combined['fusion_weights'] = fused.get('weights', {})
+            combined['tft_pattern_match'] = tft_result.get(
+                'candle_pattern_match', 0.0)
+            combined['tft_momentum'] = tft_result.get(
+                'momentum_score', 0.0)
+            combined['tft_reversal'] = tft_result.get(
+                'reversal_probability', 0.0)
+
+            # Update confidence and R from fusion
+            if fused.get('combined_confidence'):
+                combined['combined_confidence'] = fused['combined_confidence']
+            if fused.get('combined_expected_r'):
+                combined['expected_r'] = fused['combined_expected_r']
+            if fused.get('recommendation'):
+                combined['fusion_recommendation'] = fused['recommendation']
+
+            log.debug(
+                f"[RPDE_GATE] TFT fusion for {pair}: "
+                f"match={tft_result.get('candle_pattern_match', 0):.2f}, "
+                f"momentum={tft_result.get('momentum_score', 0):.2f}, "
+                f"reversal={tft_result.get('reversal_probability', 0):.2f}, "
+                f"agreement={fused.get('signal_agreement', '?')}"
+            )
+
+        except Exception as e:
+            log.warning(f"[RPDE_GATE] TFT fusion failed for {pair}: {e}")
+
+        return combined
 
     # ════════════════════════════════════════════════════════════════
     # HUMAN GUARDS
