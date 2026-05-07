@@ -566,16 +566,15 @@ def update_scan_history(scan_id: str, status: str, **kwargs):
 #  GOLDEN MOMENTS (rpde_pattern_scans)
 # ═══════════════════════════════════════════════════════════════
 
-def store_golden_moment(scan_id: str, pair: str, features_dict: dict, **kwargs):
+def store_golden_moment(moment: dict):
     """Store a golden moment (big move) with its feature snapshot.
 
     Args:
-        scan_id: The scan this moment belongs to
-        pair: Currency pair (e.g. "EURUSD")
-        features_dict: Full feature snapshot as a dict
-        **kwargs: direction, bar_timestamp, entry_price, peak_price,
-                  move_pips, move_duration_bars, forward_return, is_win,
-                  session, market_state, atr_at_entry, spread_at_entry
+        moment: dict with keys from the scanner:
+            scan_id, pair, bar_time, direction, entry_price, move_pips,
+            peak_price, peak_bar_offset, forward_return, atr, spread,
+            volume, pip_value, threshold_pips, bar_index,
+            plus feature_snapshot dict if available.
     """
     init_rpde_tables()
     conn = _get_conn()
@@ -590,24 +589,25 @@ def store_golden_moment(scan_id: str, pair: str, features_dict: dict, **kwargs):
                 features_json
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
-            scan_id,
-            pair,
-            kwargs.get('direction', ''),
-            _safe_datetime(kwargs.get('bar_timestamp')),
-            _safe_float(kwargs.get('entry_price')),
-            _safe_float(kwargs.get('peak_price')),
-            _safe_float(kwargs.get('move_pips')),
-            _safe_int(kwargs.get('move_duration_bars', 0)),
-            _safe_float(kwargs.get('forward_return')),
-            1 if kwargs.get('is_win') else 0,
-            kwargs.get('session'),
-            kwargs.get('market_state'),
-            _safe_float(kwargs.get('atr_at_entry')),
-            _safe_float(kwargs.get('spread_at_entry')),
-            _safe_json(features_dict),
+            moment.get('scan_id', ''),
+            moment.get('pair', ''),
+            moment.get('direction', ''),
+            _safe_datetime(moment.get('bar_time')),
+            _safe_float(moment.get('entry_price')),
+            _safe_float(moment.get('peak_price')),
+            _safe_float(moment.get('move_pips')),
+            _safe_int(moment.get('peak_bar_offset', 0)),
+            _safe_float(moment.get('forward_return')),
+            1 if moment.get('forward_return', 0) > 0 else 0,
+            moment.get('session', ''),
+            moment.get('market_state', ''),
+            _safe_float(moment.get('atr')),
+            _safe_float(moment.get('spread')),
+            _safe_json(moment.get('feature_snapshot', moment)),
         ))
     except Exception as e:
-        log.error(f"[RPDE_DB] store_golden_moment failed for {pair}: {e}")
+        log.error(f"[RPDE_DB] store_golden_moment failed for "
+                  f"{moment.get('pair', '?')}: {e}")
     finally:
         _close(c, conn)
 
