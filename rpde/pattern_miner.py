@@ -37,15 +37,18 @@ logger = get_logger("rpde.pattern_miner")
 
 
 # ── Golden Moment DB Access ──────────────────────────────────
-# Since rpde.database doesn't exist yet, we load directly.
+# Uses rpde.database for consistent table access (rpde_pattern_scans).
+
+from rpde.database import load_golden_moments as _db_load_golden_moments
+
 
 def load_golden_moments(pair: str, scan_ids: list = None) -> list:
     """
     Load all golden moments for a pair from the database.
 
     Each row is a dict with keys including:
-        id, pair, scan_id, bar_time, direction, move_pips,
-        move_bars, features_json (JSON string of all 93 features)
+        id, pair, scan_id, bar_timestamp, direction, move_pips,
+        move_duration_bars, features_json (JSON string of all 93 features)
 
     Parameters
     ----------
@@ -60,44 +63,24 @@ def load_golden_moments(pair: str, scan_ids: list = None) -> list:
         List of golden moment row dicts.
     """
     try:
-        conn = get_connection()
-        cur = conn.cursor(dictionary=True)
-
-        sql = """
-            SELECT id, pair, scan_id, bar_time, direction,
-                   move_pips, move_bars, features_json
-            FROM rpde_golden_moments
-            WHERE pair = %s
-        """
-        params = [pair]
-
         if scan_ids:
-            placeholders = ",".join(["%s"] * len(scan_ids))
-            sql += f" AND scan_id IN ({placeholders})"
-            params.extend(scan_ids)
-
-        sql += " ORDER BY bar_time ASC"
-
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        # Parse features_json on each row
-        for row in rows:
-            raw = row.get("features_json", "{}")
-            if isinstance(raw, str):
-                try:
-                    row["features"] = json.loads(raw)
-                except (json.JSONDecodeError, TypeError):
-                    row["features"] = {}
-            elif isinstance(raw, dict):
-                row["features"] = raw
-            else:
-                row["features"] = {}
-
-        logger.info(f"Loaded {len(rows)} golden moments for {pair}")
-        return rows
+            # database.py only supports single scan_id, so load per scan
+            # and deduplicate by id
+            all_rows = {}
+            for sid in scan_ids:
+                rows = _db_load_golden_moments(pair=pair, scan_id=sid)
+                for row in rows:
+                    all_rows[row["id"]] = row
+            moments = list(all_rows.values())
+            moments.sort(key=lambda r: r.get("bar_timestamp", ""))
+            logger.info(f"Loaded {len(moments)} golden moments for {pair}")
+            return moments
+        else:
+            moments = _db_load_golden_moments(pair=pair)
+            # database.py returns DESC order; reverse to ASC for miner
+            moments.reverse()
+            logger.info(f"Loaded {len(moments)} golden moments for {pair}")
+            return moments
 
     except Exception as e:
         logger.error(f"Failed to load golden moments for {pair}: {e}")
