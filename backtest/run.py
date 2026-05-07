@@ -130,6 +130,14 @@ Examples:
         default='backtest',
         help='Training data source (default: backtest).')
     model_group.add_argument(
+        '--incremental', action='store_true',
+        help='Incremental training: load existing model and add new trees '
+             '(weights recent trades 5x). Requires a previously trained model.')
+    model_group.add_argument(
+        '--use-replay', action='store_true',
+        help='Use experience replay buffer: stratified sampling of up to 2000 trades '
+             'with priority weighting by TD-error.')
+    model_group.add_argument(
         '--use-model', action='store_true',
         help='Run backtest with ML Gate v3.0 replacing consensus gates. '
              'Collects ALL strategy scores as features for the model.')
@@ -228,7 +236,8 @@ def _print_model_status():
         print(f"  Error: {e}")
 
 
-def _train_model(model_source: str):
+def _train_model(model_source: str, incremental: bool = False,
+                  use_replay: bool = False):
     """Train the ML Gate v3.1 regression model and display results."""
     print("\n" + "="*60)
     print("  APEX TRADER — ML Gate v3.1 TRAINING (Regression)")
@@ -239,11 +248,18 @@ def _train_model(model_source: str):
     try:
         from ai_engine.ml_gate import train_model
 
+        mode_label = 'INCREMENTAL + REPLAY' if (incremental and use_replay) else \
+                    'INCREMENTAL' if incremental else \
+                    'REPLAY BUFFER' if use_replay else 'FULL (from scratch)'
+
         print(f"\n  Training source: {model_source}")
+        print(f"  Training mode:   {mode_label}")
         print(f"  Target: profit_r (R-multiple, continuous)")
         print(f"  This may take a moment...\n")
 
-        result = train_model(source=model_source)
+        result = train_model(source=model_source,
+                             incremental=incremental,
+                             use_replay=use_replay)
 
         if result['status'] == 'trained':
             print(f"  Training: SUCCESS")
@@ -398,7 +414,8 @@ def main():
         return
 
     if args.train:
-        _train_model(args.model_source)
+        _train_model(args.model_source, incremental=args.incremental,
+                   use_replay=args.use_replay)
         return
 
     if args.clear_data:
