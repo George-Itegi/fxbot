@@ -277,3 +277,98 @@ MAX_DAILY_PATTERN_TRADES = 8
 
 # Maximum concurrent pattern-based positions
 MAX_PATTERN_POSITIONS = 5
+
+# ── PHASE 3: RL DECISION ENGINE ─────────────────────────────
+
+# Observation / action space dimensions
+RL_OBS_DIM = 28               # 8 fusion + 12 market + 8 portfolio
+RL_ACTION_DIM = 7             # SKIP + 3 BUY sizes + 3 SELL sizes
+
+# Episode management
+RL_MAX_STEPS_PER_EPISODE = 50  # Max signals per trading day
+
+# Reward function
+RL_REWARD_SCALING = 1.0        # Multiplier on R-multiple rewards
+RL_BAD_ENTRY_PENALTY = -0.1    # Additional penalty when trade loses > 1R
+RL_GOOD_ENTRY_BONUS = 0.05     # Additional bonus when trade profits > 1R
+RL_DRAWDOWN_SHAPING = -0.001   # Per 1% drawdown increase per step
+
+# Risk limits enforced inside the environment
+RL_MAX_DAILY_LOSS_PCT = 3.0    # Hard daily loss limit (pct of equity)
+RL_MAX_POSITIONS = 5           # Max concurrent open positions
+RL_MAX_CONSECUTIVE_LOSSES = 3  # Pause after this many consecutive losses
+
+# Size → SL/TP mapping (in R-multiples)
+# Maps each size tier to its stop-loss width and take-profit target
+RL_SIZE_MAP = {
+    0.5: {"sl_r": 0.5, "tp_r": 1.0},   # Conservative
+    1.0: {"sl_r": 1.0, "tp_r": 2.0},   # Standard
+    1.5: {"sl_r": 1.5, "tp_r": 3.0},   # Aggressive
+}
+
+# PPO network architecture
+RL_ACTOR_HIDDEN = 128           # Actor (policy) hidden dimension
+RL_CRITIC_HIDDEN = 128          # Critic (value) hidden dimension
+
+# PPO algorithm hyperparameters
+RL_LEARNING_RATE = 3e-4         # Adam optimizer learning rate
+RL_GAMMA = 0.99                 # Discount factor for future rewards
+RL_GAE_LAMBDA = 0.95            # GAE lambda for advantage estimation
+RL_CLIP_RATIO = 0.2             # PPO clipping ratio (epsilon)
+RL_VALUE_COEFF = 0.5            # Value loss coefficient
+RL_ENTROPY_COEFF = 0.01         # Entropy bonus coefficient (encourages exploration)
+RL_MAX_GRAD_NORM = 0.5          # Max gradient norm for clipping
+
+# PPO training loop
+RL_PPO_EPOCHS = 4               # PPO update epochs per rollout
+RL_MINI_BATCH_SIZE = 64         # Mini-batch size for PPO updates
+RL_ROLLOUT_STEPS = 2048         # Steps per rollout before PPO update
+
+# RL training cadence and data requirements
+RL_RETRAIN_DAYS = 7             # Retrain RL agent weekly
+RL_MIN_TRAINING_EPISODES = 50   # Minimum episodes before RL agent is considered trained
+
+# RL device configuration (shared with TFT)
+RL_DEVICE = "auto"              # "auto" (GPU if available), "cuda", "cpu"
+RL_MIXED_PRECISION = True       # Use fp16 for faster GPU training
+
+# ── PHASE 3: SAFETY GUARDS (non-overridable) ──────────────────
+
+# Drawdown limits (HARD — trigger system shutdown)
+SAFETY_MAX_DAILY_LOSS_PCT = 3.0     # Daily loss > 3% → SHUT DOWN
+SAFETY_MAX_WEEKLY_LOSS_PCT = 5.0    # Weekly loss > 5% → SHUT DOWN
+
+# Position limits (SOFT — skip trade)
+SAFETY_MAX_POSITIONS = 5            # Max concurrent positions across all pairs
+SAFETY_MAX_PER_PAIR = 2             # Max concurrent positions per pair
+
+# Consecutive loss protection
+SAFETY_MAX_CONSECUTIVE_LOSSES = 5    # Pause trading after N consecutive losses
+
+# Margin protection (HARD — trigger system shutdown)
+SAFETY_MARGIN_LEVEL_MIN = 150.0     # margin_level < 150% → SHUT DOWN
+SAFETY_EQUITY_MIN_PCT = 50.0        # equity < 50% of balance → SHUT DOWN
+SAFETY_FREE_MARGIN_BUFFER = 2.0     # free_margin must be > required_margin * this
+
+# News filter (SOFT — skip trade near high-impact events)
+SAFETY_NEWS_BUFFER_MINUTES = 15     # Skip if high-impact news within N minutes
+SAFETY_MEDIUM_NEWS_BUFFER_MINUTES = 5  # Skip if medium-impact news within N minutes
+
+# Weekend filter (SOFT — no trading around weekends)
+SAFETY_FRIDAY_CLOSE_HOUR = 20       # UTC hour: no new trades after Friday 20:00
+SAFETY_MONDAY_OPEN_MINUTE = 5       # UTC minute: wait until Monday 00:05 (spread wide)
+
+# Dynamic filters
+SAFETY_SPREAD_MULTIPLIER = 3.0      # Skip if spread > N × average spread
+SAFETY_ATR_EXTREME_MULTIPLIER = 3.0 # Skip if ATR > N × average ATR (too volatile)
+
+# Shutdown cooldown
+SAFETY_COOLDOWN_AFTER_SHUTDOWN_HOURS = 2  # Min hours after manual reset before trading
+
+# Per-pair maximum spread limits (pips) — static floor
+SPREAD_LIMITS = {
+    "EURUSD": 2.0, "GBPUSD": 3.0, "EURJPY": 3.0,
+    "GBPJPY": 4.0, "AUDUSD": 2.5, "AUDJPY": 3.5,
+    "CHFJPY": 3.0, "CADJPY": 3.0, "XAGUSD": 5.0,
+    "AUDCAD": 3.5,
+}

@@ -6,13 +6,18 @@
 # Does NOT touch existing v4.2 tables (trades, backtest_trades, etc.).
 #
 # Tables:
-#   rpde_scan_history      — Tracks when scans were run
-#   rpde_pattern_scans     — Raw golden moment data (big moves found)
-#   rpde_pattern_library   — Discovered and validated patterns
-#   rpde_pattern_trades    — Trades taken by RPDE in live/paper trading
-#   rpde_pattern_stats     — Rolling performance statistics per pattern
-#   rpde_tft_training_log  — TFT model training history and metrics
-#   rpde_tft_models        — TFT model registry with metadata
+#   rpde_scan_history        — Tracks when scans were run
+#   rpde_pattern_scans       — Raw golden moment data (big moves found)
+#   rpde_pattern_library     — Discovered and validated patterns
+#   rpde_pattern_trades      — Trades taken by RPDE in live/paper trading
+#   rpde_pattern_stats       — Rolling performance statistics per pattern
+#   rpde_tft_training_log    — TFT model training history and metrics
+#   rpde_tft_models          — TFT model registry with metadata
+#   rpde_rl_training_log     — RL agent training history and metrics (Phase 3)
+#   rpde_rl_models           — RL agent model registry (Phase 3)
+#   rpde_learning_log        — Continuous learning retrain audit trail (Phase 3)
+#   rpde_safety_events       — Safety guard check events log (Phase 3)
+#   rpde_trade_experiences   — Full trade experience records for RL (Phase 3)
 # =============================================================
 
 import json
@@ -261,8 +266,141 @@ def init_rpde_tables():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+        # ── 8. rpde_rl_training_log (Phase 3) ───────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS rpde_rl_training_log (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                pair                VARCHAR(20),
+                training_id         VARCHAR(50) UNIQUE,
+                started_at          DATETIME,
+                completed_at        DATETIME,
+                duration_seconds    INT,
+                status              VARCHAR(20),
+                episodes_trained    INT,
+                total_steps         INT,
+                avg_reward          DOUBLE,
+                best_reward         DOUBLE,
+                policy_loss         DOUBLE,
+                value_loss          DOUBLE,
+                entropy             DOUBLE,
+                device              VARCHAR(20),
+                n_parameters        INT,
+                config_json         TEXT,
+                history_json        TEXT,
+                notes               TEXT,
+                INDEX idx_pair (pair),
+                INDEX idx_training_id (training_id),
+                INDEX idx_status (status),
+                INDEX idx_started_at (started_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        # ── 9. rpde_rl_models (Phase 3) ─────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS rpde_rl_models (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                pair                VARCHAR(20) UNIQUE,
+                model_path           VARCHAR(300),
+                meta_path            VARCHAR(300),
+                model_size_kb        INT,
+                trained_at          DATETIME,
+                last_retrained_at    DATETIME,
+                episodes_trained    INT,
+                total_steps         INT,
+                avg_reward          DOUBLE,
+                best_reward         DOUBLE,
+                final_policy_loss   DOUBLE,
+                final_value_loss    DOUBLE,
+                device              VARCHAR(20),
+                n_parameters        INT,
+                is_active           TINYINT DEFAULT 1,
+                config_snapshot_json TEXT,
+                INDEX idx_pair (pair),
+                INDEX idx_is_active (is_active),
+                INDEX idx_trained_at (trained_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        # ── 10. rpde_learning_log (Phase 3) ────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS rpde_learning_log (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                pair                VARCHAR(20),
+                component           VARCHAR(30),
+                action              VARCHAR(30),
+                triggered_at        DATETIME,
+                completed_at        DATETIME,
+                duration_seconds    INT,
+                status              VARCHAR(20),
+                details_json        TEXT,
+                notes               TEXT,
+                INDEX idx_pair (pair),
+                INDEX idx_component (component),
+                INDEX idx_action (action),
+                INDEX idx_triggered_at (triggered_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        # ── 11. rpde_safety_events (Phase 3) ────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS rpde_safety_events (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                pair                VARCHAR(20),
+                guard_name          VARCHAR(50),
+                severity            VARCHAR(10),
+                action_taken        VARCHAR(20),
+                trade_approved      TINYINT,
+                reason              TEXT,
+                trade_request_json  TEXT,
+                account_state_json  TEXT,
+                market_state_json   TEXT,
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_pair (pair),
+                INDEX idx_guard_name (guard_name),
+                INDEX idx_severity (severity),
+                INDEX idx_action_taken (action_taken),
+                INDEX idx_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        # ── 12. rpde_trade_experiences (Phase 3) ────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS rpde_trade_experiences (
+                id                      INT AUTO_INCREMENT PRIMARY KEY,
+                trade_id                INT,
+                pair                    VARCHAR(20),
+                direction               VARCHAR(10),
+                entry_time              DATETIME,
+                exit_time               DATETIME,
+                entry_price             DOUBLE,
+                exit_price              DOUBLE,
+                profit_pips             DOUBLE,
+                profit_r                DOUBLE,
+                profit_usd              DOUBLE,
+                outcome                 VARCHAR(30),
+                fusion_confidence       DOUBLE,
+                fusion_expected_r       DOUBLE,
+                signal_agreement        VARCHAR(20),
+                reversal_warning        TINYINT,
+                rl_action               INT,
+                rl_action_name          VARCHAR(30),
+                rl_predicted_value      DOUBLE,
+                session                 VARCHAR(30),
+                spread_at_entry         DOUBLE,
+                atr_at_entry            DOUBLE,
+                mae_r                   DOUBLE,
+                mfe_r                   DOUBLE,
+                hold_time_hours         DOUBLE,
+                created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_pair (pair),
+                INDEX idx_outcome (outcome),
+                INDEX idx_entry_time (entry_time),
+                INDEX idx_pair_entry (pair, entry_time)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
         _tables_initialized = True
-        log.info("[RPDE_DB] All 7 RPDE tables initialized successfully.")
+        log.info("[RPDE_DB] All 12 RPDE tables initialized successfully.")
 
     except Exception as e:
         log.error(f"[RPDE_DB] Failed to create RPDE tables: {e}")

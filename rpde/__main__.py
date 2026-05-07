@@ -258,6 +258,65 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show TFT model status for all pairs (Phase 2)",
     )
 
+    # ── rl-train (Phase 3) ─────────────────────────────────
+    rl_train_parser = subparsers.add_parser(
+        "rl-train",
+        help="Train RL agent for a pair (Phase 3: PPO Decision Engine)",
+        description="Train a PPO-based RL decision engine that learns optimal"
+                    " entry timing, position sizing, and skip decisions from"
+                    " historical trade experiences. Requires PyTorch.",
+    )
+    rl_train_parser.add_argument(
+        "pair",
+        nargs="?",
+        default=None,
+        help="Currency pair to train. Omit to train all pairs.",
+    )
+    rl_train_parser.add_argument(
+        "--episodes",
+        type=int,
+        default=None,
+        help="Number of training episodes (default: from config)",
+    )
+    rl_train_parser.add_argument(
+        "--rollout-steps",
+        type=int,
+        default=None,
+        help="Rollout buffer steps per update (default: from config)",
+    )
+
+    # ── rl-status (Phase 3) ────────────────────────────────
+    subparsers.add_parser(
+        "rl-status",
+        help="Show RL agent status for all pairs (Phase 3)",
+    )
+
+    # ── rl-decide (Phase 3) ────────────────────────────────
+    rl_decide_parser = subparsers.add_parser(
+        "rl-decide",
+        help="Test RL decision on latest data (Phase 3)",
+        description="Load latest market data, run fusion + RL agent, and "
+                    "show what the RL agent would decide for each pair.",
+    )
+    rl_decide_parser.add_argument(
+        "pair",
+        nargs="?",
+        default=None,
+        help="Currency pair. Omit for all pairs.",
+    )
+
+    # ── safety-check (Phase 3) ─────────────────────────────
+    subparsers.add_parser(
+        "safety-check",
+        help="Run safety guard diagnostics (Phase 3)",
+    )
+
+    # ── learning-status (Phase 3) ──────────────────────────
+    subparsers.add_parser(
+        "learning-status",
+        help="Show continuous learning loop status (Phase 3)",
+    )
+
     return parser
 
 
@@ -862,6 +921,321 @@ def _cmd_tft_status(args):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  RL COMMAND HANDLERS (Phase 3)
+# ═══════════════════════════════════════════════════════════════
+
+def _cmd_rl_train(args):
+    """Handle the 'rl-train' command."""
+    try:
+        from rpde.rl_agent import (
+            train_rl_agent, load_rl_agent, get_rl_device, get_gpu_info_rl,
+        )
+        from rpde.config import RL_MIN_TRAINING_EPISODES
+    except ImportError as e:
+        print(f"ERROR: RL dependencies not available: {e}")
+        print(f"  Install PyTorch: pip install torch gymnasium")
+        return 1
+
+    pair = args.pair.upper() if args.pair else None
+    episodes = args.episodes or RL_MIN_TRAINING_EPISODES
+
+    print(f"\n  Training RL agent{' for ' + pair if pair else ' for all pairs'}...")
+    print(f"  Episodes: {episodes}")
+    print(f"  {'─' * 50}")
+
+    gpu = get_gpu_info_rl()
+    if gpu['available']:
+        print(f"  GPU: {gpu['name']} ({gpu['memory_total_gb']}GB)")
+    else:
+        print(f"  GPU: Not available (using CPU)")
+    print(f"  Device: {get_rl_device()}")
+
+    try:
+        if pair:
+            result = train_rl_agent(pair, episodes=episodes)
+            print(f"\n  {'=' * 50}")
+            print(f"  RL TRAINING COMPLETE: {pair}")
+            print(f"  {'=' * 50}")
+            print(f"  Episodes trained: {result.get('episodes_trained', '?')}")
+            print(f"  Avg reward:       {result.get('avg_reward', 0):.4f}")
+            print(f"  Policy loss:      {result.get('policy_loss', 0):.4f}")
+            print(f"  Value loss:       {result.get('value_loss', 0):.4f}")
+            print(f"  Duration:         {result.get('duration_seconds', '?')}s")
+            return 0
+        else:
+            from config.settings import PAIR_WHITELIST
+            results = {}
+            for p in PAIR_WHITELIST:
+                print(f"\n  ── Training {p}... ──")
+                try:
+                    r = train_rl_agent(p, episodes=episodes)
+                    results[p] = r
+                except Exception as ex:
+                    results[p] = {'status': 'FAILED', 'error': str(ex)}
+                    print(f"  FAILED: {ex}")
+
+            trained = sum(1 for r in results.values()
+                         if r.get('status') == 'COMPLETED')
+            print(f"\n  {'=' * 55}")
+            print(f"  RL BATCH TRAINING SUMMARY")
+            print(f"  {'=' * 55}")
+            for p, r in results.items():
+                status = r.get('status', '?')
+                avg_r = r.get('avg_reward', 0)
+                print(f"  {p:<12} {status:<12} avg_reward={avg_r:.4f}")
+            print(f"  Total trained: {trained}/{len(results)}")
+            print(f"  {'=' * 55}\n")
+            return 0
+
+    except Exception as e:
+        print(f"\n  FATAL ERROR: {e}\n")
+        log.exception("[RPDE_CLI] RL training failed")
+        return 1
+
+
+def _cmd_rl_status(args):
+    """Handle the 'rl-status' command."""
+    try:
+        from rpde.rl_agent import load_rl_agent, get_rl_device, get_gpu_info_rl
+    except ImportError as e:
+        print(f"ERROR: RL not available: {e}")
+        return 1
+
+    from config.settings import PAIR_WHITELIST
+
+    gpu = get_gpu_info_rl()
+    print(f"\n  {'=' * 65}")
+    print(f"  RL AGENT STATUS (Phase 3: PPO Decision Engine)")
+    print(f"  {'=' * 65}")
+    print(f"  PyTorch:     {'AVAILABLE' if gpu['pytorch_available'] else 'NOT INSTALLED'}")
+    print(f"  GPU:         {'YES - ' + gpu['name'] + ' (' + gpu['memory_total_gb'] + 'GB)' if gpu['available'] else 'NO (CPU only)'}")
+    print(f"  Device:      {get_rl_device()}")
+
+    trained = 0
+    print(f"\n  {'Pair':<12} {'Status':<12} {'Episodes':>9} {'Avg R':>8} "
+          f"{'Policy L':>9} {'Value L':>9} {'Last Train':<20}")
+    print(f"  {'─' * 12} {'─' * 12} {'─' * 9} {'─' * 8} "
+          f"{'─' * 9} {'─' * 9} {'─' * 20}")
+
+    for pair in PAIR_WHITELIST:
+        try:
+            agent = load_rl_agent(pair)
+            if agent is not None:
+                trained += 1
+                status = agent.get("status", {})
+                print(f"  {pair:<12} {'TRAINED':<12} "
+                      f"{status.get('episodes_trained', '?'):>9} "
+                      f"{status.get('avg_reward', 0):>8.4f} "
+                      f"{status.get('policy_loss', 0):>9.4f} "
+                      f"{status.get('value_loss', 0):>9.4f} "
+                      f"{str(status.get('last_trained', '?'))[:19]:<20}")
+            else:
+                print(f"  {pair:<12} {'NOT TRAINED':<12}")
+        except Exception:
+            print(f"  {pair:<12} {'ERROR':<12}")
+
+    print(f"\n  Agents trained: {trained}/{len(PAIR_WHITELIST)}")
+    print(f"  {'=' * 65}\n")
+    return 0
+
+
+def _cmd_rl_decide(args):
+    """Handle the 'rl-decide' command."""
+    try:
+        from rpde.rl_agent import load_rl_agent
+        from rpde.fusion_layer import fuse_all_signals
+        from rpde.safety_guards import check_trade_safety
+    except ImportError as e:
+        print(f"ERROR: Phase 3 modules not available: {e}")
+        return 1
+
+    pair = args.pair.upper() if args.pair else None
+
+    if pair:
+        pairs = [pair]
+    else:
+        try:
+            from config.settings import PAIR_WHITELIST
+            pairs = PAIR_WHITELIST
+        except ImportError:
+            print(f"  ERROR: No pair specified and PAIR_WHITELIST not available")
+            return 1
+
+    print(f"\n  RL Decision Test for {len(pairs)} pair(s)...")
+    print(f"  {'─' * 60}")
+
+    for p in pairs:
+        print(f"\n  ── {p} ──")
+        try:
+            agent = load_rl_agent(p)
+            if agent is None:
+                print(f"    RL agent not trained for {p} — skipping")
+                continue
+
+            # Show agent status
+            status = agent.get("status", {})
+            print(f"    Episodes trained: {status.get('episodes_trained', '?')}")
+            print(f"    Avg reward:       {status.get('avg_reward', 0):.4f}")
+
+            # Test with a simulated fusion signal
+            from rpde.config import GATE_MIN_CONFIDENCE
+            test_fusion = {
+                "combined_confidence": GATE_MIN_CONFIDENCE + 0.05,
+                "combined_expected_r": 0.8,
+                "direction": "BUY",
+                "signal_agreement": "XGB_TFT_AGREE",
+                "reversal_warning": False,
+                "recommendation": "TAKE",
+                "tft_contribution": 0.45,
+            }
+
+            decision = agent.decide(
+                fusion_result=test_fusion,
+                market_state={
+                    "session": "London",
+                    "hour_utc": 10,
+                    "day_of_week": 2,
+                    "spread_ratio": 1.2,
+                    "atr_percentile": 0.6,
+                    "volatility_regime": "normal",
+                },
+                portfolio_state={
+                    "open_positions_ratio": 0.2,
+                    "daily_pnl_ratio": 0.0,
+                    "weekly_pnl_ratio": 0.0,
+                    "equity_ratio": 1.0,
+                    "unrealized_pnl_ratio": 0.0,
+                    "current_drawdown": 0.0,
+                    "consecutive_losses": 0,
+                    "hours_since_last_trade": 2.0,
+                },
+            )
+
+            print(f"    Decision:     {decision.get('action_name', '?')}")
+            print(f"    Entry:        {decision.get('entry', False)}")
+            print(f"    Direction:    {decision.get('direction', '?')}")
+            print(f"    Size:         {decision.get('size_r', 0)}R")
+            print(f"    Stop type:    {decision.get('stop_type', '?')}")
+            print(f"    TP target:    {decision.get('tp_r', 0)}R")
+            print(f"    Confidence:   {decision.get('confidence', 0):.3f}")
+            print(f"    Value est:    {decision.get('value', 0):.3f}")
+
+        except Exception as e:
+            print(f"    ERROR: {e}")
+            log.exception(f"[RPDE_CLI] rl-decide failed for {p}")
+
+    print(f"\n  {'=' * 60}\n")
+    return 0
+
+
+def _cmd_safety_check(args):
+    """Handle the 'safety-check' command."""
+    try:
+        from rpde.safety_guards import SafetyGuardSystem, check_trade_safety
+    except ImportError as e:
+        print(f"ERROR: Safety guards not available: {e}")
+        return 1
+
+    print(f"\n  {'=' * 55}")
+    print(f"  SAFETY GUARD DIAGNOSTICS (Phase 3)")
+    print(f"  {'=' * 55}")
+
+    # Run diagnostic checks with simulated data
+    system = SafetyGuardSystem()
+    summary = system.get_summary()
+
+    print(f"\n  Guard Configuration:")
+    print(f"    Daily loss limit:   {summary.get('config', {}).get('max_daily_loss_pct', '?')}%")
+    print(f"    Weekly loss limit:  {summary.get('config', {}).get('max_weekly_loss_pct', '?')}%")
+    print(f"    Max positions:      {summary.get('config', {}).get('max_positions', '?')}")
+    print(f"    Max per pair:       {summary.get('config', {}).get('max_per_pair', '?')}")
+    print(f"    News buffer:        {summary.get('config', {}).get('news_buffer_min', '?')} min")
+    print(f"    Spread multiplier:  {summary.get('config', {}).get('spread_multiplier', '?')}x")
+
+    print(f"\n  System State:")
+    print(f"    Shutdown:       {'YES — ' + str(system.get_shutdown_reason()) if system.is_shutdown() else 'NO'}")
+    print(f"    Guards active:  {len(summary.get('guards', []))}")
+    print(f"    History entries: {summary.get('total_checks', 0)}")
+
+    # Test with a sample trade request
+    print(f"\n  Test Trade Check (simulated BUY EURJPY):")
+    result = check_trade_safety(
+        trade_request={
+            "pair": "EURJPY", "direction": "BUY", "size_r": 1.0,
+            "stop_type": "medium", "tp_r": 1.0, "estimated_margin": 100.0,
+            "signal_confidence": 0.78, "source": "rpde_v5",
+        },
+        account_state={
+            "balance": 10000.0, "equity": 9850.0, "margin": 500.0,
+            "free_margin": 9350.0, "margin_level": 1970.0,
+            "daily_pnl_pct": -0.5, "weekly_pnl_pct": -1.0,
+            "open_positions": 1, "consecutive_losses": 0,
+        },
+        market_state={
+            "current_spread": 1.5, "average_spread": 1.0,
+            "atr": 0.0030, "average_atr": 0.0025,
+            "session": "London", "hour_utc": 10,
+            "day_of_week": 2, "next_high_impact_news_minutes": 45,
+            "is_weekend": False,
+        },
+    )
+    print(f"    Approved:  {'YES' if result['approved'] else 'NO'}")
+    print(f"    Guard:     {result.get('guard', 'ALL PASSED')}")
+    print(f"    Reason:    {result.get('reason', 'OK')}")
+    print(f"    Severity:  {result.get('severity', 'NONE')}")
+
+    print(f"\n  {'=' * 55}\n")
+    return 0
+
+
+def _cmd_learning_status(args):
+    """Handle the 'learning-status' command."""
+    try:
+        from rpde.experience_buffer import (
+            ExperienceReplayBuffer, ContinuousLearningLoop,
+            load_experiences_from_db,
+        )
+    except ImportError as e:
+        print(f"ERROR: Experience buffer not available: {e}")
+        return 1
+
+    print(f"\n  {'=' * 60}")
+    print(f"  CONTINUOUS LEARNING LOOP STATUS (Phase 3)")
+    print(f"  {'=' * 60}")
+
+    try:
+        loop = ContinuousLearningLoop()
+        health = loop.get_system_health()
+
+        print(f"\n  Buffer Status:")
+        buf_info = health.get("buffers", {})
+        for pair_name, info in buf_info.items():
+            print(f"    {pair_name:<12} {info.get('total_experiences', 0):>6} trades "
+                  f"(last: {str(info.get('last_trade_time', 'never'))[:19]})")
+
+        print(f"\n  Retrain Schedule:")
+        schedule = health.get("schedule", {})
+        for component, info in schedule.items():
+            status = info.get("status", "?")
+            due = info.get("due", False)
+            last = info.get("last_retrained", "never")
+            marker = " << DUE" if due else ""
+            print(f"    {component:<15} {status:<12} last={str(last)[:16]}{marker}")
+
+        print(f"\n  System Health:")
+        print(f"    Total experiences: {health.get('total_experiences', 0)}")
+        print(f"    Active buffers:    {health.get('active_buffers', 0)}")
+        print(f"    Learning active:   {health.get('learning_active', False)}")
+
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        log.exception("[RPDE_CLI] learning-status failed")
+
+    print(f"\n  {'=' * 60}\n")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
 #  HELPERS
 # ═══════════════════════════════════════════════════════════════
 
@@ -926,6 +1300,11 @@ def main():
         "test": _cmd_test,
         "tft-train": _cmd_tft_train,
         "tft-status": _cmd_tft_status,
+        "rl-train": _cmd_rl_train,
+        "rl-status": _cmd_rl_status,
+        "rl-decide": _cmd_rl_decide,
+        "safety-check": _cmd_safety_check,
+        "learning-status": _cmd_learning_status,
     }
 
     handler = handlers.get(args.command)

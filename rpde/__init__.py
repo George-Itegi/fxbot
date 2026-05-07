@@ -20,38 +20,48 @@
 #     Cross-TF Attention → Variable Selection Network →
 #     3 Output Heads → Pattern Fusion Layer → Enhanced Gate
 #
-#   Phase 3: RL Decision Engine (Planned)
-#     State → Action → Reward → Policy Update (Future)
+#   Phase 3: RL Decision Engine (GPU) — 100% COMPLETE
+#     Fused Signal + Market State + Portfolio → RL Agent (PPO) →
+#     Entry/Size/Stop/TP/Exit/Skip → Safety Guards → EXECUTE
+#     → Experience Replay Buffer → Continuous Learning Loop
 #
 # Data Flow (Live):
 #   Raw OHLCV ─┐
 #   (4 timeframes) ├→ TFT Model ─┐
-#                  │               ├→ Fusion Layer ─→ Pattern Gate ─→ Trade
-#   93 features ─┘               │
-#                              │
-#   Pattern Library ─────────────┘
+#                  │               ├→ Fusion Layer ─→ RL Agent ─┐
+#   93 features ─┘               │                          │
+#                              │                          ▼
+#   Pattern Library ─────────────┘              Safety Guards → Trade
+#                                              ──────────────────────
+#                                              Experience Buffer → Learn
 #
 # Key Design Principles:
 #   - Per-pair personality: Each pair gets its own model and patterns
 #   - Currency-specific patterns: Shared base currencies boost confidence
 #   - Statistical validation: Minimum occurrences, win rate, profit factor
+#   - Non-overridable safety guards protect capital at all times
+#   - Continuous learning from every trade outcome
 #   - Zero interference with v4.2 system (separate tables, separate models)
 #
 # Modules:
-#   scanner.py          — Big Move Scanner (finds golden moments)
-#   feature_snapshot.py — Extracts 93 features at golden moments
-#   pattern_miner.py    — DBSCAN clustering into candidate patterns
-#   pattern_validator.py — Statistical validation with tier assignment
-#   pattern_library.py  — Per-pair pattern storage (CRUD)
-#   pattern_model.py    — Per-pair XGBoost regression model (Phase 1 L1)
-#   pattern_gate.py     — Final decision layer with TFT fusion (Phase 1+2 L2)
-#   tft_dataset.py      — Multi-TF PyTorch dataset builder (Phase 2)
-#   tft_model.py        — Multi-TF TFT architecture (Phase 2)
-#   fusion_layer.py     — XGB + TFT prediction fusion (Phase 2)
-#   database.py         — Separate RPDE database tables
-#   config.py           — All tunable parameters
-#   trainer.py          — Full training pipeline orchestrator
-#   __main__.py         — CLI entry point
+#   scanner.py            — Big Move Scanner (finds golden moments)
+#   feature_snapshot.py   — Extracts 93 features at golden moments
+#   pattern_miner.py      — DBSCAN clustering into candidate patterns
+#   pattern_validator.py  — Statistical validation with tier assignment
+#   pattern_library.py    — Per-pair pattern storage (CRUD)
+#   pattern_model.py      — Per-pair XGBoost regression model (Phase 1 L1)
+#   pattern_gate.py       — Final decision layer with TFT fusion (Phase 1+2 L2)
+#   tft_dataset.py        — Multi-TF PyTorch dataset builder (Phase 2)
+#   tft_model.py          — Multi-TF TFT architecture (Phase 2)
+#   fusion_layer.py       — XGB + TFT prediction fusion (Phase 2)
+#   rl_env.py             — RL Trading Environment — Gymnasium (Phase 3)
+#   rl_agent.py           — PPO Decision Engine — Actor-Critic (Phase 3)
+#   experience_buffer.py  — Experience Replay + Continuous Learning (Phase 3)
+#   safety_guards.py      — Non-overridable safety rails (Phase 3)
+#   database.py           — Separate RPDE database tables
+#   config.py             — All tunable parameters
+#   trainer.py            — Full training pipeline orchestrator
+#   __main__.py           — CLI entry point
 # =============================================================
 
 __version__ = "5.0.0"
