@@ -15,7 +15,7 @@
 #   │  ┌───────────┐   ┌─────────────┐   ┌────────────┐ │
 #   │  │    VSN    │ → │ TF Encoder  │ → │ Global Pool │ │
 #   │  │ (feature  │   │ (learned    │   │ (mean over  │ │
-#   │  │  select.) │   │  pos+trans) │   │  sequence)  │ │
+#   │  │  select.) │   │  pos+causal)│   │  sequence)  │ │
 #   │  └───────────┘   └─────────────┘   └──────┬─────┘ │
 #   └────────────────────────────────────────────┼───────┘
 #                                                │
@@ -31,8 +31,9 @@
 #              │ 4 context-enriched vectors  │
 #              ▼                            ▼
 #   ┌──────────────────────────────────────────────┐
-#   │  Concat: [ctx_H4, ctx_H1, ctx_M15, ctx_M5,  │
-#   │           pair_embed]                        │
+#   │  Concat: [ctx_H4, ..., ctx_M5,              │
+#   │           pair_embed,                        │
+#   │           context_encoded (93 features)]     │
 #   │        → MLP → ReLU → Dropout → MLP         │
 #   └──────────────┬───────────────────────────────┘
 #                  │
@@ -45,6 +46,9 @@
 #
 # DESIGN PRINCIPLES:
 #   - Learned positional encoding (different seq lengths per TF)
+#   - Causal masking: candles can only attend to prior candles
+#   - Padding masks: padded positions are properly ignored
+#   - Static context encoder: 93 engineered features as additional input
 #   - VSN: per-timeframe feature importance (interpretability)
 #   - Pair embedding: pair-specific personality injection
 #   - Multi-task: 3 heads for pattern match, momentum, reversal
@@ -263,8 +267,93 @@ class VariableSelectionNetwork(nn.Module):
 
 
 # ════════════════════════════════════════════════════════════════
+#  STATIC CONTEXT ENCODER
+#  Encodes the 93-engineered feature vector into the fusion stage
+# ════════════════════════════════════════════════════════════════
+
+class StaticContextEncoder(nn.Module):
+    """
+    Static Context Encoder — projects the 93-engineered feature vector
+    into the TFT's hidden dimension for fusion alongside candle embeddings.
+
+    Rather than forcing the TFT to re-learn market structure from raw OHLCV,
+    this encoder lets the model directly consume the rich features your
+    engine already computes (delta, ADX, RSI, VWAP position, order flow,
+    strategy scores, session info, volatility regime, spread, etc.).
+
+    Architecture: 3-layer MLP with LayerNorm and dropout.
+        context (n_context) → Linear → GELU → LN → Dropout
+                               → Linear → GELU → LN → Dropout
+                               → Linear → hidden_size
+
+    Args:
+        n_context: Number of engineered context features (up to 93).
+        hidden_size: Output dimension (matches TFT hidden_size).
+        dropout: Dropout rate.
+    """
+
+    def __init__(self, n_context: int = 93, hidden_size: int = 64,
+                 dropout: float = 0.15):
+        super().__init__()
+        self.n_context = n_context
+        self.hidden_size = hidden_size
+
+        # 3-layer projection MLP
+        intermediate = max(hidden_size * 2, 128)
+        self.context_encoder = nn.Sequential(
+            nn.Linear(n_context, intermediate),
+            nn.GELU(),
+            nn.LayerNorm(intermediate),
+            nn.Dropout(dropout),
+            nn.Linear(intermediate, hidden_size),
+            nn.GELU(),
+            nn.LayerNorm(hidden_size),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        self.output_norm = nn.LayerNorm(hidden_size)
+
+    def forward(self, context: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            context: (batch, n_context) — engineered feature vector.
+
+        Returns:
+            (batch, hidden_size) — encoded context representation.
+        """
+        return self.output_norm(self.context_encoder(context))
+
+    def extra_repr(self) -> str:
+        return (f"n_context={self.n_context}, "
+                f"hidden_size={self.hidden_size}")
+
+
+# ════════════════════════════════════════════════════════════════
+#  CAUSAL MASK UTILITY
+# ════════════════════════════════════════════════════════════════
+
+def _generate_causal_mask(seq_len: int, device: torch.device) -> torch.Tensor:
+    """Generate an additive causal (upper-triangular) mask.
+
+    Positions can only attend to themselves and prior positions.
+    Masked positions get -inf so softmax produces 0 attention weight.
+
+    Args:
+        seq_len: Sequence length.
+        device: Torch device.
+
+    Returns:
+        (seq_len, seq_len) float tensor with -inf in the upper triangle.
+    """
+    mask = torch.triu(
+        torch.ones(seq_len, seq_len, device=device), diagonal=1
+    )
+    return mask.masked_fill(mask == 1, float('-inf'))
+
+
+# ════════════════════════════════════════════════════════════════
 #  TIMEFRAME ENCODER
-#  Learned positional encoding + stacked TransformerEncoder layers
+#  Learned positional encoding + causal masking + TransformerEncoder
 # ════════════════════════════════════════════════════════════════
 
 class TimeframeEncoder(nn.Module):
@@ -274,6 +363,10 @@ class TimeframeEncoder(nn.Module):
 
     Uses LEARNED positional embeddings (not sinusoidal) because each
     timeframe has a different sequence length (H4=30, H1=48, M15=96, M5=60).
+
+    Uses CAUSAL MASKING so each candle can only attend to itself and
+    prior candles. This prevents the model from learning patterns that
+    require hindsight — critical for realistic live trading performance.
 
     Args:
         seq_len: Sequence length for this timeframe
@@ -319,6 +412,14 @@ class TimeframeEncoder(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
+        # Causal mask: pre-computed for the max sequence length.
+        # Registered as buffer so it moves with the model to the correct device.
+        causal = torch.triu(
+            torch.ones(seq_len, seq_len), diagonal=1
+        )
+        causal = causal.masked_fill(causal == 1, float('-inf'))
+        self.register_buffer('causal_mask', causal)
+
         # Initialize positional embedding
         self._init_weights()
 
@@ -326,20 +427,37 @@ class TimeframeEncoder(nn.Module):
         """Initialize positional embedding with small values."""
         nn.init.trunc_normal_(self.pos_embedding, std=0.02)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor,
+                src_key_padding_mask: Optional[torch.Tensor] = None
+                ) -> torch.Tensor:
         """
         Args:
             x: (batch, seq_len, hidden_size) — output from VSN
+            src_key_padding_mask: Optional (batch, seq_len) bool tensor.
+                True = padded position to ignore.
 
         Returns:
             (batch, seq_len, hidden_size) — encoded representation
         """
+        seq_len_actual = x.size(1)
+
         # Add learned positional encoding
-        x = x + self.pos_embedding[:, : x.size(1), :]
+        x = x + self.pos_embedding[:, :seq_len_actual, :]
         x = self.dropout(x)
 
-        # Apply transformer encoder
-        x = self.transformer(x)
+        # Build causal mask sized to actual sequence length.
+        # Slice from the pre-computed full mask (registered buffer).
+        causal = self.causal_mask[:seq_len_actual, :seq_len_actual]
+
+        # Combine causal mask with padding mask if provided.
+        # PyTorch TransformerEncoder expects:
+        #   src_mask: (S, S) additive float mask
+        #   src_key_padding_mask: (B, S) bool mask (True = ignore)
+        x = self.transformer(
+            x,
+            mask=causal,
+            src_key_padding_mask=src_key_padding_mask,
+        )
 
         return x
 
@@ -489,6 +607,7 @@ class TemporalFusionTransformer(nn.Module):
         self.cross_tf_heads = _cfg(self.config, "CROSS_TF_ATTENTION_HEADS", 4)
         self.cross_tf_layers = _cfg(self.config, "CROSS_TF_ATTENTION_LAYERS", 2)
         self.output_heads_cfg = _cfg(self.config, "TFT_OUTPUT_HEADS", {})
+        self.n_context_features = _cfg(self.config, "TFT_CONTEXT_FEATURES", 93)
 
         # ── Pair Embedding ──────────────────────────────────
         # Learned embedding that gives the model pair-specific personality
@@ -528,9 +647,21 @@ class TemporalFusionTransformer(nn.Module):
             dropout=self.dropout_rate,
         )
 
+        # ── Static Context Encoder ─────────────────────────
+        # Projects the 93-engineered features into hidden_size for fusion
+        self.context_encoder = StaticContextEncoder(
+            n_context=self.n_context_features,
+            hidden_size=self.hidden_size,
+            dropout=self.dropout_rate,
+        )
+
         # ── Final Fusion MLP ────────────────────────────────
-        # Input: 4 context vectors + pair embedding
-        fusion_input_dim = 4 * self.hidden_size + self.pair_embed_dim
+        # Input: 4 context vectors + pair embedding + context encoding
+        fusion_input_dim = (
+            self.n_timeframes * self.hidden_size
+            + self.pair_embed_dim
+            + self.hidden_size  # context encoder output
+        )
         self.fusion_mlp = nn.Sequential(
             nn.Linear(fusion_input_dim, self.hidden_size),
             nn.ReLU(),
@@ -569,7 +700,10 @@ class TemporalFusionTransformer(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(
-        self, multi_tf_inputs: Dict[str, torch.Tensor]
+        self,
+        multi_tf_inputs: Dict[str, torch.Tensor],
+        context: Optional[torch.Tensor] = None,
+        attention_masks: Optional[Dict[str, torch.Tensor]] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the full Temporal Fusion Transformer.
@@ -577,6 +711,13 @@ class TemporalFusionTransformer(nn.Module):
         Args:
             multi_tf_inputs: Dict of {tf_name: (batch, seq_len, n_features)}
                 e.g. {"H4": (B, 30, 11), "H1": (B, 48, 11), ...}
+            context: Optional (batch, n_context) — 93-engineered features.
+                When provided, encoded via StaticContextEncoder and
+                concatenated into the fusion MLP alongside the
+                cross-timeframe context vectors and pair embedding.
+            attention_masks: Optional dict of {tf_name: (batch, seq_len)}
+                bool tensors. True = padded position to ignore.
+                Produced by MultiTFCollateFn in the dataset pipeline.
 
         Returns:
             Dict of {head_name: (batch, 1) prediction tensor}
@@ -586,24 +727,38 @@ class TemporalFusionTransformer(nn.Module):
         """
         device = self._pair_idx.device
 
-        # Step 1: Per-timeframe encoding pipeline
+        # Step 1: Per-timeframe encoding pipeline (with causal + padding masks)
         encoded_sequences = []
         for tf_name in self.tf_names:
             x = multi_tf_inputs[tf_name]  # (batch, seq_len, n_features)
             x = self.vsns[tf_name](x)  # (batch, seq_len, hidden_size)
-            x = self.encoders[tf_name](x)  # (batch, seq_len, hidden_size)
+
+            # Get padding mask for this TF if available
+            pad_mask = None
+            if attention_masks is not None and tf_name in attention_masks:
+                pad_mask = attention_masks[tf_name]  # (batch, seq_len)
+
+            x = self.encoders[tf_name](x, src_key_padding_mask=pad_mask)
             encoded_sequences.append(x)
 
         # Step 2: Cross-timeframe attention
         context_vectors = self.cross_tf_attn(encoded_sequences)
-        # context_vectors: List of 4 tensors, each (batch, hidden_size)
 
-        # Step 3: Concatenate context vectors + pair embedding
-        ctx_concat = torch.cat(context_vectors, dim=-1)  # (batch, 4*hidden)
+        # Step 3: Concatenate context vectors + pair embedding + static context
+        ctx_concat = torch.cat(context_vectors, dim=-1)  # (batch, n_tf*hidden)
         pair_emb = self.pair_embedding(self._pair_idx).expand(
             ctx_concat.size(0), -1
         )  # (batch, pair_embed_dim)
-        fused = torch.cat([ctx_concat, pair_emb], dim=-1)  # (batch, 4*H + embed)
+
+        # Encode static context features (93 engineered features)
+        if context is not None:
+            ctx_encoded = self.context_encoder(context)  # (batch, hidden)
+            fused = torch.cat(
+                [ctx_concat, pair_emb, ctx_encoded], dim=-1
+            )  # (batch, n_tf*H + embed + H)
+        else:
+            # Backward compatible: no context features provided
+            fused = torch.cat([ctx_concat, pair_emb], dim=-1)
 
         # Step 4: Fusion MLP
         fused = self.fusion_mlp(fused)  # (batch, hidden)
@@ -815,36 +970,62 @@ def train_tft_model(
         train_batches = 0
 
         for batch in train_loader:
-            # Move batch to device
-            inputs = {
-                k: v.to(device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.get("inputs", batch).items()
-                if isinstance(v, torch.Tensor)
-            }
-            targets = {
-                k: v.to(device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.get("targets", {}).items()
-                if isinstance(v, torch.Tensor)
-            }
+            # ── Extract inputs, targets, context, and masks from batch ──
+            # CollateFn produces: {features, attention_masks, targets, context}
+            batch_features = batch.get("features", {})
+            batch_masks = batch.get("attention_masks", {})
+            batch_context = batch.get("context", None)
+            batch_targets = batch.get("targets")
 
-            # Handle dict-based batch (inputs/targets) vs flat batch
-            if not inputs and not targets:
-                # Flat batch: model expects dict of tf tensors + target tensors
-                tf_inputs = {}
+            # Move TF feature tensors to device
+            inputs = {}
+            if batch_features:
+                for tf_name, tensor in batch_features.items():
+                    if isinstance(tensor, torch.Tensor):
+                        inputs[tf_name] = tensor.to(device)
+
+            # Move attention masks to device (convert float→bool for PyTorch)
+            attn_masks = {}
+            if batch_masks:
+                for tf_name, tensor in batch_masks.items():
+                    if isinstance(tensor, torch.Tensor):
+                        # Collate produces 1.0/0.0 floats → convert to bool
+                        attn_masks[tf_name] = (tensor.to(device) == 0.0)
+
+            # Move context to device
+            ctx_tensor = None
+            if batch_context is not None and isinstance(batch_context, torch.Tensor):
+                ctx_tensor = batch_context.to(device)
+
+            # Move targets to device
+            targets = {}
+            if batch_targets is not None:
+                if isinstance(batch_targets, torch.Tensor):
+                    # (B, 3) tensor — split into per-head targets
+                    for i, head_name in enumerate(model.output_heads.keys()):
+                        if i < batch_targets.size(1):
+                            targets[head_name] = batch_targets[:, i:i+1].to(device)
+                elif isinstance(batch_targets, dict):
+                    for k, v in batch_targets.items():
+                        if isinstance(v, torch.Tensor):
+                            targets[k] = v.to(device)
+
+            # Fallback: flat batch format (model tf names directly in batch)
+            if not inputs:
                 for tf_name in model.tf_names:
                     if tf_name in batch:
-                        tf_inputs[tf_name] = batch[tf_name].to(device)
-                targets = {}
-                for head_name in model.output_heads.keys():
-                    if head_name in batch:
-                        targets[head_name] = batch[head_name].to(device)
-                inputs = tf_inputs
+                        inputs[tf_name] = batch[tf_name].to(device)
+                if not targets:
+                    for head_name in model.output_heads.keys():
+                        if head_name in batch:
+                            targets[head_name] = batch[head_name].to(device)
 
             optimizer.zero_grad()
 
             if use_mixed_precision and scaler is not None:
                 with torch.cuda.amp.autocast():
-                    preds = model(inputs)
+                    preds = model(inputs, context=ctx_tensor,
+                                 attention_masks=attn_masks)
                     loss, head_losses = _compute_loss(
                         preds, targets, output_heads_cfg
                     )
@@ -854,7 +1035,8 @@ def train_tft_model(
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                preds = model(inputs)
+                preds = model(inputs, context=ctx_tensor,
+                             attention_masks=attn_masks)
                 loss, head_losses = _compute_loss(
                     preds, targets, output_heads_cfg
                 )
@@ -883,29 +1065,50 @@ def train_tft_model(
 
         with torch.no_grad():
             for batch in val_loader:
-                inputs = {
-                    k: v.to(device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.get("inputs", batch).items()
-                    if isinstance(v, torch.Tensor)
-                }
-                targets = {
-                    k: v.to(device) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.get("targets", {}).items()
-                    if isinstance(v, torch.Tensor)
-                }
+                # Same extraction as training loop
+                batch_features = batch.get("features", {})
+                batch_masks = batch.get("attention_masks", {})
+                batch_context = batch.get("context", None)
+                batch_targets = batch.get("targets")
 
-                if not inputs and not targets:
-                    tf_inputs = {}
+                inputs = {}
+                if batch_features:
+                    for tf_name, tensor in batch_features.items():
+                        if isinstance(tensor, torch.Tensor):
+                            inputs[tf_name] = tensor.to(device)
+
+                attn_masks = {}
+                if batch_masks:
+                    for tf_name, tensor in batch_masks.items():
+                        if isinstance(tensor, torch.Tensor):
+                            attn_masks[tf_name] = (tensor.to(device) == 0.0)
+
+                ctx_tensor = None
+                if batch_context is not None and isinstance(batch_context, torch.Tensor):
+                    ctx_tensor = batch_context.to(device)
+
+                targets = {}
+                if batch_targets is not None:
+                    if isinstance(batch_targets, torch.Tensor):
+                        for i, head_name in enumerate(model.output_heads.keys()):
+                            if i < batch_targets.size(1):
+                                targets[head_name] = batch_targets[:, i:i+1].to(device)
+                    elif isinstance(batch_targets, dict):
+                        for k, v in batch_targets.items():
+                            if isinstance(v, torch.Tensor):
+                                targets[k] = v.to(device)
+
+                if not inputs:
                     for tf_name in model.tf_names:
                         if tf_name in batch:
-                            tf_inputs[tf_name] = batch[tf_name].to(device)
-                    targets = {}
-                    for head_name in model.output_heads.keys():
-                        if head_name in batch:
-                            targets[head_name] = batch[head_name].to(device)
-                    inputs = tf_inputs
+                            inputs[tf_name] = batch[tf_name].to(device)
+                    if not targets:
+                        for head_name in model.output_heads.keys():
+                            if head_name in batch:
+                                targets[head_name] = batch[head_name].to(device)
 
-                preds = model(inputs)
+                preds = model(inputs, context=ctx_tensor,
+                             attention_masks=attn_masks)
                 loss, head_losses = _compute_loss(
                     preds, targets, output_heads_cfg
                 )
