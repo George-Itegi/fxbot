@@ -20,7 +20,8 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 
 
 def train_all_models(df_candles=None, source: str = 'auto',
-                     incremental: bool = False) -> dict:
+                     incremental: bool = False,
+                     use_replay: bool = False) -> dict:
     """
     Train the ML gate model (primary) + legacy XGBoost (fallback).
 
@@ -28,17 +29,24 @@ def train_all_models(df_candles=None, source: str = 'auto',
         df_candles: Unused (kept for backward compatibility)
         source: 'backtest' | 'live' | 'auto'
         incremental: If True, uses hybrid incremental training for ML Gate
+        use_replay: If True, uses Experience Replay Buffer
     """
     os.makedirs(MODELS_DIR, exist_ok=True)
     results = {}
 
-    mode_str = 'INCREMENTAL (hybrid)' if incremental else 'FROM SCRATCH'
+    mode_parts = []
+    if incremental:
+        mode_parts.append('INCREMENTAL')
+    if use_replay:
+        mode_parts.append('REPLAY')
+    mode_str = ' + '.join(mode_parts) if mode_parts else 'FROM SCRATCH'
     log.info(f"[TRAINER] Starting ML Gate v3.0 training... mode={mode_str}")
 
     # Train ML Gate v3.0 (Strategy-Informed)
     try:
         from ai_engine.ml_gate import train_model as train_ml_gate
-        ml_result = train_ml_gate(source=source, incremental=incremental)
+        ml_result = train_ml_gate(source=source, incremental=incremental,
+                                  use_replay=use_replay)
         results['ml_gate'] = ml_result
     except Exception as e:
         results['ml_gate'] = {'status': 'error', 'reason': str(e)}

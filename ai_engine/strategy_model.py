@@ -226,7 +226,8 @@ class StrategyModel:
                 'trained': True,
             }
 
-    def train(self, rows: list, incremental: bool = False) -> dict:
+    def train(self, rows: list, incremental: bool = False,
+               use_replay: bool = False, replay_sample_size: int = 1000) -> dict:
         """
         Train the strategy model from a list of DB row dicts.
 
@@ -234,6 +235,9 @@ class StrategyModel:
             rows: List of dicts from backtest_trades WHERE strategy = self.strategy_name
             incremental: If True, loads existing model and continues training
                          with weighted recent data (hybrid approach).
+            use_replay: If True, uses Experience Replay Buffer for training.
+                        Provides a stratified, priority-weighted sample.
+            replay_sample_size: Number of samples from replay buffer.
 
         Returns:
             Training result dict with metrics.
@@ -250,6 +254,47 @@ class StrategyModel:
                     'reason': f'Only {len(rows)} trades (need {MIN_TRADES_TO_TRAIN})',
                     'strategy': self.strategy_name,
                 }
+
+            # ════════════════════════════════════════════════════════
+            # EXPERIENCE REPLAY BUFFER MODE
+            # ════════════════════════════════════════════════════════
+            replay_used = False
+            if use_replay:
+                try:
+                    from ai_engine.replay_buffer import get_replay_buffer
+                    buf = get_replay_buffer()
+
+                    # Filter buffer trades for this strategy only
+                    if buf.is_empty():
+                        strat_rows = rows  # All rows are already filtered by strategy
+                        log.info(f"[STRAT_MODEL:{self.strategy_key}] Replay buffer empty — "
+                                 f"seeding with {len(strat_rows)} trades")
+                        buf.add_many(strat_rows)
+                    else:
+                        # Add new strategy-specific trades
+                        strat_rows = rows
+                        existing_ids = {id(t) for t in buf.trades}
+                        new_rows = [r for r in strat_rows if id(r) not in existing_ids]
+                        if new_rows:
+                            log.info(f"[STRAT_MODEL:{self.strategy_key}] Adding {len(new_rows)} "
+                                     f"new trades to replay buffer")
+                            buf.add_many(new_rows)
+
+                    # Sample from buffer for this strategy's trades
+                    replay_rows = buf.sample(n=min(replay_sample_size, len(rows)))
+                    # Filter to only this strategy (buffer has ALL strategies)
+                    strat_replay = [r for r in replay_rows
+                                    if r.get('strategy') == self.strategy_name]
+                    if len(strat_replay) >= MIN_TRADES_TO_TRAIN:
+                        rows = strat_replay
+                        replay_used = True
+                        log.info(f"[STRAT_MODEL:{self.strategy_key}] Using replay buffer: "
+                                 f"{len(strat_replay)} samples for {self.strategy_name}")
+                    else:
+                        log.info(f"[STRAT_MODEL:{self.strategy_key}] Replay sample too small "
+                                 f"({len(strat_replay)} vs {MIN_TRADES_TO_TRAIN}) — using full data")
+                except Exception as e:
+                    log.warning(f"[STRAT_MODEL:{self.strategy_key}] Replay buffer failed: {e}")
 
             # ── Build feature matrix from DB rows ──
             # Reuse ML Gate's extract_features_from_db for feature consistency
@@ -531,6 +576,9 @@ class StrategyModel:
                 'training_mode': 'incremental' if (incremental and existing_model is not None) else 'from_scratch',
                 'previous_trees': n_existing_trees if (incremental and existing_model is not None) else 0,
                 'new_trades_since_last': new_trades_count if incremental else int(len(y)),
+                # Replay buffer info
+                'replay_buffer_used': replay_used,
+                'replay_sample_size': replay_sample_size if replay_used else 0,
                 # Selection stats (model's own filtering)
                 'pass_count': pass_count,
                 'reject_count': reject_count,
@@ -663,7 +711,9 @@ class StrategyModelManager:
         return result
 
     def train_strategy(self, strategy_name: str, rows: list = None,
-                       incremental: bool = False) -> dict:
+                       incremental: bool = False,
+                       use_replay: bool = False,
+                       replay_sample_size: int = 1000) -> dict:
         """
         Train a specific strategy model.
 
@@ -671,6 +721,8 @@ class StrategyModelManager:
             strategy_name: Strategy to train
             rows: Optional pre-fetched DB rows. If None, will query DB.
             incremental: If True, uses hybrid incremental training.
+            use_replay: If True, uses Experience Replay Buffer.
+            replay_sample_size: Number of samples from replay buffer.
 
         Returns:
             Training result dict.
@@ -688,7 +740,9 @@ class StrategyModelManager:
         if rows is None:
             rows = self._fetch_strategy_trades(strategy_name)
 
-        result = model.train(rows, incremental=incremental)
+        result = model.train(rows, incremental=incremental,
+                              use_replay=use_replay,
+                              replay_sample_size=replay_sample_size)
 
         if result.get('status') == 'trained':
             self._models[strategy_name] = model

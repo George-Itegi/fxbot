@@ -872,7 +872,8 @@ def _json_default(obj):
     return str(obj)
 
 
-def train_model(source: str = 'auto', incremental: bool = False) -> dict:
+def train_model(source: str = 'auto', incremental: bool = False,
+                use_replay: bool = False, replay_sample_size: int = 2000) -> dict:
     """
     Train the ML gate REGRESSION model from database.
 
@@ -885,6 +886,11 @@ def train_model(source: str = 'auto', incremental: bool = False) -> dict:
         source: 'backtest' | 'live' | 'auto'
         incremental: If True, loads existing model and continues training
                      with weighted recent data (hybrid approach).
+        use_replay: If True, uses Experience Replay Buffer for training.
+                    The buffer provides a stratified, priority-weighted
+                    sample instead of using ALL data equally. This prevents
+                    catastrophic forgetting during incremental learning.
+        replay_sample_size: Number of samples to draw from replay buffer.
 
     Returns dict with training results and regression metrics.
     """
@@ -967,6 +973,43 @@ def train_model(source: str = 'auto', incremental: bool = False) -> dict:
         log.info(f"[ML_GATE] Pre-computing pair-strategy features for {len(rows)} rows...")
         hist_ps_map = compute_hist_ps_for_ml_gate_training(rows)
         log.info(f"[ML_GATE] Pair-strategy features computed for {len(hist_ps_map)} rows")
+
+        # ══════════════════════════════════════════════════════════
+        # EXPERIENCE REPLAY BUFFER MODE
+        # ══════════════════════════════════════════════════════════
+        # When use_replay=True, the replay buffer provides a stratified
+        # sample instead of using all data. This solves catastrophic
+        # forgetting: the buffer maintains a curated mix of trades the
+        # model got wrong (high TD-error), balanced across pairs/strategies.
+        replay_used = False
+        if use_replay:
+            try:
+                from ai_engine.replay_buffer import get_replay_buffer
+                buf = get_replay_buffer()
+
+                # Seed buffer if empty (first run or after clear)
+                if buf.is_empty():
+                    log.info(f"[ML_GATE] Replay buffer empty — seeding with {len(rows)} DB trades")
+                    buf.add_many(rows)
+                else:
+                    # Add new trades that aren't in the buffer yet
+                    existing_ids = {id(t) for t in buf.trades}
+                    new_rows = [r for r in rows if id(r) not in existing_ids]
+                    if new_rows:
+                        log.info(f"[ML_GATE] Adding {len(new_rows)} new trades to replay buffer")
+                        buf.add_many(new_rows)
+
+                # Sample from buffer for training
+                replay_rows = buf.sample(n=min(replay_sample_size, len(rows)))
+                if len(replay_rows) > 0:
+                    rows = replay_rows
+                    replay_used = True
+                    log.info(f"[ML_GATE] Using replay buffer: {len(replay_rows)} samples "
+                             f"from {len(buf)} total (buffer {buf.utilization:.0%} full)")
+                else:
+                    log.warning(f"[ML_GATE] Replay buffer returned empty sample — using full data")
+            except Exception as e:
+                log.warning(f"[ML_GATE] Replay buffer failed: {e} — using full data")
 
         # ── Build feature matrix + R-multiple target ──
         X = []
@@ -1247,6 +1290,9 @@ def train_model(source: str = 'auto', incremental: bool = False) -> dict:
             'previous_trees': n_existing_trees if (incremental and existing_model is not None) else 0,
             'new_trades_since_last': new_trades_count if incremental else int(len(y)),
             'recent_weight': INCREMENTAL_RECENT_WEIGHT if incremental else 1.0,
+            # Replay buffer info
+            'replay_buffer_used': replay_used,
+            'replay_sample_size': replay_sample_size if replay_used else 0,
             # Feature importance
             'top_features': [(f, float(round(i, 4))) for f, i in top_features],
             'calibration': calibration,
@@ -1256,9 +1302,25 @@ def train_model(source: str = 'auto', incremental: bool = False) -> dict:
         with open(META_PATH, 'w') as f:
             json.dump(meta, f, indent=2, default=_json_default)
 
+        # ── Update replay buffer priorities with new model ──
+        if replay_used:
+            try:
+                from ai_engine.replay_buffer import get_replay_buffer
+                buf = get_replay_buffer()
+                # Recompute priorities based on new model's TD-errors
+                buf.compute_priorities(
+                    model_final,
+                    feature_extractor=extract_features_from_db,
+                    hist_ps_map=None  # Would need per-index map for exact match
+                )
+                log.info(f"[ML_GATE] Replay buffer priorities updated with new model")
+            except Exception as e:
+                log.warning(f"[ML_GATE] Failed to update replay priorities: {e}")
+
         log.info(f"[ML_GATE] Regression model trained: {len(y)} trades "
                  f"(MAE={val_mae:.3f}, R²={val_r2:.3f}, corr={val_corr:.3f}) "
-                 f"top_feature={top_features[0][0]} ({top_features[0][1]:.3f})")
+                 f"top_feature={top_features[0][0]} ({top_features[0][1]:.3f})"
+                 f"{' [REPLAY]' if replay_used else ''}")
 
         return meta
 

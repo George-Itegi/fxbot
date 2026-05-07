@@ -109,11 +109,13 @@ def _print_strategy_status():
     print("=" * 65 + "\n")
 
 
-def _train_strategy(strategy_name: str, incremental: bool = False):
+def _train_strategy(strategy_name: str, incremental: bool = False,
+                   use_replay: bool = False):
     """Train a specific strategy model."""
     print("\n" + "=" * 65)
     print(f"  APEX TRADER — Layer 1 Training: {strategy_name}")
-    print(f"  Mode: {'INCREMENTAL (hybrid)' if incremental else 'FROM SCRATCH'}")
+    print(f"  Mode: {'INCREMENTAL (hybrid)' if incremental else 'FROM SCRATCH'}"
+          f"{' + REPLAY BUFFER' if use_replay else ''}")
     print("=" * 65)
 
     try:
@@ -128,7 +130,8 @@ def _train_strategy(strategy_name: str, incremental: bool = False):
         print(f"  Layer:    1 (per-strategy)")
         print(f"  Training...\n")
 
-        result = mgr.train_strategy(strategy_name, incremental=incremental)
+        result = mgr.train_strategy(strategy_name, incremental=incremental,
+                                           use_replay=use_replay)
 
         if result['status'] == 'trained':
             print(f"  Training: SUCCESS")
@@ -209,7 +212,8 @@ def _train_strategy(strategy_name: str, incremental: bool = False):
         print(f"  ERROR: {e}")
 
 
-def _train_all_eligible(incremental: bool = False):
+def _train_all_eligible(incremental: bool = False,
+                       use_replay: bool = False):
     """Train all strategies that have enough data."""
     print("\n" + "=" * 65)
     print("  APEX TRADER — Layer 1: Train All Eligible Strategies")
@@ -260,7 +264,8 @@ def _train_all_eligible(incremental: bool = False):
                 print(f"  Action:   Set DISABLED_STRATEGIES = [] to re-enable")
                 print(f"  {'='*65}\n")
                 continue
-            _train_strategy(r['strategy'], incremental=incremental)
+            _train_strategy(r['strategy'], incremental=incremental,
+                           use_replay=use_replay)
 
     except Exception as e:
         print(f"  ERROR: {e}")
@@ -284,15 +289,21 @@ def main():
         '--incremental', action='store_true',
         help='Hybrid incremental: load existing model, weight recent trades 5x, '
              'add new trees (fast adaptation to market changes)')
+    parser.add_argument(
+        '--use-replay', action='store_true',
+        help='Use Experience Replay Buffer: stratified, priority-weighted sampling '
+             'that prevents catastrophic forgetting during incremental training')
 
     args = parser.parse_args()
 
     if args.status:
         _print_strategy_status()
     elif args.train_all:
-        _train_all_eligible(incremental=args.incremental)
+        _train_all_eligible(incremental=args.incremental,
+                           use_replay=args.use_replay)
     else:
-        _train_strategy(args.strategy, incremental=args.incremental)
+        _train_strategy(args.strategy, incremental=args.incremental,
+                       use_replay=args.use_replay)
 
 
 if __name__ == "__main__":
