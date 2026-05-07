@@ -49,6 +49,15 @@ except ImportError:
                 "Run with database module for full functionality.")
     _DB_AVAILABLE = False
 
+# ── Try to import feature snapshot extraction ────────────────
+try:
+    from rpde.feature_snapshot import extract_snapshot_at_index
+    _SNAPSHOT_AVAILABLE = True
+except ImportError:
+    log.warning("[RPDE_SCANNER] feature_snapshot module not found — "
+                "golden moments will lack 93-feature snapshots.")
+    _SNAPSHOT_AVAILABLE = False
+
 
 # ════════════════════════════════════════════════════════════════
 # MT5 TIMEFRAME MAP
@@ -269,6 +278,19 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
     # Compute ATR(14) for forward_return calculation
     df = _compute_atr_series(df)
 
+    # Pre-compute indicators for feature extraction
+    if _SNAPSHOT_AVAILABLE:
+        try:
+            from rpde.feature_snapshot import _add_indicators
+            if 'rsi' not in df.columns:
+                t_pre = time.time()
+                df = _add_indicators(df)
+                log.info(f"[RPDE_SCANNER] Pre-computed indicators in "
+                         f"{time.time() - t_pre:.1f}s ({len(df)} bars)")
+        except Exception as ex:
+            log.warning(f"[RPDE_SCANNER] Failed to pre-compute indicators: {ex}")
+            _SNAPSHOT_AVAILABLE = False
+
     # Scan every bar (except the last FORWARD_LOOK_BARS where we can't look ahead)
     # Also skip the first 50 bars for indicator warmup
     warmup = 50
@@ -332,6 +354,17 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
             'pip_value': pip_value,
             'threshold_pips': threshold_pips,
         }
+
+        # Extract 93-feature snapshot at this bar
+        if _SNAPSHOT_AVAILABLE:
+            try:
+                snapshot = extract_snapshot_at_index(pair, i, df)
+                if snapshot:
+                    moment['feature_snapshot'] = snapshot
+                    moment['session'] = snapshot.get('_meta', {}).get('session', '')
+                    moment['market_state'] = snapshot.get('_meta', {}).get('market_state', '')
+            except Exception as ex:
+                log.debug(f"[RPDE_SCANNER] Snapshot failed at bar {i}: {ex}")
 
         golden_moments.append(moment)
         last_moment_bar = i

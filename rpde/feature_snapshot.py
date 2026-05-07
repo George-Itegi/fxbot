@@ -1198,6 +1198,249 @@ def extract_snapshot_at_bar(pair: str, bar_timestamp: datetime,
         return {}
 
 
+def extract_snapshot_at_index(pair: str, bar_idx: int,
+                               df_m5: pd.DataFrame) -> dict:
+    """
+    Extract all 93 features at a specific bar index (optimized for scanner).
+
+    Same as extract_snapshot_at_bar but takes bar_idx directly instead
+    of doing timestamp matching. The DataFrame should have indicators
+    pre-computed (via _add_indicators) for best performance.
+
+    Args:
+        pair: Symbol string (e.g. 'EURJPY')
+        bar_idx: The integer index of the bar in df_m5
+        df_m5: Full M5 DataFrame (ideally with indicators pre-computed)
+
+    Returns:
+        dict with all 93 feature values keyed by feature name.
+    """
+    try:
+        pip_value = get_pip_size(pair)
+
+        if bar_idx < 200 or bar_idx >= len(df_m5):
+            return {}
+
+        # Slice data UP TO (and including) bar_idx for look-ahead protection
+        df = df_m5.iloc[:bar_idx + 1].copy()
+
+        # Add indicators if not already present
+        if 'rsi' not in df.columns:
+            df = _add_indicators(df)
+
+        # ── Current bar values ──
+        current = df.iloc[-1]
+        current_price = float(current['close'])
+        current_spread = float(current.get('spread', 0))
+
+        # ── Compute session ──
+        session = compute_session(current['time'])
+
+        # ── Market quality features ──
+        mq = _compute_market_quality(df, len(df) - 1, session)
+
+        # ── Delta (candle-based proxy for order flow) ──
+        delta_features = _compute_delta_features(df)
+
+        # ── Order flow imbalance ──
+        of_imbalance_val = delta_features['delta']
+        of_imbalance_strength = 'NONE'
+        if abs(of_imbalance_val) > 2.0:
+            of_imbalance_strength = 'EXTREME'
+        elif abs(of_imbalance_val) > 1.0:
+            of_imbalance_strength = 'STRONG'
+        elif abs(of_imbalance_val) > 0.5:
+            of_imbalance_strength = 'MODERATE'
+
+        # ── VWAP features ──
+        vwap_features = _compute_vwap_features(df, pip_value, current_price)
+
+        # ── SMC features ──
+        smc_features = _compute_smc_features(df, pip_value, current_price)
+
+        # ── Momentum features ──
+        mom_features = _compute_momentum_features(df, pip_value)
+
+        # ── Market state ──
+        market_state = _compute_market_state(df)
+
+        # ── HTF features (uses full df_m5, not sliced) ──
+        htf_features = _compute_htf_features(df_m5, bar_idx, pip_value)
+
+        # ── ATR percentile ──
+        atr_pct_features = _compute_atr_percentile(df)
+
+        # ── MTF RSI (uses full df_m5) ──
+        mtf_rsi_features = _compute_mtf_rsi(df_m5, bar_idx)
+
+        # ── MTF continuous score (uses full df_m5) ──
+        mtf_score_features = _compute_mtf_score(df_m5, bar_idx)
+
+        # ── RSI / ATR at current bar ──
+        current_rsi = float(current.get('rsi', 50)) if pd.notna(current.get('rsi', 50)) else 50.0
+        current_atr = float(current.get('atr', 0)) if pd.notna(current.get('atr', 0)) else 0.0
+
+        # ── Symbol type features ──
+        sym_upper = pair.upper()
+        is_jpy = 1.0 if 'JPY' in sym_upper else 0.0
+        is_commodity = 1.0 if ('XAU' in sym_upper or 'XAG' in sym_upper) else 0.0
+        is_index = 1.0 if any(x in sym_upper for x in
+                               ['US30', 'US500', 'USTEC', 'JP225', 'DE30', 'UK100']) else 0.0
+
+        # ── Session features ──
+        sess_enc = _SESSION_MAP.get(session, 1)
+        is_london_open = 1.0 if session == 'LONDON_OPEN' else 0.0
+        is_overlap = 1.0 if session == 'NY_LONDON_OVERLAP' else 0.0
+        is_ny_afternoon = 1.0 if session == 'NY_AFTERNOON' else 0.0
+        vol_surge = 1.0 if mom_features.get('surge_ratio', 1.0) > 2.0 else 0.0
+
+        # ── Direction inference ──
+        direction_inferred = 'BUY' if mq['combined_bias'] == 'BULLISH' else \
+                             'SELL' if mq['combined_bias'] == 'BEARISH' else None
+
+        # ═══ BUILD THE 93-FEATURE DICT ═══
+        features = {
+            # Group 1: Market quality (7)
+            'fq_final_score': mq['final_score'],
+            'fq_market_score': mq['market_score'],
+            'fq_smc_score': mq['smc_score'],
+            'fq_combined_bias': _BIAS_MAP.get(mq['combined_bias'], 0.0),
+            'fq_bias_confidence': _CONFIDENCE_MAP.get(mq['bias_confidence'], 1.0),
+            'fq_htf_approved': 1.0 if htf_features['htf_approved'] else -1.0,
+            'fq_htf_score': htf_features['htf_score'],
+            # Group 2: Order flow (6)
+            'of_delta': delta_features['delta'],
+            'of_rolling_delta': delta_features['rolling_delta'],
+            'of_delta_bias': _BIAS_MAP.get(delta_features['delta_bias'], 0.0),
+            'of_rd_bias': _BIAS_MAP.get(delta_features['rd_bias'], 0.0),
+            'of_imbalance': of_imbalance_val,
+            'of_imb_strength': _OF_STRENGTH_MAP.get(of_imbalance_strength, 0.0),
+            # Group 3: VWAP (4)
+            'vw_pip_from_vwap': vwap_features['pip_from_vwap'],
+            'vw_position': 1.0 if vwap_features['position'] == 'ABOVE' else
+                          -1.0 if vwap_features['position'] == 'BELOW' else 0.0,
+            'vw_pip_to_poc': vwap_features['pip_to_poc'],
+            'vw_price_position': _PRICE_POS_MAP.get(vwap_features['price_position'], 0.0),
+            # Group 4: SMC structure (8)
+            'smc_structure_trend': _TREND_MAP.get(smc_features['trend'], 0.0),
+            'smc_has_bos': 1.0 if smc_features['has_bos'] else 0.0,
+            'smc_bos_direction': smc_features['bos_direction'],
+            'smc_pd_zone': _PD_ZONE_MAP.get(smc_features['pd_zone'], 0.0),
+            'smc_pips_to_eq': smc_features['pips_to_eq'],
+            'smc_smc_bias': _BIAS_MAP.get(smc_features['smc_bias'], 0.0),
+            'smc_has_sweep': 1.0 if smc_features['has_sweep'] else 0.0,
+            'smc_sweep_aligned': smc_features['sweep_aligned'],
+            # Group 5: Trade parameters (5)
+            'tp_score': 50.0,
+            'tp_sl_pips': 10.0,
+            'tp_tp_pips': 20.0,
+            'tp_rr_ratio': 2.0,
+            'tp_direction': 1.0 if direction_inferred == 'BUY' else
+                          -1.0 if direction_inferred == 'SELL' else 0.0,
+            # Group 6: Strategy scores (10)
+            'ss_smc_ob': 0.0,
+            'ss_liquidity_sweep': 0.0,
+            'ss_delta_divergence': 0.0,
+            'ss_trend_continuation': 0.0,
+            'ss_ema_cross': 0.0,
+            'ss_rsi_divergence': 0.0,
+            'ss_sd_zone': 0.0,
+            'ss_bos_momentum': 0.0,
+            'ss_ote_fib': 0.0,
+            'ss_inst_candles': 0.0,
+            # Group 7: Consensus features (3)
+            'cs_total_signals': 0.0,
+            'cs_groups_agreeing': 0.0,
+            'cs_direction_clear': 0.0,
+            # Group 8: Session/Time (5)
+            'st_session': sess_enc,
+            'st_is_london_open': is_london_open,
+            'st_is_overlap': is_overlap,
+            'st_is_ny_afternoon': is_ny_afternoon,
+            'st_vol_surge': vol_surge,
+            # Group 9: Volatility/State (5)
+            'vs_atr': current_atr,
+            'vs_market_state': _STATE_MAP.get(market_state, 0.0),
+            'vs_surge_ratio': mom_features.get('surge_ratio', 1.0),
+            'vs_momentum_velocity': mom_features.get('velocity_pips_min', 0.0),
+            'vs_choppy': 1.0 if mom_features.get('is_choppy') else 0.0,
+            # Group 10: Symbol type (3)
+            'sym_is_jpy': is_jpy,
+            'sym_is_commodity': is_commodity,
+            'sym_is_index': is_index,
+            # Group 11: Self-improvement (3)
+            'si_recent_wr': 0.5,
+            'si_recent_avg_r': 0.0,
+            'si_strategy_wr': 0.5,
+            # Group 12: Price context (1)
+            'fx_spread_pips': current_spread,
+            # Group 13: Fibonacci confluence (3)
+            'fib_confluence_score': 0.0,
+            'fib_in_golden_zone': 0.0,
+            'fib_bias_aligned': 0.0,
+            # Group 14: Historical pair-strategy perf (8)
+            'hist_ps_avg_r_recent': 0.0,
+            'hist_ps_wr_recent': 0.5,
+            'hist_ps_trades_recent': 0.0,
+            'hist_ps_avg_r_all': 0.0,
+            'hist_ps_wr_all': 0.5,
+            'hist_ps_trades_all': 0.0,
+            'hist_ps_avg_r_decay': 0.0,
+            'hist_ps_avg_r_trend': 0.0,
+            # Group 15: Currency Strength (4)
+            'cs_base_strength': 0.0,
+            'cs_quote_strength': 0.0,
+            'cs_strength_delta': 0.0,
+            'cs_pair_bias': 0.0,
+            # Group 16: ATR Percentile (2)
+            'ap_atr_percentile': atr_pct_features['atr_percentile'],
+            'ap_atr_ratio': atr_pct_features['atr_ratio'],
+            # Group 17: MTF RSI (6)
+            'mr_m5_rsi': mtf_rsi_features.get('mr_m5_rsi', current_rsi),
+            'mr_m15_rsi': mtf_rsi_features.get('mr_m15_rsi', 50.0),
+            'mr_m30_rsi': mtf_rsi_features.get('mr_m30_rsi', 50.0),
+            'mr_h1_rsi': mtf_rsi_features.get('mr_h1_rsi', 50.0),
+            'mr_h4_rsi': mtf_rsi_features.get('mr_h4_rsi', 50.0),
+            'mr_d1_rsi': mtf_rsi_features.get('mr_d1_rsi', 50.0),
+            # Group 18: MTF Continuous Score (3)
+            'mt_mtf_score': mtf_score_features['mtf_score'],
+            'mt_trend_agreement': mtf_score_features['trend_agreement'],
+            'mt_rsi_agreement': mtf_score_features['rsi_agreement'],
+            # Group 19: Intermarket (3)
+            'im_vix': 20.0,
+            'im_dxy_change': 0.0,
+            'im_risk_env': 0.0,
+            # Group 20: Streak (2)
+            'sk_current_streak': 0.0,
+            'sk_recent_wr': 50.0,
+            # Group 21: Z-Score (1)
+            'zs_signal_zscore': 0.0,
+            # Group 22: Smart Money Score (1)
+            'sm_footprint_score': 0.0,
+        }
+
+        # Attach metadata
+        features['_meta'] = {
+            'pair': pair,
+            'bar_time': current['time'],
+            'bar_index': bar_idx,
+            'session': session,
+            'market_state': market_state,
+            'atr': current_atr,
+            'spread': current_spread,
+            'direction_inferred': direction_inferred,
+            'pip_value': pip_value,
+            'source': 'rpde_historical',
+        }
+
+        return features
+
+    except Exception as ex:
+        log.debug(f"[RPDE_SNAPSHOT] extract_snapshot_at_index failed "
+                  f"for {pair} at bar {bar_idx}: {ex}")
+        return {}
+
+
 # ════════════════════════════════════════════════════════════════
 # LIVE SNAPSHOT: Extract from Master Report
 # ════════════════════════════════════════════════════════════════
