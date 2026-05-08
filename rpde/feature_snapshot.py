@@ -301,10 +301,8 @@ def _compute_vwap_features(df: pd.DataFrame, pip_value: float,
                     price_position = "ABOVE_VAH"
                 elif current_price > (bb_upper + bb_lower) / 2:
                     price_position = "ABOVE_VA"
-                elif current_price > (bb_upper + bb_lower) / 2:
-                    price_position = "INSIDE_VA"
                 elif current_price > bb_lower:
-                    price_position = "BELOW_VA"
+                    price_position = "INSIDE_VA"
                 else:
                     price_position = "BELOW_VAL"
             else:
@@ -648,9 +646,7 @@ def _compute_mtf_rsi(df_m5: pd.DataFrame, bar_idx: int) -> dict:
 
     # Resample to higher timeframes and compute RSI
     for tf_name in ['M15', 'M30', 'H1', 'H4', 'D1']:
-        key = tf_name.lower().replace('h', 'h').replace('d', 'd') + '_rsi'
-        # Map to expected feature names
-        key = 'mr_' + tf_name.lower().replace('m', 'm').replace('h', 'h').replace('d', 'd') + '_rsi'
+        key = 'mr_' + tf_name.lower() + '_rsi'
 
         try:
             tf_df = _resample_tf(df, tf_name)

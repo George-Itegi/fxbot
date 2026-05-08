@@ -7,6 +7,7 @@
 # to work across pairs — pair personality matters.
 # =============================================================
 
+import math
 import numpy as np
 from datetime import datetime
 
@@ -127,8 +128,8 @@ def compute_currency_tag(pair: str, pattern_features: dict,
             shared = {k for k in shared
                       if isinstance(pattern_features.get(k), (int, float))
                       and isinstance(rf.get(k), (int, float))
-                      and pattern_features[k] == pattern_features[k]
-                      and rf[k] == rf[k]}
+                      and not (math.isnan(pattern_features[k]) or math.isinf(pattern_features[k]))
+                      and not (math.isnan(rf[k]) or math.isinf(rf[k]))}
             if len(shared) < 5:
                 continue
 

@@ -21,6 +21,7 @@
 # =============================================================
 
 import json
+import threading
 import datetime
 from core.logger import get_logger
 
@@ -28,6 +29,7 @@ log = get_logger(__name__)
 
 # ── Module-level flag: tables created once per process ───────
 _tables_initialized = False
+_tables_init_lock = threading.Lock()
 
 
 def _get_conn():
@@ -48,10 +50,21 @@ def _get_conn():
 # ═══════════════════════════════════════════════════════════════
 
 def init_rpde_tables():
-    """Create all RPDE tables. Call once on first use (idempotent)."""
+    """Create all RPDE tables. Call once on first use (idempotent, thread-safe)."""
     global _tables_initialized
     if _tables_initialized:
         return
+
+    with _tables_init_lock:
+        # Double-check after acquiring lock
+        if _tables_initialized:
+            return
+        _init_rpde_tables_inner()
+
+
+def _init_rpde_tables_inner():
+    """Internal: actually create tables. Caller must hold _tables_init_lock."""
+    global _tables_initialized
 
     conn = _get_conn()
     c = conn.cursor(dictionary=True)

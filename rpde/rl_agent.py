@@ -312,10 +312,13 @@ def _build_observation_vector(
     observation vector suitable for the RL network.
 
     The observation is designed to be information-rich yet compact:
-      [0-7]   Fusion layer (confidence, expected_r, direction, TFT, agreement, reversal, xgb/tft avail)
-      [8-14]  Market microstructure (atr, volatility regime, momentum, spread, session, trend strength)
-      [15-21] Signal features (xgb confidence, xgb predicted_r, tft pattern_match, tft momentum, tft reversal)
-      [22-27] Portfolio context (open positions, daily P&L, drawdown, consecutive wins/losses, exposure)
+      [0-7]   Fusion signal (confidence, expected_r, direction, agreement, reversal, xgb_weight, tft_weight, tft_contribution)
+      [8-19]  Market state (session, hour, day, spread, atr_pctile, regime, momentum, rsi, m5/m15/h1/h4 trend)
+      [20-27] Portfolio state (open_positions, daily_pnl, weekly_pnl, equity, unrealized, drawdown, cons_losses, hrs_since)
+
+    IMPORTANT: This layout must exactly match TradingEnv._build_observation()
+    in rl_env.py to ensure consistent observations during training
+    and live inference.
 
     Args:
         fusion_result:   Dict from FusionLayer.fuse().
@@ -327,90 +330,158 @@ def _build_observation_vector(
     """
     obs = np.zeros(RL_OBS_DIM, dtype=np.float32)
 
-    # ── Fusion layer features [0-7] ──
-    # Combined confidence (clipped to [0, 1])
+    # ═══════════════════════════════════════════════════════
+    # GROUP 1: FUSION SIGNAL (indices 0-7, 8 features)
+    # Layout must match TradingEnv._build_observation() in rl_env.py
+    # ═══════════════════════════════════════════════════════
+
+    # [0] combined_confidence: already in [0, 1]
     obs[0] = float(np.clip(fusion_result.get("combined_confidence", 0.0), 0.0, 1.0))
-    # Combined expected R (normalised by dividing by 3.0 so typical range is ~[-1, 1])
-    obs[1] = float(np.clip(fusion_result.get("combined_expected_r", 0.0) / 3.0, -1.0, 1.0))
-    # Direction encoding: BUY=1.0, SELL=-1.0, None=0.0
+
+    # [1] combined_expected_r: clamp to [-2, 3] then normalize to [-1, 1]
+    expected_r = float(fusion_result.get("combined_expected_r", 0.0))
+    obs[1] = float(np.clip(expected_r / 3.0, -1.0, 1.0))
+
+    # [2] direction_encoded: BUY=1, SELL=-1, None=0
     direction = fusion_result.get("direction")
     if direction == "BUY":
         obs[2] = 1.0
     elif direction == "SELL":
         obs[2] = -1.0
-    # TFT contribution (already in [0, 1])
-    obs[3] = float(np.clip(fusion_result.get("tft_contribution", 0.0), 0.0, 1.0))
-    # Signal agreement: ALL_AGREE=1.0, XGB_TFT_AGREE=0.7, PARTIAL=0.3, DISAGREE=0.0
-    agreement_map = {"ALL_AGREE": 1.0, "XGB_TFT_AGREE": 0.7, "PARTIAL": 0.3, "DISAGREE": 0.0}
-    obs[4] = float(agreement_map.get(fusion_result.get("signal_agreement", "DISAGREE"), 0.0))
-    # Reversal warning binary
-    obs[5] = 1.0 if fusion_result.get("reversal_warning") else 0.0
-    # Recommendation: TAKE=1.0, CAUTION=0.5, SKIP=0.0
-    rec_map = {"TAKE": 1.0, "CAUTION": 0.5, "SKIP": 0.0}
-    obs[6] = float(rec_map.get(fusion_result.get("recommendation", "SKIP"), 0.0))
-    # XGB / TFT weight balance (xgb_weight / (xgb_weight + tft_weight))
+    else:
+        obs[2] = 0.0
+
+    # [3] signal_agreement_encoded
+    agreement = fusion_result.get("signal_agreement", "DISAGREE")
+    _agreement_map = {
+        "ALL_AGREE": 1.0,
+        "XGB_TFT_AGREE": 0.67,
+        "PARTIAL": 0.33,
+        "DISAGREE": 0.0,
+    }
+    obs[3] = float(_agreement_map.get(str(agreement), 0.0))
+
+    # [4] reversal_warning: 0 or 1
+    obs[4] = 1.0 if fusion_result.get("reversal_warning") else 0.0
+
+    # [5] xgb_weight: already in [0, 1]
     weights = fusion_result.get("weights", {})
-    xgb_w = float(weights.get("xgb_weight", 0.5))
-    tft_w = float(weights.get("tft_weight", 0.5))
-    total_w = xgb_w + tft_w
-    obs[7] = xgb_w / total_w if total_w > 0 else 0.5
+    obs[5] = float(weights.get("xgb_weight", 0.55))
 
-    # ── Market microstructure features [8-14] ──
-    # ATR normalised (typical forex ATR is 5-50 pips; normalise by /50)
-    obs[8] = float(np.clip(market_state.get("atr", 0.0) / 50.0, 0.0, 2.0))
-    # Volatility percentile [0, 1]
-    obs[9] = float(np.clip(market_state.get("atr_percentile", 0.5), 0.0, 1.0))
-    # Momentum score [-1, 1]
-    obs[10] = float(np.clip(market_state.get("momentum_score", 0.0), -1.0, 1.0))
-    # Spread normalised (typical spread 0.5-5 pips; /5)
-    obs[11] = float(np.clip(market_state.get("spread", 1.0) / 5.0, 0.0, 1.0))
-    # Session encoding: London=0.8, NY_London=1.0, NY=0.6, Tokyo=0.4, Sydney=0.2, Off=0.0
-    session_map = {
-        "LONDON": 0.8, "NY_LONDON_OVERLAP": 1.0, "NY_AFTERNOON": 0.6,
-        "TOKYO": 0.4, "SYDNEY": 0.2, "OFF": 0.0,
+    # [6] tft_weight: already in [0, 1]
+    obs[6] = float(weights.get("tft_weight", 0.45))
+
+    # [7] tft_contribution: already in [0, 1]
+    obs[7] = float(np.clip(fusion_result.get("tft_contribution", 0.0), 0.0, 1.0))
+
+    # ═══════════════════════════════════════════════════════
+    # GROUP 2: MARKET STATE (indices 8-19, 12 features)
+    # ═══════════════════════════════════════════════════════
+
+    # [8] session_encoded: London=0.25, NewYork=0.5, Asian=0.75, Off=1.0
+    session = market_state.get("session", "Off")
+    _session_map = {
+        "London": 0.25,
+        "NewYork": 0.5,
+        "Asian": 0.75,
+        "Off": 1.0,
+        "Sydney": 0.875,
+        "LONDON": 0.25,
+        "NY_LONDON_OVERLAP": 0.5,
+        "NY_AFTERNOON": 0.5,
+        "TOKYO": 0.75,
     }
-    obs[12] = float(session_map.get(market_state.get("session", "OFF"), 0.0))
-    # Trend strength [-1, 1] (negative = bearish)
-    obs[13] = float(np.clip(market_state.get("trend_strength", 0.0), -1.0, 1.0))
-    # Market regime encoding (ranging=0, trending_strong=1, breakout=0.8, volatile=0.3)
-    regime_map = {
-        "RANGING": 0.0, "TRENDING_STRONG": 1.0, "TRENDING_WEAK": 0.6,
-        "BREAKOUT_ACCEPTED": 0.8, "VOLATILE": 0.3, "LOW_LIQUIDITY": 0.1,
+    obs[8] = float(_session_map.get(str(session), 1.0))
+
+    # [9] hour_of_day / 24: normalize to [0, 1]
+    hour = float(market_state.get("hour_of_day", 0.0))
+    obs[9] = hour / 24.0
+
+    # [10] day_of_week / 5: normalize to [0, 1] (0=Mon, 4=Fri)
+    day = float(market_state.get("day_of_week", 0.0))
+    obs[10] = day / 5.0
+
+    # [11] spread_ratio: current_spread / avg_spread, clamp to [0, 3]
+    current_spread = float(market_state.get("current_spread", 1.0))
+    avg_spread = float(market_state.get("avg_spread", 1.0))
+    spread_ratio = current_spread / max(avg_spread, 0.1)
+    obs[11] = float(np.clip(spread_ratio / 3.0, 0.0, 1.0))
+
+    # [12] atr_percentile: already in [0, 1]
+    obs[12] = float(np.clip(market_state.get("atr_percentile", 0.5), 0.0, 1.0))
+
+    # [13] volatility_regime: ranging=0, normal=0.5, quiet=1.0, volatile=-0.5
+    regime = market_state.get("volatility_regime", "normal")
+    _regime_map = {
+        "ranging": 0.0,
+        "normal": 0.5,
+        "quiet": 1.0,
+        "volatile": -0.5,
+        "RANGING": 0.0,
+        "TRENDING_STRONG": 1.0,
+        "TRENDING_WEAK": 0.5,
+        "VOLATILE": -0.5,
+        "LOW_LIQUIDITY": 0.0,
     }
-    obs[14] = float(regime_map.get(market_state.get("market_regime", "RANGING"), 0.0))
+    obs[13] = float(_regime_map.get(str(regime), 0.5))
 
-    # ── Signal detail features [15-21] ──
-    # XGB confidence
-    obs[15] = float(np.clip(fusion_result.get("xgb_confidence", 0.0) if fusion_result.get("xgb_available") else 0.0, 0.0, 1.0))
-    # XGB predicted R (normalised)
-    obs[16] = float(np.clip(fusion_result.get("xgb_predicted_r", 0.0) / 3.0, -1.0, 1.0)) if fusion_result.get("xgb_available") else 0.0
-    # TFT pattern match
-    obs[17] = float(np.clip(fusion_result.get("tft_pattern_match", 0.0) if fusion_result.get("tft_available") else 0.0, 0.0, 1.0))
-    # TFT momentum score
-    obs[18] = float(np.clip(fusion_result.get("tft_momentum", 0.0) if fusion_result.get("tft_available") else 0.0, -1.0, 1.0))
-    # TFT reversal probability
-    obs[19] = float(np.clip(fusion_result.get("tft_reversal", 0.0) if fusion_result.get("tft_available") else 0.0, 0.0, 1.0))
-    # Pattern library match score
-    obs[20] = float(np.clip(fusion_result.get("pattern_match_score", 0.0) if fusion_result.get("pattern_available") else 0.0, 0.0, 1.0))
-    # Direction agreement count (how many of 3 agree on same direction)
-    obs[21] = float(np.clip(fusion_result.get("agreement_count", 0) / 3.0, 0.0, 1.0))
+    # [14] momentum_velocity: clamp to [-2, 2], then [-1, 1]
+    momentum = float(market_state.get("momentum_velocity", 0.0))
+    obs[14] = float(np.clip(momentum / 2.0, -1.0, 1.0))
 
-    # ── Portfolio context features [22-27] ──
-    # Number of open positions (normalised by /5)
-    obs[22] = float(np.clip(portfolio_state.get("open_positions", 0) / 5.0, 0.0, 1.0))
-    # Daily P&L in R (clipped to [-5, 5])
-    obs[23] = float(np.clip(portfolio_state.get("daily_pnl_r", 0.0), -5.0, 5.0) / 5.0)
-    # Current drawdown [0, 1]
-    obs[24] = float(np.clip(portfolio_state.get("drawdown", 0.0), 0.0, 1.0))
-    # Consecutive losses (normalised by /5)
-    obs[25] = float(np.clip(portfolio_state.get("consecutive_losses", 0) / 5.0, 0.0, 1.0))
-    # Consecutive wins (normalised by /5)
-    obs[26] = float(np.clip(portfolio_state.get("consecutive_wins", 0) / 5.0, 0.0, 1.0))
-    # Account exposure (normalised by /max_positions)
-    obs[27] = float(np.clip(
-        portfolio_state.get("exposure", 0.0) / max(portfolio_state.get("max_exposure", 5.0), 1.0),
-        0.0, 1.0
-    ))
+    # [15] rsi: normalize from [0, 100] to [0, 1]
+    rsi = float(market_state.get("rsi", 50.0))
+    obs[15] = float(np.clip(rsi / 100.0, 0.0, 1.0))
+
+    # [16-19] Multi-timeframe trends: up=1, down=-1, flat=0
+    for i, tf_key in enumerate(["m5_trend", "m15_trend", "h1_trend", "h4_trend"]):
+        trend = market_state.get(tf_key, "flat")
+        _trend_map = {"up": 1.0, "down": -1.0, "flat": 0.0}
+        obs[16 + i] = float(_trend_map.get(str(trend), 0.0))
+
+    # ═══════════════════════════════════════════════════════
+    # GROUP 3: PORTFOLIO STATE (indices 20-27, 8 features)
+    # ═══════════════════════════════════════════════════════
+
+    # [20] open_positions / max_positions: [0, 1]
+    max_pos = float(portfolio_state.get("max_positions", 5.0))
+    open_pos = float(portfolio_state.get("open_positions", 0))
+    obs[20] = float(np.clip(open_pos / max(max_pos, 1), 0.0, 1.0))
+
+    # [21] daily_pnl / max_daily_loss: [-1, 1]
+    daily_pnl = float(portfolio_state.get("daily_pnl_r", 0.0))
+    max_loss = float(portfolio_state.get("max_daily_loss", 100.0))
+    if max_loss > 0:
+        pnl_ratio = daily_pnl / max_loss
+    else:
+        pnl_ratio = 0.0
+    obs[21] = float(np.clip(pnl_ratio, -1.0, 1.0))
+
+    # [22] weekly_pnl: normalize to [-1, 1]
+    weekly_pnl = float(portfolio_state.get("weekly_pnl", 0.0))
+    initial_eq = float(portfolio_state.get("initial_equity", 1000.0))
+    obs[22] = float(np.clip(weekly_pnl / max(initial_eq, 1.0), -1.0, 1.0))
+
+    # [23] total_equity / initial_equity: map [0.5, 1.5] to [-1, 1]
+    equity = float(portfolio_state.get("total_equity", initial_eq))
+    equity_ratio = equity / max(initial_eq, 1.0)
+    obs[23] = float(np.clip((equity_ratio - 1.0) * 2.0, -1.0, 1.0))
+
+    # [24] unrealized_pnl: normalize by initial equity
+    unrealized = float(portfolio_state.get("unrealized_pnl", 0.0))
+    obs[24] = float(np.clip(unrealized / max(initial_eq, 1.0), -1.0, 1.0))
+
+    # [25] current_drawdown: [0, 1]
+    obs[25] = float(np.clip(portfolio_state.get("drawdown", 0.0), 0.0, 1.0))
+
+    # [26] consecutive_losses / max_consecutive: [0, 1]
+    from rpde.config import RL_MAX_CONSECUTIVE_LOSSES
+    cons_losses = float(portfolio_state.get("consecutive_losses", 0))
+    obs[26] = cons_losses / max(RL_MAX_CONSECUTIVE_LOSSES, 1)
+
+    # [27] hours_since_last_trade: normalize, cap at 8 hours
+    hrs_since = float(portfolio_state.get("hours_since_last_trade", 0.0))
+    obs[27] = float(np.clip(hrs_since / 8.0, 0.0, 1.0))
 
     return obs
 
@@ -1056,7 +1127,8 @@ class RLDecisionEngine:
                 with torch.no_grad():
                     action, log_prob, value = self.network.get_action(obs_tensor)
 
-                next_obs, reward, done, info = env.step(action)
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
 
                 # Store transition (detach tensors to avoid graph buildup)
                 buffer.add(

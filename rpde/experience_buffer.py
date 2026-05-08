@@ -668,6 +668,9 @@ class ContinuousLearningLoop:
         self._total_retrains: Dict[str, int] = defaultdict(int)
         self._retrain_errors: List[dict] = []
 
+        # Lazy-loaded RL agents per pair for online updates
+        self._rl_agents: Dict[str, Any] = {}
+
         # Load persisted schedule state
         self._load_schedule_state()
 
@@ -1298,21 +1301,41 @@ class ContinuousLearningLoop:
             }
 
         try:
-            # Phase 3: RL agent module (planned)
-            # For now, log that RL retrain would happen here
-            log.info(
-                f"[CLL] {pair}: RL agent retrain scheduled "
-                f"({len(sample)} samples) — Phase 3 placeholder"
+            # Phase 3: RL agent retraining via PPO
+            from rpde.rl_agent import train_rl_agent
+
+            # Build gym environment for the pair
+            from rpde.rl_env import TradingEnv
+            rl_env = TradingEnv(
+                pair=pair,
+                initial_equity=10000.0,
+                max_positions=5,
+                max_daily_loss_pct=3.0,
             )
 
+            # Run PPO training episodes
+            result_rl = train_rl_agent(
+                pair=pair,
+                env=rl_env,
+                episodes=max(10, len(sample) // 50),
+            )
+
+            if result_rl.get("status") == "COMPLETED":
+                log.info(
+                    f"[CLL] {pair}: RL agent retrained successfully "
+                    f"({result_rl.get('episodes_completed', 0)} episodes, "
+                    f"avg_reward={result_rl.get('avg_reward', 0):.3f})"
+                )
+
             result = {
-                "status": "COMPLETED",
+                "status": result_rl.get("status", "COMPLETED"),
                 "component": "rl",
                 "pair": pair,
                 "samples_used": len(sample),
+                "episodes_completed": result_rl.get("episodes_completed", 0),
+                "avg_reward": result_rl.get("avg_reward", 0.0),
                 "duration_seconds": int(time.time() - t0),
-                "method": "batch_replay",
-                "note": "Phase 3 placeholder — actual RL training not yet implemented",
+                "method": "ppo_replay",
             }
 
         except Exception as e:
@@ -1430,31 +1453,53 @@ class ContinuousLearningLoop:
         """
         Feed trade outcome to RL agent for online learning.
 
-        Phase 3 placeholder — actual RL agent integration will
-        be implemented when the RL module is built.
-
-        The RL agent should:
-          1. Compare its predicted value vs actual outcome
-          2. Compute TD-error (temporal difference)
-          3. Update policy/value networks via gradient step
-          4. Adjust exploration rate based on learning progress
+        The RL agent uses the trade outcome to update its value
+        estimate and compare predicted vs actual R-multiple,
+        which informs future exploration/exploitation balance.
 
         Args:
             experience: Completed trade with outcome data.
 
         Returns:
-            True if RL was updated (always False for Phase 3 placeholder).
+            True if RL was updated, False otherwise.
         """
-        # Phase 3: Will integrate with actual RL agent
-        # For now, just log what would happen
-        log.debug(
-            f"[CLL] RL online learning: {experience.pair} "
-            f"action={experience.rl_action_name} "
-            f"predicted_v={experience.rl_predicted_value:.3f} "
-            f"actual_r={experience.profit_r:+.2f} "
-            f"(Phase 3 placeholder)"
-        )
-        return False
+        try:
+            from rpde.rl_agent import train_rl_agent
+
+            # Use the update_from_trade method to record the outcome
+            # This feeds into the experience buffer used for future PPO updates
+            agent_key = f"{experience.pair}"
+            if agent_key not in self._rl_agents:
+                # Lazy-load the RL agent for this pair
+                try:
+                    from rpde.rl_agent import RLDecisionEngine
+                    agent = RLDecisionEngine(pair=experience.pair)
+                    if agent.is_trained():
+                        self._rl_agents[agent_key] = agent
+                    else:
+                        return False
+                except Exception:
+                    return False
+
+            agent = self._rl_agents[agent_key]
+            agent.update_from_trade(
+                trade_id=experience.trade_id,
+                profit_r=experience.profit_r,
+            )
+
+            log.debug(
+                f"[CLL] RL online learning: {experience.pair} "
+                f"action={experience.rl_action_name} "
+                f"predicted_v={experience.rl_predicted_value:.3f} "
+                f"actual_r={experience.profit_r:+.2f}"
+            )
+            return True
+
+        except ImportError:
+            return False
+        except Exception as e:
+            log.debug(f"[CLL] RL online update error: {e}")
+            return False
 
     # ──────────────────────────────────────────────────────────
     #  DATABASE LOGGING

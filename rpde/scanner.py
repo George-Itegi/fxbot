@@ -386,7 +386,7 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
             # Store scan history record
             store_scan_history(
                 scan_id=scan_id,
-                pair=pair,
+                pairs_scanned=1,
                 days=days,
                 bars_scanned=bars_scanned,
                 golden_moments=total_moments,
