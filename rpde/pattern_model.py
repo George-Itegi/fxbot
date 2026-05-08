@@ -217,9 +217,12 @@ class PatternModel:
 
         xgb_params = dict(XGB_PARAMS)
 
-        # Remove early_stopping_rounds from params (pass separately to fit)
+        # XGBoost 2.x API:
+        #   - eval_metric goes in the constructor
+        #   - early_stopping_rounds goes in .fit()
+        # Pop early_stopping_rounds from constructor params (pass to fit instead)
         early_rounds = xgb_params.pop('early_stopping_rounds', 50)
-        eval_metric = xgb_params.pop('eval_metric', 'mae')
+        # eval_metric stays in constructor — do NOT pop it
 
         # Build model
         warm_start_model = None
@@ -246,14 +249,13 @@ class PatternModel:
             model.fit(
                 X_train, y_train,
                 eval_set=[(X_val, y_val)],
-                eval_metric=eval_metric,
                 verbose=False,
             )
         else:
             model.fit(
                 X_train, y_train,
                 eval_set=[(X_val, y_val)],
-                eval_metric=eval_metric,
+                early_stopping_rounds=early_rounds,
                 verbose=False,
             )
 
