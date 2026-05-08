@@ -18,6 +18,7 @@
 import json
 import numpy as np
 from sklearn.cluster import DBSCAN
+from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
 from core.logger import get_logger
@@ -176,23 +177,91 @@ def _normalize_features(X: np.ndarray) -> tuple:
     return X_norm, scaler
 
 
+# ── Optimal Eps Calculation ─────────────────────────────────
+
+def _compute_optimal_eps(X: np.ndarray, min_samples: int) -> float:
+    """
+    Compute optimal eps using the k-distance graph method.
+
+    In high-dimensional spaces (e.g. 26 features), a fixed eps value
+    like 2.5 is far too small — typical inter-point distances after
+    StandardScaler normalization are ~sqrt(2*d) ≈ 7.2 for d=26.
+
+    This method:
+    1. Computes distance to the k-th nearest neighbor for each point
+    2. Sorts those distances
+    3. Uses the 70th percentile as eps — captures natural cluster
+       boundaries while avoiding the "everything is one cluster" problem
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Normalized feature matrix (n_samples, n_features).
+    min_samples : int
+        DBSCAN min_samples parameter (used as k for nearest neighbors).
+
+    Returns
+    -------
+    float
+        Optimal eps value for DBSCAN.
+    """
+    n = X.shape[0]
+    if n <= min_samples:
+        logger.debug("Too few samples for k-distance eps, using config default")
+        return DBSCAN_EPS
+
+    try:
+        nn = NearestNeighbors(n_neighbors=min_samples, metric='euclidean')
+        nn.fit(X)
+        distances, _ = nn.kneighbors(X)
+        # Distance to the k-th nearest neighbor (last column)
+        k_distances = np.sort(distances[:, -1])
+
+        # Use 70th percentile — captures the natural cluster boundary
+        # while being robust to outliers at the tail
+        eps = float(np.percentile(k_distances, 70))
+
+        # Sanity bounds
+        eps = max(eps, 1.5)   # minimum: avoid degenerate clusters
+        eps = min(eps, 15.0)  # maximum: prevent one giant cluster
+
+        # Log diagnostics
+        median_dist = float(np.percentile(k_distances, 50))
+        p90_dist = float(np.percentile(k_distances, 90))
+        logger.info(
+            f"Dynamic eps: {eps:.3f} (median_k_dist={median_dist:.3f}, "
+            f"p90_k_dist={p90_dist:.3f}, n={n}, k={min_samples})"
+        )
+
+        return eps
+
+    except Exception as e:
+        logger.warning(f"Failed to compute optimal eps: {e}, using config default")
+        return DBSCAN_EPS
+
+
 # ── DBSCAN Clustering ────────────────────────────────────────
 
 def _cluster_dbscan(X: np.ndarray, eps: float = None,
                     min_samples: int = None) -> np.ndarray:
     """
-    Cluster using DBSCAN algorithm.
+    Cluster using DBSCAN algorithm with automatic eps tuning.
+
     DBSCAN is preferred because:
     - Doesn't require specifying number of clusters
     - Can find arbitrarily shaped clusters
     - Labels noise points as -1 (outliers get discarded)
+
+    eps is computed dynamically from the data distribution using
+    the k-distance graph method. This avoids the curse of
+    dimensionality where a fixed eps is too tight in high-D spaces.
 
     Parameters
     ----------
     X : np.ndarray
         Normalized feature matrix of shape (n_samples, n_features).
     eps : float or None
-        Maximum distance between samples. Defaults to DBSCAN_EPS from config.
+        Maximum distance between samples. If None, computed dynamically.
     min_samples : int or None
         Min samples to form a cluster. Defaults to DBSCAN_MIN_SAMPLES from config.
 
@@ -205,7 +274,6 @@ def _cluster_dbscan(X: np.ndarray, eps: float = None,
         logger.warning("Cannot cluster empty feature matrix")
         return np.array([], dtype=int)
 
-    eps = eps if eps is not None else DBSCAN_EPS
     min_samples = min_samples if min_samples is not None else DBSCAN_MIN_SAMPLES
 
     # If we have very few samples, reduce min_samples to allow clustering
@@ -216,6 +284,15 @@ def _cluster_dbscan(X: np.ndarray, eps: float = None,
         )
         min_samples = max(3, X.shape[0] // 2)
 
+    # Compute eps dynamically from data distribution (k-distance graph)
+    if eps is None:
+        eps = _compute_optimal_eps(X, min_samples)
+
+    logger.info(
+        f"Running DBSCAN: eps={eps:.3f}, min_samples={min_samples}, "
+        f"n_samples={X.shape[0]}, n_features={X.shape[1]}"
+    )
+
     clustering = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1)
     labels = clustering.fit_predict(X)
 
@@ -225,6 +302,23 @@ def _cluster_dbscan(X: np.ndarray, eps: float = None,
         f"DBSCAN clustering done: {len(unique_labels)} clusters, "
         f"{noise_count} noise points out of {len(labels)} total"
     )
+
+    # If we got 0 clusters, retry with a more permissive eps
+    if len(unique_labels) == 0 and eps < 10.0:
+        # Double the eps and try again
+        retry_eps = min(eps * 1.5, 15.0)
+        logger.info(
+            f"DBSCAN found 0 clusters with eps={eps:.3f}. "
+            f"Retrying with eps={retry_eps:.3f}"
+        )
+        clustering = DBSCAN(eps=retry_eps, min_samples=min_samples, n_jobs=-1)
+        labels = clustering.fit_predict(X)
+        unique_labels = set(labels) - {-1}
+        noise_count = int(np.sum(labels == -1))
+        logger.info(
+            f"DBSCAN retry: {len(unique_labels)} clusters, "
+            f"{noise_count} noise points out of {len(labels)} total"
+        )
 
     return labels
 
@@ -488,8 +582,6 @@ def mine_patterns(pair: str, scan_ids: list = None) -> list:
         logger.warning(f"No golden moments found for {pair}")
         return []
 
-    logger.info(f"Loaded {len(moments)} golden moments for {pair}")
-
     # ── Step 2: Extract feature vectors ──
     X_raw, valid_indices = _extract_cluster_features(moments)
     if X_raw.shape[0] == 0:
@@ -586,7 +678,19 @@ def mine_all_pairs(scan_ids: list = None) -> dict:
 
     for pair in PAIR_WHITELIST:
         try:
-            patterns = mine_patterns(pair, scan_ids)
+            # Only pass scan_ids relevant to this pair.
+            # scan_ids format: "{batch_id}_{pair}" — e.g.
+            # "batch_20260508_125241_EURJPY".  Without this filter,
+            # every pair queries ALL scan_ids (10 DB calls per pair
+            # with 9 returning 0 rows).
+            relevant_scan_ids = None
+            if scan_ids:
+                relevant_scan_ids = [sid for sid in scan_ids
+                                     if sid.endswith(f"_{pair}")]
+                if not relevant_scan_ids:
+                    relevant_scan_ids = None
+
+            patterns = mine_patterns(pair, relevant_scan_ids)
             per_pair[pair] = patterns
             total_patterns += len(patterns)
         except Exception as e:
