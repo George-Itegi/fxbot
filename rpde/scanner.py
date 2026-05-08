@@ -279,7 +279,8 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
     df = _compute_atr_series(df)
 
     # Pre-compute indicators for feature extraction
-    if _SNAPSHOT_AVAILABLE:
+    snapshot_ok = _SNAPSHOT_AVAILABLE
+    if snapshot_ok:
         try:
             from rpde.feature_snapshot import _add_indicators
             if 'rsi' not in df.columns:
@@ -289,7 +290,7 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
                          f"{time.time() - t_pre:.1f}s ({len(df)} bars)")
         except Exception as ex:
             log.warning(f"[RPDE_SCANNER] Failed to pre-compute indicators: {ex}")
-            _SNAPSHOT_AVAILABLE = False
+            snapshot_ok = False
 
     # Scan every bar (except the last FORWARD_LOOK_BARS where we can't look ahead)
     # Also skip the first 50 bars for indicator warmup
@@ -356,7 +357,7 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
         }
 
         # Extract 93-feature snapshot at this bar
-        if _SNAPSHOT_AVAILABLE:
+        if snapshot_ok:
             try:
                 snapshot = extract_snapshot_at_index(pair, i, df)
                 if snapshot:
