@@ -219,33 +219,35 @@ def _train_model_for_pair(pair: str, patterns: list,
     }
 
     if _MODEL_AVAILABLE:
-        # Delegate to the full pattern_model module
+        # Delegate to the full pattern_model module.
+        # v5.0 design: ONE model per pair (trained on ALL golden moments
+        # for that pair), NOT one model per pattern.
         try:
-            for pattern in patterns:
-                pattern_id = pattern.get("pattern_id") or _build_pattern_id(
-                    pair, pattern.get("cluster_id", 0), pattern.get("direction", "?")
+            try:
+                # Instantiate per-pair model and train on all golden moments
+                pair_model = pattern_model.PatternModel(pair)
+                model_result = pair_model.train(
+                    golden_moments=golden_moments or [],
+                    incremental=incremental,
+                    use_replay=use_replay,
                 )
-                try:
-                    model_result = pattern_model.PatternModel.train(
-                        pair=pair,
-                        pattern=pattern,
-                        golden_moments=golden_moments,
-                        incremental=incremental,
-                        use_replay=use_replay,
-                    )
-                    if model_result and model_result.get("model_path"):
-                        results["models_trained"] += 1
+                if model_result and model_result.get("model_path"):
+                    results["models_trained"] += 1
+                    # Record model path on all patterns for this pair
+                    for pattern in patterns:
+                        pattern_id = pattern.get("pattern_id") or _build_pattern_id(
+                            pair, pattern.get("cluster_id", 0), pattern.get("direction", "?")
+                        )
                         results["trained_pattern_ids"].append(pattern_id)
 
-                        # Update pattern in library with model path
                         if _DB_AVAILABLE:
                             pattern["model_path"] = model_result["model_path"]
                             rpde_db.store_pattern(pattern)
 
-                except Exception as ex:
-                    err_msg = f"Failed to train model for {pattern_id}: {ex}"
-                    log.error(f"[RPDE_TRAINER] {err_msg}")
-                    results["errors"].append(err_msg)
+            except Exception as ex:
+                err_msg = f"Failed to train model for {pair}: {ex}"
+                log.error(f"[RPDE_TRAINER] {err_msg}")
+                results["errors"].append(err_msg)
 
         except Exception as ex:
             results["status"] = "FAILED"
@@ -433,7 +435,30 @@ def run_full_pipeline(days: int = 360, pairs: list = None) -> dict:
 
                 if _VALIDATOR_AVAILABLE:
                     try:
-                        validated = pattern_validator.validate_all_patterns(pair, patterns)
+                        # Load all_moments for the pair (required by validator)
+                        moments_for_val = None
+                        if _DB_AVAILABLE:
+                            try:
+                                moments_for_val = rpde_db.load_golden_moments(pair=pair)
+                            except Exception:
+                                pass
+                        validated = pattern_validator.validate_all_patterns(
+                            pair, patterns, all_moments=moments_for_val or []
+                        )
+                        # External validator returns [{"pattern": ..., "validation": ...}]
+                        # Flatten to just the pattern dicts with merged tier/stats
+                        flat_validated = []
+                        for v in validated:
+                            if isinstance(v, dict) and "pattern" in v:
+                                p = v["pattern"]
+                                val = v.get("validation", {})
+                                # Merge validation results into pattern dict
+                                p["tier"] = val.get("tier", p.get("tier", "PROBATIONARY"))
+                                if val.get("statistics"):
+                                    for k, v2 in val["statistics"].items():
+                                        p.setdefault(k, v2)
+                                flat_validated.append(p)
+                        validated = flat_validated
                     except Exception as ex:
                         log.warning(f"[RPDE_TRAINER] External validator failed for {pair}: {ex}")
                         validated = _validate_patterns_for_pair(pair, patterns)
