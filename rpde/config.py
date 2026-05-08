@@ -42,11 +42,15 @@ PAIR_MOVE_THRESHOLDS = {
 CLUSTER_ALGORITHM = "dbscan"
 
 # DBSCAN: Maximum distance between two samples to be considered neighbors
-# Lower = more patterns (stricter), Higher = fewer patterns (broader)
-DBSCAN_EPS = 0.6
+# Higher value needed because we cluster in 26-dimensional feature space.
+# In high dimensions, inter-point distances grow naturally.
+# Too low = everything is noise (0 clusters). Too high = 1 giant cluster.
+DBSCAN_EPS = 2.5
 
 # DBSCAN: Minimum samples in a neighborhood to form a cluster
-DBSCAN_MIN_SAMPLES = 8
+# Reduced from 8 to 5 — with strict validation gates (PF≥3, WR≥55%),
+# smaller seed clusters are fine since they'll be filtered later.
+DBSCAN_MIN_SAMPLES = 5
 
 # Feature groups used for clustering (subset of 93 features)
 CLUSTER_FEATURES = [
