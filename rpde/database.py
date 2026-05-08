@@ -605,7 +605,7 @@ def store_golden_moment(moment: dict):
                 mae_pips, mae_bars, mae_price, mfe_after_mae,
                 is_win, session, market_state, atr_at_entry, spread_at_entry,
                 features_json
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             moment.get('scan_id', ''),
             moment.get('pair', ''),
