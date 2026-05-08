@@ -224,6 +224,15 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
     if profit_factor < MIN_PATTERN_PROFIT_FACTOR:
         rejection_reasons.append(f"Profit factor too low: {profit_factor:.2f} < {MIN_PATTERN_PROFIT_FACTOR}")
 
+    # MAE statistics — critical for stop loss placement
+    # (computed here BEFORE the quality check below that references avg_mae)
+    avg_mae = float(np.mean(mae_values)) if mae_values else 0.0
+    max_mae = float(np.max(mae_values)) if mae_values else 0.0
+    p90_mae = float(np.percentile(mae_values, 90)) if len(mae_values) >= 5 else max_mae
+    avg_mfe_after_mae = float(np.mean(mfe_after_mae_values)) if mfe_after_mae_values else 0.0
+    # Risk-adjusted reward: how much you gain after surviving the average adverse move
+    mae_reward_ratio = avg_mfe_after_mae / avg_mae if avg_mae > 0 else 0.0
+
     # MAE quality check — patterns that need deep pullbacks are less reliable
     avg_move_pips_val = float(np.mean([m.get("move_pips", 0) for m in member_moments])) if member_moments else 0.0
     if avg_mae > 0 and avg_move_pips_val > 0:
@@ -259,13 +268,7 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
     if max_consec >= MAX_CONSECUTIVE_LOSSES_HARD:
         rejection_reasons.append(f"Max consecutive losses: {max_consec}")
 
-    # MAE statistics — critical for stop loss placement
-    avg_mae = float(np.mean(mae_values)) if mae_values else 0.0
-    max_mae = float(np.max(mae_values)) if mae_values else 0.0
-    p90_mae = float(np.percentile(mae_values, 90)) if len(mae_values) >= 5 else max_mae
-    avg_mfe_after_mae = float(np.mean(mfe_after_mae_values)) if mfe_after_mae_values else 0.0
-    # Risk-adjusted reward: how much you gain after surviving the average adverse move
-    mae_reward_ratio = avg_mfe_after_mae / avg_mae if avg_mae > 0 else 0.0
+    # (MAE statistics already computed above before the quality check)
 
     stats = {
         "occurrences": occurrences, "wins": wins, "losses": occurrences - wins,
