@@ -81,38 +81,44 @@ MIN_PATTERN_OCCURRENCES = 30
 MIN_PATTERN_WIN_RATE = 0.55
 
 # Minimum profit factor (total wins / total losses in R)
-MIN_PATTERN_PROFIT_FACTOR = 1.3
+# Higher threshold = only keep patterns with strong edge
+MIN_PATTERN_PROFIT_FACTOR = 3.0
 
 # Minimum backtest period in days to consider pattern validated
 MIN_BACKTEST_DAYS = 60
+
+# Maximum Average MAE as fraction of move (stop loss quality)
+# e.g., 0.6 means: avg adverse excursion must be < 60% of the average move
+# Patterns that require deep pullbacks before succeeding are less reliable
+MAX_AVG_MAE_MOVE_RATIO = 0.6
 
 # Pattern confidence tiers
 PATTERN_TIERS = {
     "GOD_TIER": {
         "min_occurrences": 200,
         "min_win_rate": 0.70,
-        "min_profit_factor": 2.0,
+        "min_profit_factor": 5.0,
         "min_backtest_days": 180,
         "description": "Maximum confidence — deploy with full size",
     },
     "STRONG": {
         "min_occurrences": 80,
         "min_win_rate": 0.65,
-        "min_profit_factor": 1.8,
+        "min_profit_factor": 4.0,
         "min_backtest_days": 120,
         "description": "High confidence — normal position sizing",
     },
     "VALID": {
         "min_occurrences": 50,
         "min_win_rate": 0.60,
-        "min_profit_factor": 1.5,
+        "min_profit_factor": 3.5,
         "min_backtest_days": 90,
         "description": "Confirmed — standard position sizing",
     },
     "PROBATIONARY": {
         "min_occurrences": 30,
         "min_win_rate": 0.55,
-        "min_profit_factor": 1.3,
+        "min_profit_factor": 3.0,
         "min_backtest_days": 60,
         "description": "Needs more data — reduced position sizing (0.5x)",
     },

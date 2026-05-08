@@ -16,6 +16,7 @@ from rpde.config import (
     MIN_PATTERN_WIN_RATE,
     MIN_PATTERN_PROFIT_FACTOR,
     MIN_BACKTEST_DAYS,
+    MAX_AVG_MAE_MOVE_RATIO,
     PATTERN_TIERS,
     CURRENCY_CORRELATION_THRESHOLD,
     CLUSTER_FEATURES,
@@ -186,6 +187,7 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
         rejection_reasons.append(f"Insufficient occurrences: {occurrences} < {MIN_PATTERN_OCCURRENCES}")
 
     outcomes, returns, profits, losses, timestamps = [], [], [], [], []
+    mae_values, mfe_after_mae_values = [], []
     for m in member_moments:
         is_win = m.get("is_win", False)
         if isinstance(is_win, int):
@@ -202,6 +204,12 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
         if ts is not None:
             timestamps.append(ts)
 
+        # MAE data for stop loss intelligence
+        mae_pips = float(m.get("mae_pips", 0.0))
+        mae_values.append(mae_pips)
+        mfe_after_mae = float(m.get("mfe_after_mae", 0.0))
+        mfe_after_mae_values.append(mfe_after_mae)
+
     wins = sum(1 for o in outcomes if o)
     win_rate = wins / occurrences if occurrences > 0 else 0.0
     avg_profit = float(np.mean(profits)) if profits else 0.0
@@ -215,6 +223,16 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
         rejection_reasons.append(f"Win rate too low: {win_rate:.1%} < {MIN_PATTERN_WIN_RATE:.0%}")
     if profit_factor < MIN_PATTERN_PROFIT_FACTOR:
         rejection_reasons.append(f"Profit factor too low: {profit_factor:.2f} < {MIN_PATTERN_PROFIT_FACTOR}")
+
+    # MAE quality check — patterns that need deep pullbacks are less reliable
+    avg_move_pips_val = float(np.mean([m.get("move_pips", 0) for m in member_moments])) if member_moments else 0.0
+    if avg_mae > 0 and avg_move_pips_val > 0:
+        mae_move_ratio = avg_mae / avg_move_pips_val
+        if mae_move_ratio > MAX_AVG_MAE_MOVE_RATIO:
+            rejection_reasons.append(
+                f"MAE too deep: {mae_move_ratio:.0%} of move "
+                f"(avg MAE={avg_mae:.1f}pips, avg move={avg_move_pips_val:.1f}pips)"
+            )
 
     backtest_start = backtest_end = None
     backtest_days = 0
@@ -241,6 +259,14 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
     if max_consec >= MAX_CONSECUTIVE_LOSSES_HARD:
         rejection_reasons.append(f"Max consecutive losses: {max_consec}")
 
+    # MAE statistics — critical for stop loss placement
+    avg_mae = float(np.mean(mae_values)) if mae_values else 0.0
+    max_mae = float(np.max(mae_values)) if mae_values else 0.0
+    p90_mae = float(np.percentile(mae_values, 90)) if len(mae_values) >= 5 else max_mae
+    avg_mfe_after_mae = float(np.mean(mfe_after_mae_values)) if mfe_after_mae_values else 0.0
+    # Risk-adjusted reward: how much you gain after surviving the average adverse move
+    mae_reward_ratio = avg_mfe_after_mae / avg_mae if avg_mae > 0 else 0.0
+
     stats = {
         "occurrences": occurrences, "wins": wins, "losses": occurrences - wins,
         "win_rate": round(win_rate, 6), "avg_profit_pips": round(avg_profit, 2),
@@ -248,6 +274,12 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
         "expected_r": round(expected_r, 4), "max_drawdown_pips": round(compute_max_drawdown(returns), 2),
         "max_consecutive_losses": max_consec, "sharpe_ratio": compute_sharpe(returns),
         "backtest_start": backtest_start, "backtest_end": backtest_end, "backtest_days": backtest_days,
+        # MAE (Maximum Adverse Excursion) — stop loss intelligence
+        "avg_mae_pips": round(avg_mae, 2),
+        "max_mae_pips": round(max_mae, 2),
+        "p90_mae_pips": round(p90_mae, 2),
+        "avg_mfe_after_mae_pips": round(avg_mfe_after_mae, 2),
+        "mae_reward_ratio": round(mae_reward_ratio, 4),
     }
 
     tier = assign_tier(stats)

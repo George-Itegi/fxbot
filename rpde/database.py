@@ -100,6 +100,10 @@ def _init_rpde_tables_inner():
                 move_pips           DOUBLE,
                 move_duration_bars  INT,
                 forward_return      DOUBLE,
+                mae_pips            DOUBLE,
+                mae_bars            INT,
+                mae_price           DOUBLE,
+                mfe_after_mae       DOUBLE,
                 is_win              TINYINT,
                 session             VARCHAR(30),
                 market_state        VARCHAR(30),
@@ -598,9 +602,10 @@ def store_golden_moment(moment: dict):
             INSERT INTO rpde_pattern_scans (
                 scan_id, pair, direction, bar_timestamp, entry_price,
                 peak_price, move_pips, move_duration_bars, forward_return,
+                mae_pips, mae_bars, mae_price, mfe_after_mae,
                 is_win, session, market_state, atr_at_entry, spread_at_entry,
                 features_json
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             moment.get('scan_id', ''),
             moment.get('pair', ''),
@@ -611,6 +616,10 @@ def store_golden_moment(moment: dict):
             _safe_float(moment.get('move_pips')),
             _safe_int(moment.get('peak_bar_offset', 0)),
             _safe_float(moment.get('forward_return')),
+            _safe_float(moment.get('mae_pips', 0.0)),
+            _safe_int(moment.get('mae_bars', 0)),
+            _safe_float(moment.get('mae_price')),
+            _safe_float(moment.get('mfe_after_mae', 0.0)),
             1 if moment.get('forward_return', 0) > 0 else 0,
             moment.get('session', ''),
             moment.get('market_state', ''),

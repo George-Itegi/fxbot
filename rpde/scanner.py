@@ -126,7 +126,9 @@ def _look_forward(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
     For BUY: find max(high[bar_idx:bar_idx+look_bars]) - close[bar_idx]
     For SELL: find close[bar_idx] - min(low[bar_idx:bar_idx+look_bars])
 
-    If neither exceeds threshold_pips, returns no signal.
+    Additionally tracks Maximum Adverse Excursion (MAE) — how far price
+    went AGAINST the trade direction before reaching the peak. This is
+    critical for stop loss placement intelligence.
 
     Args:
         closes: numpy array of close prices
@@ -144,6 +146,10 @@ def _look_forward(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
             - peak_price: float (the best price reached)
             - peak_bar_offset: int (bars to reach peak)
             - forward_return: float (move_pips / atr_at_entry, 0.0 if no ATR)
+            - mae_pips: float (max adverse excursion in pips BEFORE peak)
+            - mae_bars: int (bars until worst adverse point before peak)
+            - mae_price: float (worst price before peak)
+            - mfe_after_mae: float (favorable move remaining AFTER worst point)
     """
     # Calculate bounds
     end_idx = min(bar_idx + look_bars, len(closes))
@@ -156,6 +162,10 @@ def _look_forward(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
             'peak_price': closes[bar_idx],
             'peak_bar_offset': 0,
             'forward_return': 0.0,
+            'mae_pips': 0.0,
+            'mae_bars': 0,
+            'mae_price': closes[bar_idx],
+            'mfe_after_mae': 0.0,
         }
 
     entry_close = closes[bar_idx]
@@ -184,25 +194,83 @@ def _look_forward(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
             'peak_price': entry_close,
             'peak_bar_offset': 0,
             'forward_return': 0.0,
+            'mae_pips': 0.0,
+            'mae_bars': 0,
+            'mae_price': entry_close,
+            'mfe_after_mae': 0.0,
         }
 
     # Pick the direction with the larger move
     if buy_move_pips >= sell_move_pips:
-        return {
-            'direction': 'BUY',
-            'move_pips': round(buy_move_pips, 1),
-            'peak_price': round(float(np.max(forward_highs)), 6),
-            'peak_bar_offset': buy_peak_idx,
-            'forward_return': 0.0,  # Will be computed by caller if ATR available
-        }
+        direction = 'BUY'
+        move_pips = round(buy_move_pips, 1)
+        peak_price = round(float(np.max(forward_highs)), 6)
+        peak_bar_offset = buy_peak_idx
+
+        # MAE for BUY: worst price = lowest low BEFORE the peak
+        # i.e., how far did price drop below entry before rallying?
+        pre_peak_lows = forward_lows[:buy_peak_idx + 1]
+        if len(pre_peak_lows) > 0:
+            worst_low = float(np.min(pre_peak_lows))
+            worst_low_idx = int(np.argmin(pre_peak_lows))
+            mae_price_pips = (entry_close - worst_low) / pip_value if pip_value > 0 else 0.0
+        else:
+            worst_low = entry_close
+            worst_low_idx = 0
+            mae_price_pips = 0.0
+
+        mae_pips = round(max(mae_price_pips, 0.0), 1)
+        mae_bars = worst_low_idx
+        mae_price = round(worst_low, 6)
+
+        # MFE after MAE: how much favorable move remained after worst point
+        # This tells us the "reward" for surviving the adverse excursion
+        if worst_low < entry_close:
+            mfe_after_mae_price = float(np.max(forward_highs[worst_low_idx:])) - worst_low
+            mfe_after_mae = round(mfe_after_mae_price / pip_value if pip_value > 0 else 0.0, 1)
+        else:
+            mfe_after_mae = move_pips
+
     else:
-        return {
-            'direction': 'SELL',
-            'move_pips': round(sell_move_pips, 1),
-            'peak_price': round(float(np.min(forward_lows)), 6),
-            'peak_bar_offset': sell_peak_idx,
-            'forward_return': 0.0,  # Will be computed by caller if ATR available
-        }
+        direction = 'SELL'
+        move_pips = round(sell_move_pips, 1)
+        peak_price = round(float(np.min(forward_lows)), 6)
+        peak_bar_offset = sell_peak_idx
+
+        # MAE for SELL: worst price = highest high BEFORE the trough
+        # i.e., how far did price rise above entry before dropping?
+        pre_peak_highs = forward_highs[:sell_peak_idx + 1]
+        if len(pre_peak_highs) > 0:
+            worst_high = float(np.max(pre_peak_highs))
+            worst_high_idx = int(np.argmax(pre_peak_highs))
+            mae_price_pips = (worst_high - entry_close) / pip_value if pip_value > 0 else 0.0
+        else:
+            worst_high = entry_close
+            worst_high_idx = 0
+            mae_price_pips = 0.0
+
+        mae_pips = round(max(mae_price_pips, 0.0), 1)
+        mae_bars = worst_high_idx
+        mae_price = round(worst_high, 6)
+
+        # MFE after MAE: how much favorable move remained after worst point
+        if worst_high > entry_close:
+            mfe_after_mae_price = worst_high - float(np.min(forward_lows[worst_high_idx:]))
+            mfe_after_mae = round(mfe_after_mae_price / pip_value if pip_value > 0 else 0.0, 1)
+        else:
+            mfe_after_mae = move_pips
+
+    return {
+        'direction': direction,
+        'move_pips': move_pips,
+        'peak_price': peak_price,
+        'peak_bar_offset': peak_bar_offset,
+        'forward_return': 0.0,  # Will be computed by caller if ATR available
+        'mae_pips': mae_pips,
+        'mae_bars': mae_bars,
+        'mae_price': mae_price,
+        'mfe_after_mae': round(mfe_after_mae, 1),
+    }
 
 
 # ════════════════════════════════════════════════════════════════
@@ -349,6 +417,10 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
             'peak_price': result['peak_price'],
             'peak_bar_offset': result['peak_bar_offset'],
             'forward_return': forward_return,
+            'mae_pips': result['mae_pips'],
+            'mae_bars': result['mae_bars'],
+            'mae_price': result['mae_price'],
+            'mfe_after_mae': result['mfe_after_mae'],
             'atr': round(float(atr_val), 6),
             'spread': float(df['spread'].iloc[i]) if 'spread' in df.columns else 0.0,
             'volume': int(df['volume'].iloc[i]) if 'volume' in df.columns else 0,
