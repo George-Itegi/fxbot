@@ -172,13 +172,27 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
                 "currency_tag": "PAIR_ONLY", "currency_boost_pairs": [],
                 "rejection_reasons": rejection_reasons}
 
-    # Support both index-based and direct list of moments
+    # Support three formats for member references:
+    #   1. List of moment dicts (direct data)
+    #   2. List of database IDs (integers) — look up in all_moments by id
+    #   3. List of list indices (integers) — index into all_moments
     if isinstance(member_indices, list) and len(member_indices) > 0:
         if isinstance(member_indices[0], dict):
             member_moments = member_indices  # Already a list of moment dicts
         else:
-            valid_idx = [i for i in member_indices if 0 <= i < len(all_moments)]
-            member_moments = [all_moments[i] for i in valid_idx] if valid_idx else []
+            # Check whether these are DB IDs or list indices.
+            # DB IDs are typically large (auto-increment) and won't
+            # be valid list indices.  If any value >= len(all_moments),
+            # treat the whole list as DB IDs and look up by id field.
+            is_db_ids = any(i >= len(all_moments) for i in member_indices if isinstance(i, int))
+            if is_db_ids and all_moments:
+                # Build lookup: moment id -> moment dict
+                id_to_moment = {m.get("id"): m for m in all_moments if m.get("id") is not None}
+                member_moments = [id_to_moment[mid] for mid in member_indices
+                                 if mid in id_to_moment]
+            else:
+                valid_idx = [i for i in member_indices if isinstance(i, int) and 0 <= i < len(all_moments)]
+                member_moments = [all_moments[i] for i in valid_idx] if valid_idx else []
     else:
         member_moments = []
 
