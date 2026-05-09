@@ -199,9 +199,11 @@ NEGATIVE_SEARCH_COSINE_THRESHOLD = 0.3
 NEGATIVE_MAX_SAMPLES_PER_PAIR = 50000
 
 # How often to sample non-golden bars for negative sample collection
-# during scanning. 10 = every 10th non-golden bar that passes regime
+# during scanning.  3 = every 3rd non-golden bar that passes regime
 # filter but does NOT produce a golden moment.
-NEGATIVE_SAMPLE_INTERVAL = 10
+# v5.2: lowered from 10 to 3 to build a larger negative sample pool
+# faster (need ~50k negatives per pair for 3:1 ratio).
+NEGATIVE_SAMPLE_INTERVAL = 3
 
 # ── PATTERN MODEL — XGBoost Classifier ────────────────────
 

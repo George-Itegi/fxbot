@@ -170,76 +170,94 @@ class PatternModel:
 
         # ── Step 2: Add negative samples ──
         # Use TRUE negative samples from DB (bars that passed regime filter
-        # but did NOT produce a big move). These have direction='NONE' and
-        # near-zero forward_returns, teaching the model when NOT to trade.
+        # but did NOT produce a big move). These have direction='NONE'.
+        # Their target is forced to 0.0 so the model learns a clear
+        # boundary: golden moments (R > 0) vs non-golden (R = 0).
         #
-        # OLD (BROKEN): loaded all golden moments which are all winners,
-        # giving the model zero negative signal.
+        # v5.2 FIX: If DB doesn't have enough negatives, synthesize from
+        # golden moments (same features, target=0) to guarantee minimum
+        # 1:1 ratio.  Without this, WR stays at 100% because the model
+        # only ever sees winners.
         negative_count = 0
+        synthetic_count = 0
+        n_positives = len(X_list)
+        target_total_negatives = min(
+            n_positives * NEGATIVE_SAMPLE_RATIO,
+            NEGATIVE_MAX_SAMPLES_PER_PAIR
+        )
+
+        # 2a. Load TRUE negatives from DB
         try:
             from rpde.database import load_negative_samples as _load_neg
             true_negatives = _load_neg(pair=self.pair)
-            
+
             if true_negatives:
                 import random
-                target_negatives = min(
-                    len(X_list) * NEGATIVE_SAMPLE_RATIO,
-                    len(true_negatives),
-                    NEGATIVE_MAX_SAMPLES_PER_PAIR
+                # Take up to target_total_negatives from DB
+                db_target = min(target_total_negatives, len(true_negatives))
+                sampled_negatives = random.sample(
+                    true_negatives, db_target
                 )
-                
-                if target_negatives > 0:
-                    sampled_negatives = random.sample(
-                        true_negatives, 
-                        min(target_negatives, len(true_negatives))
-                    )
-                    
-                    for moment in sampled_negatives:
-                        features = moment.get('features') or moment.get('feature_snapshot') or {}
-                        if not features:
-                            continue
-                        
-                        row = []
-                        valid = True
-                        for feat_name in FEATURE_NAMES:
-                            val = features.get(feat_name)
-                            if val is None:
-                                valid = False
-                                break
-                            row.append(float(val))
-                        
-                        if not valid:
-                            continue
-                        
-                        # Use ACTUAL forward_return (near zero for non-golden bars)
-                        forward_r = moment.get('forward_return', 0.0)
-                        if forward_r is None:
-                            forward_r = 0.0
-                        try:
-                            forward_r = float(forward_r)
-                        except (TypeError, ValueError):
-                            continue
-                        
-                        # Clip to same range
-                        forward_r = max(R_CLIP_MIN, min(R_CLIP_MAX, forward_r))
-                        
-                        X_list.append(row)
-                        y_list.append(forward_r)
-                        negative_count += 1
-                    
-                    if negative_count > 0:
-                        log.info(f"[RPDE_MODEL] Added {negative_count} TRUE negative samples "
-                                 f"(direction=NONE from DB, "
-                                 f"ratio 1:{negative_count/max(len(X_list)-negative_count,1):.1f}, "
-                                 f"total now: {len(X_list)})")
-                else:
-                    log.info(f"[RPDE_MODEL] True negatives found ({len(true_negatives)}) "
-                             f"but target_negatives=0, skipping")
-            else:
-                log.info(f"[RPDE_MODEL] No true negative samples found in DB for {pair} — "
-                         f"run scanner first to collect direction='NONE' samples")
+
+                for moment in sampled_negatives:
+                    features = moment.get('features') or moment.get('feature_snapshot') or {}
+                    if not features:
+                        continue
+
+                    row = []
+                    valid = True
+                    for feat_name in FEATURE_NAMES:
+                        val = features.get(feat_name)
+                        if val is None:
+                            valid = False
+                            break
+                        row.append(float(val))
+
+                    if not valid:
+                        continue
+
+                    # v5.2: Force target to 0.0 — these bars did NOT produce
+                    # a tradeable move.  Using the raw forward_return (which
+                    # may be small-but-positive) keeps WR at 100% because
+                    # actual_R > 0 is still True for tiny moves.
+                    forward_r = 0.0
+
+                    X_list.append(row)
+                    y_list.append(forward_r)
+                    negative_count += 1
         except Exception as ex:
-            log.debug(f"[RPDE_MODEL] True negative sampling skipped: {ex}")
+            log.debug(f"[RPDE_MODEL] DB negative sampling skipped: {ex}")
+
+        # 2b. Synthesize negatives if DB didn't provide enough
+        remaining = target_total_negatives - negative_count
+        if remaining > 0:
+            import random
+            # Sample from existing golden moment features and set R=0.
+            # This teaches the model "these feature patterns don't
+            # always lead to big moves" — the features alone don't
+            # guarantee a tradeable outcome.
+            pool = list(range(n_positives))
+            synth_n = min(remaining, n_positives)  # max 1:1 synth ratio
+            if synth_n > 0:
+                sampled_idx = random.sample(pool, synth_n)
+                for idx in sampled_idx:
+                    row = list(X_list[idx])  # copy the feature vector
+                    # Add small Gaussian noise to prevent exact duplicates
+                    noise = np.random.normal(0, 0.01, size=len(row))
+                    row = [max(-5.0, min(5.0, r + n)) for r, n in zip(row, noise)]
+                    X_list.append(row)
+                    y_list.append(0.0)
+                    synthetic_count += 1
+
+        total_negatives = negative_count + synthetic_count
+        if total_negatives > 0:
+            ratio_str = f"{n_positives}:{total_negatives}"
+            log.info(f"[RPDE_MODEL] Added {total_negatives} negative samples "
+                     f"({negative_count} DB + {synthetic_count} synthetic, "
+                     f"ratio {ratio_str}, total now: {len(X_list)})")
+        else:
+            log.warning(f"[RPDE_MODEL] NO negative samples for {pair} — "
+                         f"model will overfit to winners (WR will be inflated)")
 
         # ── Step 3: Augment with Replay Buffer if requested ──
         if use_replay:
@@ -360,7 +378,7 @@ class PatternModel:
         # ── Step 7: Save model and metadata ──
         self.meta = {
             'pair': self.pair,
-            'version': '5.0',
+            'version': '5.2',
             'trained_at': datetime.now(timezone.utc).isoformat(),
             'training_samples': len(X_list),
             'train_samples': len(X_train),
@@ -378,8 +396,10 @@ class PatternModel:
             'y_mean': round(float(np.mean(y)), 4),
             'y_std': round(float(np.std(y)), 4),
             'y_positive_pct': round(float(np.mean(y > 0)), 4),
-            'n_negative_samples': negative_count,
-            'total_positive_samples': len(X_list) - negative_count - skipped,
+            'n_negative_db': negative_count,
+            'n_negative_synth': synthetic_count,
+            'n_negative_total': total_negatives,
+            'total_positive_samples': n_positives,
         }
 
         self.save()
@@ -649,7 +669,13 @@ class PatternModel:
 
             pred_avg = round(float(np.mean(q_preds)), 4)
             actual_avg = round(float(np.mean(q_actuals)), 4)
-            wr = float(np.mean(q_actuals > 0))
+            # v5.2 FIX: Use TAKE_THRESHOLD (0.3R) instead of > 0.
+            # Golden moments ALWAYS have actual_R > 0 by definition
+            # (scanner only saves bars where move exceeded threshold).
+            # So checking > 0 always gives 100% WR — meaningless.
+            # A "win" must mean the outcome was TRADEABLE (R >= 0.3),
+            # not just "price moved in the right direction a tiny bit".
+            wr = float(np.mean(q_actuals >= TAKE_THRESHOLD))
             count = int(len(q_actuals))
 
             result[label] = (pred_avg, actual_avg, round(wr, 4), count)
