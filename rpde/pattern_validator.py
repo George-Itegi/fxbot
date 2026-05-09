@@ -298,10 +298,41 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
         return False
 
     # ── 4. Search for similar non-member moments ───────────
+    # PRIORITY: Use TRUE negative samples from DB (bars that passed
+    # regime filter but did NOT produce a big move). These have
+    # direction='NONE' and near-zero forward_returns.
+    # FALLBACK: Search all_moments for similar non-members (old approach,
+    # but this is broken since all_moments are all winners).
     spread_cost = PAIR_SPREAD_PIPS.get(pair, DEFAULT_SPREAD_COST_PIPS)
 
+    true_negatives = []
+    try:
+        from rpde.database import load_negative_samples
+        true_negatives = load_negative_samples(pair=pair)
+    except Exception:
+        pass
+
     similar_non_members = []
-    if all_moments:
+    use_true_negatives = False
+
+    if true_negatives:
+        # Filter true negatives by cosine similarity to pattern centroid
+        # Keep only those with similarity > threshold (similar features)
+        for neg in true_negatives:
+            vec = _extract_feature_vector(neg)
+            if vec.size != len(CLUSTER_FEATURES):
+                continue
+            sim = _cosine_similarity(vec, centroid)
+            if sim > NEGATIVE_SEARCH_COSINE_THRESHOLD:
+                similar_non_members.append({
+                    "moment": neg,
+                    "similarity": sim,
+                })
+        use_true_negatives = True
+
+    # Fallback: if no true negatives found with sufficient similarity,
+    # try the old approach (searching all_moments for non-members)
+    if not similar_non_members and all_moments:
         for moment in all_moments:
             if _is_member(moment):
                 continue
@@ -460,7 +491,8 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
 
     log.info(f"[RPDE_VAL] {pair} cluster={pattern.get('cluster_id', '?')} "
              f"occ={total} wr={win_rate:.1%} pf={profit_factor:.2f} tier={tier or 'NONE'} "
-             f"(members={member_count}, similar_non_members={non_member_count})")
+             f"(members={member_count}, similar_non_members={non_member_count}, "
+             f"negatives={'TRUE' if use_true_negatives else 'FALLBACK'})")
 
     return {"valid": valid, "tier": tier, "statistics": stats,
             "currency_tag": currency_tag, "currency_boost_pairs": currency_boost,

@@ -44,6 +44,9 @@ from rpde.config import (
     CONFLUENCE_THRESHOLD_ATR_PERCENTILE,
     CONFLUENCE_THRESHOLD_PD_ZONE,
     CONFLUENCE_TIER1_SESSIONS,
+    NEGATIVE_SAMPLE_INTERVAL,
+    NEGATIVE_SAMPLE_RATIO,
+    NEGATIVE_MAX_SAMPLES_PER_PAIR,
 )
 from core.pip_utils import get_pip_size
 from core.logger import get_logger
@@ -442,6 +445,8 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
     bars_filtered = 0
     bars_low_confluence = 0
     last_moment_bar = -MIN_BAR_SEPARATION - 1  # Enforce separation
+    non_golden_bar_count = 0
+    negative_samples = []  # collected during scan for DB storage
 
     log.info(f"[RPDE_SCANNER] Scanning bars {warmup} to {scan_end - 1} "
              f"({scan_end - warmup} bars to evaluate)...")
@@ -472,6 +477,56 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
         )
 
         if result['direction'] is None:
+            # Non-golden bar that passed regime filter — candidate for negative sampling
+            non_golden_bar_count += 1
+            if non_golden_bar_count % NEGATIVE_SAMPLE_INTERVAL == 0 and snapshot_ok:
+                try:
+                    # Compute actual best forward move (even though below threshold)
+                    neg_end_idx = min(i + FORWARD_LOOK_BARS, len(closes))
+                    neg_forward_highs = highs[i:neg_end_idx]
+                    neg_forward_lows = lows[i:neg_end_idx]
+                    neg_entry_close = closes[i]
+                    neg_buy_move = float(np.max(neg_forward_highs)) - neg_entry_close
+                    neg_sell_move = neg_entry_close - float(np.min(neg_forward_lows))
+                    neg_best_move_pips = max(neg_buy_move, neg_sell_move) / pip_value if pip_value > 0 else 0.0
+
+                    # Compute actual forward return (best_move / ATR)
+                    neg_atr_val = df['atr'].iloc[i] if 'atr' in df.columns else 0.0
+                    neg_forward_return = 0.0
+                    if neg_atr_val > 0 and pip_value > 0:
+                        neg_atr_pips = neg_atr_val / pip_value
+                        neg_forward_return = round(neg_best_move_pips / neg_atr_pips, 2) if neg_atr_pips > 0 else 0.0
+
+                    # Extract feature snapshot at this bar
+                    neg_snapshot = extract_snapshot_at_index(pair, i, df)
+                    if neg_snapshot:
+                        neg_sample = {
+                            'scan_id': scan_id,
+                            'pair': pair,
+                            'bar_time': df['time'].iloc[i],
+                            'bar_index': i,
+                            'direction': 'NONE',
+                            'entry_price': round(float(closes[i]), 6),
+                            'move_pips': round(neg_best_move_pips, 1),
+                            'peak_price': round(float(np.max(neg_forward_highs)) if neg_buy_move >= neg_sell_move else float(np.min(neg_forward_lows)), 6),
+                            'peak_bar_offset': 0,
+                            'forward_return': neg_forward_return,
+                            'mae_pips': 0.0,
+                            'mae_bars': 0,
+                            'mae_price': closes[i],
+                            'mfe_after_mae': 0.0,
+                            'atr': round(float(neg_atr_val), 6),
+                            'spread': float(df['spread'].iloc[i]) if 'spread' in df.columns else 0.0,
+                            'volume': 0,
+                            'pip_value': pip_value,
+                            'threshold_pips': threshold_pips,
+                            'feature_snapshot': neg_snapshot,
+                            'session': neg_snapshot.get('_meta', {}).get('session', ''),
+                            'market_state': neg_snapshot.get('_meta', {}).get('market_state', ''),
+                        }
+                        negative_samples.append(neg_sample)
+                except Exception:
+                    pass
             continue
 
         direction = result['direction']
@@ -540,6 +595,29 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
     avg_move = round(total_move_pips / total_moments, 1) if total_moments > 0 else 0.0
     bars_scanned = scan_end - warmup
 
+    # ── Store negative samples to database ──
+    if _DB_AVAILABLE and negative_samples:
+        # Cap at NEGATIVE_SAMPLE_RATIO * golden_moments_count
+        max_negatives = min(
+            total_moments * NEGATIVE_SAMPLE_RATIO if total_moments > 0 else NEGATIVE_MAX_SAMPLES_PER_PAIR,
+            NEGATIVE_MAX_SAMPLES_PER_PAIR,
+            len(negative_samples)
+        )
+        if max_negatives > 0:
+            if max_negatives < len(negative_samples):
+                import random
+                random.shuffle(negative_samples)
+                negative_samples = negative_samples[:max_negatives]
+
+            neg_stored = 0
+            for neg in negative_samples:
+                try:
+                    store_golden_moment(neg)  # reuse same store function with direction='NONE'
+                    neg_stored += 1
+                except Exception:
+                    pass
+            log.info(f"[RPDE_SCANNER] Stored {neg_stored} negative samples for {pair}")
+
     # ── Store results to database ──
     if _DB_AVAILABLE:
         try:
@@ -574,6 +652,8 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
     log.info(f"[RPDE_SCANNER] ──── {pair} scan complete ────")
     log.info(f"[RPDE_SCANNER]   Bars scanned:    {bars_scanned:,}")
     log.info(f"[RPDE_SCANNER]   Bars filtered (regime):  {bars_filtered}")
+    log.info(f"[RPDE_SCANNER]   Non-golden bars (passed filter): {non_golden_bar_count:,}")
+    log.info(f"[RPDE_SCANNER]   Negative samples collected:  {len(negative_samples)}")
     log.info(f"[RPDE_SCANNER]   Bars filtered (confluence): {bars_low_confluence}")
     log.info(f"[RPDE_SCANNER]   Golden moments:  {total_moments}")
     log.info(f"[RPDE_SCANNER]   BUY moments:     {buy_count}")
@@ -592,6 +672,8 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
         'duration_seconds': duration,
         'bars_filtered': bars_filtered,
         'bars_low_confluence': bars_low_confluence,
+        'negative_samples_collected': len(negative_samples),
+        'non_golden_bars': non_golden_bar_count,
         'moments': golden_moments if not _DB_AVAILABLE else [],
     }
 

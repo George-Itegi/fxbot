@@ -684,6 +684,61 @@ def load_golden_moments(pair=None, min_pips=0, scan_id=None):
         _close(c, conn)
 
 
+def load_negative_samples(pair=None, scan_id=None, limit=None):
+    """Load negative samples (non-golden bars) from the database.
+
+    These are bars that passed the regime filter but did NOT produce
+    a big move exceeding the threshold. Stored with direction='NONE'.
+    Used for true negative sampling in validation and training.
+
+    Args:
+        pair: Filter by currency pair (None = all pairs)
+        scan_id: Filter by specific scan (None = all scans)
+        limit: Maximum number of samples to return (None = no limit)
+
+    Returns:
+        List of dicts, each representing a negative sample row.
+        features_json is automatically parsed into a dict.
+    """
+    init_rpde_tables()
+    conn = _get_conn()
+    c = conn.cursor(dictionary=True)
+
+    try:
+        query = "SELECT * FROM rpde_pattern_scans WHERE direction = 'NONE'"
+        params = []
+
+        if pair:
+            query += " AND pair = %s"
+            params.append(pair)
+        if scan_id:
+            query += " AND scan_id = %s"
+            params.append(scan_id)
+
+        query += " ORDER BY bar_timestamp DESC"
+
+        if limit:
+            query += " LIMIT %s"
+            params.append(int(limit))
+
+        c.execute(query, params)
+        rows = c.fetchall()
+
+        # Parse features_json into actual dicts
+        for row in rows:
+            row['features'] = _parse_json(row.get('features_json'))
+
+        log.info(f"[RPDE_DB] Loaded {len(rows)} negative samples "
+                 f"(pair={pair or 'ALL'})")
+        return rows
+
+    except Exception as e:
+        log.error(f"[RPDE_DB] load_negative_samples failed: {e}")
+        return []
+    finally:
+        _close(c, conn)
+
+
 # ═══════════════════════════════════════════════════════════════
 #  PATTERN LIBRARY (rpde_pattern_library)
 # ═══════════════════════════════════════════════════════════════

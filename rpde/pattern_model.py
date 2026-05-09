@@ -169,43 +169,29 @@ class PatternModel:
             y_list.append(forward_r)
 
         # ── Step 2: Add negative samples ──
-        # Sample random bars that did NOT produce big moves.
-        # This teaches the model when NOT to trade.
+        # Use TRUE negative samples from DB (bars that passed regime filter
+        # but did NOT produce a big move). These have direction='NONE' and
+        # near-zero forward_returns, teaching the model when NOT to trade.
+        #
+        # OLD (BROKEN): loaded all golden moments which are all winners,
+        # giving the model zero negative signal.
         negative_count = 0
         try:
-            from rpde.database import load_golden_moments as _load_gm
-            all_pair_moments = _load_gm(pair=self.pair)
+            from rpde.database import load_negative_samples as _load_neg
+            true_negatives = _load_neg(pair=self.pair)
             
-            if all_pair_moments and len(all_pair_moments) > len(golden_moments):
-                # Identify which moments are positive samples (in golden_moments)
-                # by matching on bar_time or bar_timestamp
-                positive_times = set()
-                for m in golden_moments:
-                    bt = m.get('bar_time') or m.get('bar_timestamp')
-                    if bt is not None:
-                        if isinstance(bt, str):
-                            positive_times.add(bt)
-                        else:
-                            positive_times.add(str(bt))
-                
-                # Sample negative moments (not in the positive set)
+            if true_negatives:
                 import random
-                negative_candidates = [
-                    m for m in all_pair_moments 
-                    if str(m.get('bar_time') or m.get('bar_timestamp', '')) not in positive_times
-                ]
-                
-                # Random sample up to NEGATIVE_SAMPLE_RATIO * len(positive samples)
                 target_negatives = min(
                     len(X_list) * NEGATIVE_SAMPLE_RATIO,
-                    len(negative_candidates),
+                    len(true_negatives),
                     NEGATIVE_MAX_SAMPLES_PER_PAIR
                 )
                 
-                if target_negatives > 0 and negative_candidates:
+                if target_negatives > 0:
                     sampled_negatives = random.sample(
-                        negative_candidates, 
-                        min(target_negatives, len(negative_candidates))
+                        true_negatives, 
+                        min(target_negatives, len(true_negatives))
                     )
                     
                     for moment in sampled_negatives:
@@ -225,7 +211,7 @@ class PatternModel:
                         if not valid:
                             continue
                         
-                        # Use ACTUAL forward_return (likely near zero or negative)
+                        # Use ACTUAL forward_return (near zero for non-golden bars)
                         forward_r = moment.get('forward_return', 0.0)
                         if forward_r is None:
                             forward_r = 0.0
@@ -242,11 +228,18 @@ class PatternModel:
                         negative_count += 1
                     
                     if negative_count > 0:
-                        log.info(f"[RPDE_MODEL] Added {negative_count} negative samples "
-                                 f"(ratio 1:{negative_count/len(golden_moments):.1f}, "
+                        log.info(f"[RPDE_MODEL] Added {negative_count} TRUE negative samples "
+                                 f"(direction=NONE from DB, "
+                                 f"ratio 1:{negative_count/max(len(X_list)-negative_count,1):.1f}, "
                                  f"total now: {len(X_list)})")
+                else:
+                    log.info(f"[RPDE_MODEL] True negatives found ({len(true_negatives)}) "
+                             f"but target_negatives=0, skipping")
+            else:
+                log.info(f"[RPDE_MODEL] No true negative samples found in DB for {pair} — "
+                         f"run scanner first to collect direction='NONE' samples")
         except Exception as ex:
-            log.debug(f"[RPDE_MODEL] Negative sampling skipped: {ex}")
+            log.debug(f"[RPDE_MODEL] True negative sampling skipped: {ex}")
 
         # ── Step 3: Augment with Replay Buffer if requested ──
         if use_replay:
