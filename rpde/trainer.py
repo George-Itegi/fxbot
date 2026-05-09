@@ -231,7 +231,7 @@ def _train_model_for_pair(pair: str, patterns: list,
                     incremental=incremental,
                     use_replay=use_replay,
                 )
-                if model_result and model_result.get("model_path"):
+                if model_result and model_result.get("trained"):
                     results["models_trained"] += 1
                     # Record model path on all patterns for this pair
                     for pattern in patterns:
@@ -241,7 +241,7 @@ def _train_model_for_pair(pair: str, patterns: list,
                         results["trained_pattern_ids"].append(pattern_id)
 
                         if _DB_AVAILABLE:
-                            pattern["model_path"] = model_result["model_path"]
+                            pattern["model_path"] = pair_model.model_path
                             rpde_db.store_pattern(pattern)
 
             except Exception as ex:
