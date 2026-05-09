@@ -651,7 +651,12 @@ def load_golden_moments(pair=None, min_pips=0, scan_id=None):
     c = conn.cursor(dictionary=True)
 
     try:
-        query = "SELECT * FROM rpde_pattern_scans WHERE 1=1"
+        # v5.1.1: Exclude negative samples (direction='NONE') — those
+        # are loaded separately via load_negative_samples().  Without
+        # this filter, negatives would be double-counted in training
+        # (once as part of golden_moments, once via the explicit
+        # negative-sampling path in PatternModel.train()).
+        query = "SELECT * FROM rpde_pattern_scans WHERE direction != 'NONE'"
         params = []
 
         if pair:
