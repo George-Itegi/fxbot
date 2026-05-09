@@ -217,12 +217,10 @@ class PatternModel:
 
         xgb_params = dict(XGB_PARAMS)
 
-        # XGBoost 2.x API:
-        #   - eval_metric goes in the constructor
-        #   - early_stopping_rounds goes in .fit()
-        # Pop early_stopping_rounds from constructor params (pass to fit instead)
-        early_rounds = xgb_params.pop('early_stopping_rounds', 50)
-        # eval_metric stays in constructor — do NOT pop it
+        # XGBoost 2.1+ API: eval_metric AND early_stopping_rounds
+        # must BOTH be in the constructor. Do NOT pass them to .fit()
+        # They are already in XGB_PARAMS from config.py, so they
+        # flow straight through to the constructor via **xgb_params.
 
         # Build model
         warm_start_model = None
@@ -237,14 +235,12 @@ class PatternModel:
             random_state=42,
         )
 
-        # For incremental training with warm_start, we can't use
-        # early_stopping_rounds in the same way. Instead, we add trees
-        # by setting n_estimators low and xgb_model parameter.
+        # For incremental training with warm_start, disable early
+        # stopping and reduce tree count for the incremental update.
         if warm_start_model is not None:
-            # Warm-start: add new trees to existing model
             model.set_params(xgb_model=warm_start_model.get_booster())
-            # Reduce n_estimators for incremental update
             model.set_params(n_estimators=min(200, xgb_params.get('n_estimators', 500)))
+            model.set_params(early_stopping_rounds=None)
 
             model.fit(
                 X_train, y_train,
@@ -255,7 +251,6 @@ class PatternModel:
             model.fit(
                 X_train, y_train,
                 eval_set=[(X_val, y_val)],
-                early_stopping_rounds=early_rounds,
                 verbose=False,
             )
 
