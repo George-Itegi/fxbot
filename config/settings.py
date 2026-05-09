@@ -30,6 +30,7 @@ PAIR_WHITELIST = [
 
     # Commodities
     "XAGUSD",  # +$9,290  | Metal
+    "XAUUSD",  # Gold — RPDE pattern discovery
 
     # USD Pairs
     "AUDUSD",  # +$2,253  | USD
@@ -42,7 +43,7 @@ PAIR_WHITELIST = [
 
 PAIR_BLACKLIST = {
     # Pair: (date_cut, reason, backtest_pnl, backtest_sharpe)
-    "XAUUSD": ("2025-05", "Gold microstructure mismatch", -246, -0.92),
+    # XAUUSD removed from blacklist — added to whitelist for RPDE pattern discovery
     "GBPAUD": ("2025-05", "AUD quote toxic for momentum", -524, -0.50),
     "GBPCAD": ("2025-05", "Insufficient edge in 120d", -3026, -2.08),
     "GBPNZD": ("2025-05", "NZD quote toxic in 120d", -3026, -2.08),

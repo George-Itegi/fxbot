@@ -34,7 +34,48 @@ PAIR_MOVE_THRESHOLDS = {
     "GBPUSD": 25.0,
     # Commodity Cross
     "AUDCAD": 20.0,
+    # Precious Metals
+    "XAUUSD": 150.0,
 }
+
+# ── REGIME FILTER — Market Condition Pre-Filter ─────────
+
+# Minimum ATR percentile to consider scanning a bar
+# Bars with ATR below this threshold are in a dead-volatility zone
+MIN_ATR_PERCENTILE = 20
+
+# Dead zone sessions (GMT hours) — bars in these hours are skipped
+# Format: list of (start_hour, end_hour) tuples in GMT
+DEAD_ZONE_HOURS_GMT = [
+    (2, 7),    # Asian Midday — volume dead across all pairs
+    (16, 20),  # NY Afternoon — volume dies, spreads widen
+]
+
+# Friday close cutoff (GMT hour) — no new golden moments after this
+FRIDAY_CLOSE_HOUR_GMT = 16
+
+# Per-pair allowed sessions for scanning
+# Pairs should only be scanned during their active trading sessions
+PAIR_SESSION_FILTER = {
+    # JPY Crosses — active during London and NY overlap, small bonus at Tokyo
+    "EURJPY": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    "GBPJPY": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    "CHFJPY": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    "CADJPY": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    "AUDJPY": ["TOKYO_OPEN", "LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP"],
+    # USD Pairs — London + NY
+    "AUDUSD": ["SYDNEY_OPEN", "LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    "EURUSD": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    "GBPUSD": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    # Commodity Cross
+    "AUDCAD": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    # Precious Metals — London and NY are key
+    "XAGUSD": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+    "XAUUSD": ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"],
+}
+
+# Default sessions for pairs not in PAIR_SESSION_FILTER
+DEFAULT_ALLOWED_SESSIONS = ["LONDON_OPEN", "LONDON_SESSION", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"]
 
 # ── PATTERN MINING — Clustering ───────────────────────────
 
@@ -100,33 +141,62 @@ MAX_AVG_MAE_MOVE_RATIO = 0.6
 PATTERN_TIERS = {
     "GOD_TIER": {
         "min_occurrences": 200,
-        "min_win_rate": 0.70,
-        "min_profit_factor": 5.0,
+        "min_win_rate": 0.60,
+        "min_profit_factor": 2.0,
         "min_backtest_days": 180,
         "description": "Maximum confidence — deploy with full size",
     },
     "STRONG": {
         "min_occurrences": 80,
-        "min_win_rate": 0.65,
-        "min_profit_factor": 4.0,
+        "min_win_rate": 0.57,
+        "min_profit_factor": 1.7,
         "min_backtest_days": 120,
         "description": "High confidence — normal position sizing",
     },
     "VALID": {
         "min_occurrences": 50,
-        "min_win_rate": 0.60,
-        "min_profit_factor": 3.5,
+        "min_win_rate": 0.55,
+        "min_profit_factor": 1.3,
         "min_backtest_days": 90,
         "description": "Confirmed — standard position sizing",
     },
     "PROBATIONARY": {
         "min_occurrences": 30,
-        "min_win_rate": 0.55,
-        "min_profit_factor": 3.0,
+        "min_win_rate": 0.52,
+        "min_profit_factor": 1.0,
         "min_backtest_days": 60,
         "description": "Needs more data — reduced position sizing (0.5x)",
     },
 }
+
+# ── INSTITUTIONAL CONFLUENCE SCORING ─────────────────────────
+
+# Minimum confluence score (out of max) to keep a golden moment
+# Each of the 6 criteria below is worth 1 point
+CONFLUENCE_MIN_SCORE = 3
+
+# Confluence criteria thresholds
+CONFLUENCE_THRESHOLD_ORDER_FLOW_DELTA = 0.5
+CONFLUENCE_THRESHOLD_ORDER_FLOW_IMBALANCE = 0.3
+CONFLUENCE_THRESHOLD_ATR_PERCENTILE = 50
+CONFLUENCE_THRESHOLD_PD_ZONE = 0.5
+
+# Tier 1 sessions that get a confluence point
+CONFLUENCE_TIER1_SESSIONS = {"LONDON_OPEN", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"}
+
+# ── NEGATIVE SAMPLING — Training Data ──────────────────
+
+# Ratio of negative samples to positive samples in training data
+# 1:3 means for every golden moment, sample 3 non-golden moments
+NEGATIVE_SAMPLE_RATIO = 3
+
+# When searching for similar non-golden moments, use cosine distance threshold
+# Lower = stricter matching (fewer but more similar negatives)
+# Higher = looser matching (more negatives but less similar)
+NEGATIVE_SEARCH_COSINE_THRESHOLD = 0.3
+
+# Maximum negative samples per pair (cap to prevent memory issues)
+NEGATIVE_MAX_SAMPLES_PER_PAIR = 50000
 
 # ── PATTERN MODEL — XGBoost Classifier ────────────────────
 

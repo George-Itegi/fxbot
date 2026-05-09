@@ -5,6 +5,11 @@
 #
 # Each pair gets its own validation. Patterns are NOT required
 # to work across pairs — pair personality matters.
+#
+# NEGATIVE SAMPLING: Instead of only evaluating golden-moment
+# members (which are all wins by definition, giving PF=999),
+# we now search ALL historical bars for moments with similar
+# features and compute REAL win rate and profit factor.
 # =============================================================
 
 import math
@@ -20,6 +25,7 @@ from rpde.config import (
     PATTERN_TIERS,
     CURRENCY_CORRELATION_THRESHOLD,
     CLUSTER_FEATURES,
+    NEGATIVE_SEARCH_COSINE_THRESHOLD,
 )
 from core.logger import get_logger
 
@@ -28,6 +34,56 @@ log = get_logger(__name__)
 TIER_ORDER = {"GOD_TIER": 4, "STRONG": 3, "VALID": 2, "PROBATIONARY": 1}
 MAX_CONSECUTIVE_LOSSES_HARD = 10
 
+# Spread cost threshold (pips) — a forward_return must exceed
+# this to count as a "win" in the real-statistics calculation.
+# Most major pairs have 0.3–1.0 pip spread at M5; 0.5 is a
+# conservative middle ground.  Pairs with wider spreads can
+# override via PAIR_SPREAD_PIPS below.
+DEFAULT_SPREAD_COST_PIPS = 0.5
+
+PAIR_SPREAD_PIPS = {
+    "XAGUSD": 3.0,
+    "XAUUSD": 3.0,
+    "GBPJPY": 1.5,
+    "CADJPY": 1.0,
+    "AUDJPY": 1.2,
+    "CHFJPY": 1.0,
+    "AUDCAD": 1.2,
+}
+
+
+# ── Helper: cosine similarity ────────────────────────────
+
+def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+    """Compute cosine similarity between two vectors. Handles zero vectors."""
+    dot = np.dot(vec_a, vec_b)
+    norm_a = np.linalg.norm(vec_a)
+    norm_b = np.linalg.norm(vec_b)
+    if norm_a < 1e-9 or norm_b < 1e-9:
+        return 0.0
+    return float(dot / (norm_a * norm_b))
+
+
+# ── Helper: extract feature vector from a moment ──────────
+
+def _extract_feature_vector(moment: dict) -> np.ndarray:
+    """Extract a normalized feature vector from a golden moment for comparison."""
+    features = moment.get('features') or moment.get('feature_snapshot') or {}
+    if not features:
+        return np.array([])
+
+    # Use the CLUSTER_FEATURES list (26 features used for clustering)
+    vec = []
+    for fname in CLUSTER_FEATURES:
+        val = features.get(fname)
+        if val is None:
+            return np.array([])  # Incomplete feature — can't compare
+        vec.append(float(val))
+
+    return np.array(vec, dtype=np.float64)
+
+
+# ── Existing helper functions (unchanged) ────────────────
 
 def compute_sharpe(returns: list, risk_free_rate: float = 0.0) -> float:
     """Annualized Sharpe ratio from R-multiple returns."""
@@ -160,11 +216,21 @@ def _empty_stats() -> dict:
             "backtest_start": None, "backtest_end": None, "backtest_days": 0}
 
 
+# ── MAIN: validate_pattern with NEGATIVE SAMPLING ────────
+
 def validate_pattern(pattern: dict, pair: str, all_moments: list,
                      all_pair_patterns: dict = None) -> dict:
-    """Validate a single pattern candidate against historical data."""
+    """Validate a single pattern candidate against historical data.
+
+    Uses NEGATIVE SAMPLING: searches all historical bars for moments
+    with features similar to this pattern's centroid.  Win rate and
+    profit factor are computed from the COMBINED set of members +
+    similar non-members, giving a realistic out-of-sample estimate
+    instead of the inflated PF=999 from member-only evaluation.
+    """
     rejection_reasons = []
 
+    # ── 1. Extract member moments (same logic as before) ────
     member_indices = pattern.get("member_indices", pattern.get("golden_moments", []))
     if not member_indices:
         rejection_reasons.append("No member moments in pattern")
@@ -172,21 +238,12 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
                 "currency_tag": "PAIR_ONLY", "currency_boost_pairs": [],
                 "rejection_reasons": rejection_reasons}
 
-    # Support three formats for member references:
-    #   1. List of moment dicts (direct data)
-    #   2. List of database IDs (integers) — look up in all_moments by id
-    #   3. List of list indices (integers) — index into all_moments
     if isinstance(member_indices, list) and len(member_indices) > 0:
         if isinstance(member_indices[0], dict):
-            member_moments = member_indices  # Already a list of moment dicts
+            member_moments = member_indices
         else:
-            # Check whether these are DB IDs or list indices.
-            # DB IDs are typically large (auto-increment) and won't
-            # be valid list indices.  If any value >= len(all_moments),
-            # treat the whole list as DB IDs and look up by id field.
             is_db_ids = any(i >= len(all_moments) for i in member_indices if isinstance(i, int))
             if is_db_ids and all_moments:
-                # Build lookup: moment id -> moment dict
                 id_to_moment = {m.get("id"): m for m in all_moments if m.get("id") is not None}
                 member_moments = [id_to_moment[mid] for mid in member_indices
                                  if mid in id_to_moment]
@@ -196,11 +253,233 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
     else:
         member_moments = []
 
-    occurrences = len(member_moments)
-    if occurrences < MIN_PATTERN_OCCURRENCES:
+    member_count = len(member_moments)
+    if member_count < MIN_PATTERN_OCCURRENCES:
+        rejection_reasons.append(f"Insufficient occurrences: {member_count} < {MIN_PATTERN_OCCURRENCES}")
+
+    # ── 2. Compute pattern centroid from member feature vectors ──
+    member_feature_vecs = []
+    for m in member_moments:
+        vec = _extract_feature_vector(m)
+        if vec.size == len(CLUSTER_FEATURES):
+            member_feature_vecs.append(vec)
+
+    if not member_feature_vecs:
+        # No complete feature vectors — can't do negative sampling
+        log.warning(f"[RPDE_VAL] {pair} cluster={pattern.get('cluster_id', '?')}: "
+                     f"no complete feature vectors in members, falling back to member-only stats")
+        return _validate_member_only(pattern, pair, member_moments, member_count,
+                                     all_pair_patterns, rejection_reasons)
+
+    # Centroid = mean of member feature vectors
+    centroid = np.mean(member_feature_vecs, axis=0)
+
+    # ── 3. Build set of member IDs for O(1) lookup ─────────
+    member_ids = set()
+    for m in member_moments:
+        mid = m.get("id")
+        if mid is not None:
+            member_ids.add(mid)
+    # Also add bar timestamps as a secondary identifier
+    member_timestamps = set()
+    for m in member_moments:
+        ts = m.get("bar_timestamp")
+        if ts is not None:
+            member_timestamps.add(ts)
+
+    def _is_member(moment: dict) -> bool:
+        """Check if a moment is already a member of this pattern."""
+        mid = moment.get("id")
+        if mid is not None and mid in member_ids:
+            return True
+        ts = moment.get("bar_timestamp")
+        if ts is not None and ts in member_timestamps:
+            return True
+        return False
+
+    # ── 4. Search for similar non-member moments ───────────
+    spread_cost = PAIR_SPREAD_PIPS.get(pair, DEFAULT_SPREAD_COST_PIPS)
+
+    similar_non_members = []
+    if all_moments:
+        for moment in all_moments:
+            if _is_member(moment):
+                continue
+            vec = _extract_feature_vector(moment)
+            if vec.size != len(CLUSTER_FEATURES):
+                continue
+            sim = _cosine_similarity(vec, centroid)
+            if sim > NEGATIVE_SEARCH_COSINE_THRESHOLD:
+                similar_non_members.append({
+                    "moment": moment,
+                    "similarity": sim,
+                })
+
+    non_member_count = len(similar_non_members)
+
+    # ── 5. Fall back to member-only if no negatives found ──
+    if non_member_count == 0:
+        log.info(f"[RPDE_VAL] {pair} cluster={pattern.get('cluster_id', '?')}: "
+                 f"no similar non-members found (threshold={NEGATIVE_SEARCH_COSINE_THRESHOLD}), "
+                 f"falling back to member-only stats")
+        return _validate_member_only(pattern, pair, member_moments, member_count,
+                                     all_pair_patterns, rejection_reasons)
+
+    # ── 6. Compute REAL statistics from combined set ───────
+    # Collect forward_returns for ALL moments (members + similar non-members)
+    combined_returns = []      # forward_return in pips
+    combined_outcomes = []     # True/False based on forward_return vs spread
+    combined_timestamps = []
+    combined_mae_values = []
+    combined_mfe_after_mae_values = []
+    combined_move_pips = []
+
+    # Process member moments
+    for m in member_moments:
+        fr = float(m.get("forward_return", 0.0))
+        combined_returns.append(fr)
+        combined_outcomes.append(fr > spread_cost)
+        ts = m.get("bar_timestamp")
+        if ts is not None:
+            combined_timestamps.append(ts)
+        combined_mae_values.append(float(m.get("mae_pips", 0.0)))
+        combined_mfe_after_mae_values.append(float(m.get("mfe_after_mae", 0.0)))
+        combined_move_pips.append(float(m.get("move_pips", 0.0)))
+
+    # Process similar non-member moments
+    for entry in similar_non_members:
+        m = entry["moment"]
+        fr = float(m.get("forward_return", 0.0))
+        combined_returns.append(fr)
+        combined_outcomes.append(fr > spread_cost)
+        ts = m.get("bar_timestamp")
+        if ts is not None:
+            combined_timestamps.append(ts)
+        combined_mae_values.append(float(m.get("mae_pips", 0.0)))
+        combined_mfe_after_mae_values.append(float(m.get("mfe_after_mae", 0.0)))
+        combined_move_pips.append(float(m.get("move_pips", 0.0)))
+
+    total = len(combined_returns)
+    wins = sum(1 for o in combined_outcomes if o)
+    losses = total - wins
+    win_rate = wins / total if total > 0 else 0.0
+
+    # Profit / loss sums in pips using forward_return
+    positive_returns = [r for r in combined_returns if r > 0]
+    negative_returns = [r for r in combined_returns if r < 0]
+    total_profit = sum(positive_returns)
+    total_loss = abs(sum(negative_returns))
+    profit_factor = total_profit / total_loss if total_loss > 0 else (999.0 if total_profit > 0 else 0.0)
+
+    avg_profit = float(np.mean(positive_returns)) if positive_returns else 0.0
+    avg_loss = float(np.mean(negative_returns)) if negative_returns else 0.0
+    expected_r = float(np.mean(combined_returns)) if combined_returns else 0.0
+
+    # MAE statistics across the combined set
+    avg_mae = float(np.mean(combined_mae_values)) if combined_mae_values else 0.0
+    max_mae = float(np.max(combined_mae_values)) if combined_mae_values else 0.0
+    p90_mae = float(np.percentile(combined_mae_values, 90)) if len(combined_mae_values) >= 5 else max_mae
+    avg_mfe_after_mae = float(np.mean(combined_mfe_after_mae_values)) if combined_mfe_after_mae_values else 0.0
+    mae_reward_ratio = avg_mfe_after_mae / avg_mae if avg_mae > 0 else 0.0
+
+    # MAE quality check — across combined data
+    avg_move_pips_val = float(np.mean(combined_move_pips)) if combined_move_pips else 0.0
+    if avg_mae > 0 and avg_move_pips_val > 0:
+        mae_move_ratio = avg_mae / avg_move_pips_val
+        if mae_move_ratio > MAX_AVG_MAE_MOVE_RATIO:
+            rejection_reasons.append(
+                f"MAE too deep: {mae_move_ratio:.0%} of move "
+                f"(avg MAE={avg_mae:.1f}pips, avg move={avg_move_pips_val:.1f}pips)"
+            )
+
+    # Backtest date range from combined timestamps
+    backtest_start = backtest_end = None
+    backtest_days = 0
+    parsed_ts = []
+    for ts in combined_timestamps:
+        if isinstance(ts, datetime):
+            parsed_ts.append(ts)
+        elif isinstance(ts, str):
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+                try:
+                    parsed_ts.append(datetime.strptime(ts, fmt))
+                    break
+                except ValueError:
+                    continue
+    if len(parsed_ts) >= 2:
+        parsed_ts.sort()
+        backtest_start, backtest_end = parsed_ts[0], parsed_ts[-1]
+        backtest_days = (backtest_end - backtest_start).days
+
+    if backtest_days < MIN_BACKTEST_DAYS:
+        rejection_reasons.append(f"Backtest too short: {backtest_days}d < {MIN_BACKTEST_DAYS}d")
+
+    max_consec = compute_max_consecutive_losses(combined_outcomes)
+    if max_consec >= MAX_CONSECUTIVE_LOSSES_HARD:
+        rejection_reasons.append(f"Max consecutive losses: {max_consec}")
+
+    if win_rate < MIN_PATTERN_WIN_RATE:
+        rejection_reasons.append(f"Win rate too low: {win_rate:.1%} < {MIN_PATTERN_WIN_RATE:.0%}")
+    if profit_factor < MIN_PATTERN_PROFIT_FACTOR:
+        rejection_reasons.append(f"Profit factor too low: {profit_factor:.2f} < {MIN_PATTERN_PROFIT_FACTOR}")
+
+    stats = {
+        "occurrences": total, "wins": wins, "losses": losses,
+        "win_rate": round(win_rate, 6), "avg_profit_pips": round(avg_profit, 2),
+        "avg_loss_pips": round(avg_loss, 2), "profit_factor": round(profit_factor, 4),
+        "expected_r": round(expected_r, 4), "max_drawdown_pips": round(compute_max_drawdown(combined_returns), 2),
+        "max_consecutive_losses": max_consec, "sharpe_ratio": compute_sharpe(combined_returns),
+        "backtest_start": backtest_start, "backtest_end": backtest_end, "backtest_days": backtest_days,
+        # MAE (Maximum Adverse Excursion) — stop loss intelligence
+        "avg_mae_pips": round(avg_mae, 2),
+        "max_mae_pips": round(max_mae, 2),
+        "p90_mae_pips": round(p90_mae, 2),
+        "avg_mfe_after_mae_pips": round(avg_mfe_after_mae, 2),
+        "mae_reward_ratio": round(mae_reward_ratio, 4),
+        # Negative sampling metadata
+        "member_count": member_count,
+        "similar_non_member_count": non_member_count,
+        "spread_cost_pips": spread_cost,
+    }
+
+    tier = assign_tier(stats)
+    valid = tier is not None
+    if not valid and not rejection_reasons:
+        rejection_reasons.append("Below all tier minimums")
+
+    currency_tag = "PAIR_ONLY"
+    currency_boost = []
+    if all_pair_patterns and valid:
+        pf = pattern.get("cluster_center") or {}
+        if isinstance(pf, (list, np.ndarray)):
+            if len(pf) == len(CLUSTER_FEATURES):
+                pf = dict(zip(CLUSTER_FEATURES, pf))
+            else:
+                pf = {}
+        currency_tag, currency_boost = compute_currency_tag(pair, pf, all_pair_patterns)
+
+    log.info(f"[RPDE_VAL] {pair} cluster={pattern.get('cluster_id', '?')} "
+             f"occ={total} wr={win_rate:.1%} pf={profit_factor:.2f} tier={tier or 'NONE'} "
+             f"(members={member_count}, similar_non_members={non_member_count})")
+
+    return {"valid": valid, "tier": tier, "statistics": stats,
+            "currency_tag": currency_tag, "currency_boost_pairs": currency_boost,
+            "rejection_reasons": rejection_reasons}
+
+
+def _validate_member_only(pattern: dict, pair: str, member_moments: list,
+                          member_count: int, all_pair_patterns: dict,
+                          rejection_reasons: list) -> dict:
+    """Fall-back: validate using members only (original behaviour).
+
+    Used when negative sampling can't be performed — e.g. no complete
+    feature vectors on members, or no similar non-members found.
+    """
+    occurrences = member_count
+    if occurrences < MIN_PATTERN_OCCURRENCES and f"Insufficient occurrences" not in str(rejection_reasons):
         rejection_reasons.append(f"Insufficient occurrences: {occurrences} < {MIN_PATTERN_OCCURRENCES}")
 
-    outcomes, returns, profits, losses, timestamps = [], [], [], [], []
+    outcomes, returns, profits, losses_list, timestamps = [], [], [], [], []
     mae_values, mfe_after_mae_values = [], []
     for m in member_moments:
         is_win = m.get("is_win", False)
@@ -213,12 +492,11 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
         if is_win:
             profits.append(pips)
         else:
-            losses.append(abs(pips))
+            losses_list.append(abs(pips))
         ts = m.get("bar_timestamp")
         if ts is not None:
             timestamps.append(ts)
 
-        # MAE data for stop loss intelligence
         mae_pips = float(m.get("mae_pips", 0.0))
         mae_values.append(mae_pips)
         mfe_after_mae = float(m.get("mfe_after_mae", 0.0))
@@ -227,7 +505,7 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
     wins = sum(1 for o in outcomes if o)
     win_rate = wins / occurrences if occurrences > 0 else 0.0
     avg_profit = float(np.mean(profits)) if profits else 0.0
-    avg_loss = float(np.mean(losses)) if losses else 0.0
+    avg_loss = float(np.mean(losses_list)) if losses_list else 0.0
     total_profit_r = sum(r for r in returns if r > 0)
     total_loss_r = sum(abs(r) for r in returns if r < 0)
     profit_factor = total_profit_r / total_loss_r if total_loss_r > 0 else (999.0 if total_profit_r > 0 else 0.0)
@@ -238,16 +516,12 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
     if profit_factor < MIN_PATTERN_PROFIT_FACTOR:
         rejection_reasons.append(f"Profit factor too low: {profit_factor:.2f} < {MIN_PATTERN_PROFIT_FACTOR}")
 
-    # MAE statistics — critical for stop loss placement
-    # (computed here BEFORE the quality check below that references avg_mae)
     avg_mae = float(np.mean(mae_values)) if mae_values else 0.0
     max_mae = float(np.max(mae_values)) if mae_values else 0.0
     p90_mae = float(np.percentile(mae_values, 90)) if len(mae_values) >= 5 else max_mae
     avg_mfe_after_mae = float(np.mean(mfe_after_mae_values)) if mfe_after_mae_values else 0.0
-    # Risk-adjusted reward: how much you gain after surviving the average adverse move
     mae_reward_ratio = avg_mfe_after_mae / avg_mae if avg_mae > 0 else 0.0
 
-    # MAE quality check — patterns that need deep pullbacks are less reliable
     avg_move_pips_val = float(np.mean([m.get("move_pips", 0) for m in member_moments])) if member_moments else 0.0
     if avg_mae > 0 and avg_move_pips_val > 0:
         mae_move_ratio = avg_mae / avg_move_pips_val
@@ -282,8 +556,6 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
     if max_consec >= MAX_CONSECUTIVE_LOSSES_HARD:
         rejection_reasons.append(f"Max consecutive losses: {max_consec}")
 
-    # (MAE statistics already computed above before the quality check)
-
     stats = {
         "occurrences": occurrences, "wins": wins, "losses": occurrences - wins,
         "win_rate": round(win_rate, 6), "avg_profit_pips": round(avg_profit, 2),
@@ -291,12 +563,15 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
         "expected_r": round(expected_r, 4), "max_drawdown_pips": round(compute_max_drawdown(returns), 2),
         "max_consecutive_losses": max_consec, "sharpe_ratio": compute_sharpe(returns),
         "backtest_start": backtest_start, "backtest_end": backtest_end, "backtest_days": backtest_days,
-        # MAE (Maximum Adverse Excursion) — stop loss intelligence
         "avg_mae_pips": round(avg_mae, 2),
         "max_mae_pips": round(max_mae, 2),
         "p90_mae_pips": round(p90_mae, 2),
         "avg_mfe_after_mae_pips": round(avg_mfe_after_mae, 2),
         "mae_reward_ratio": round(mae_reward_ratio, 4),
+        # Negative sampling metadata (member-only fallback)
+        "member_count": member_count,
+        "similar_non_member_count": 0,
+        "spread_cost_pips": PAIR_SPREAD_PIPS.get(pair, DEFAULT_SPREAD_COST_PIPS),
     }
 
     tier = assign_tier(stats)
@@ -315,13 +590,16 @@ def validate_pattern(pattern: dict, pair: str, all_moments: list,
                 pf = {}
         currency_tag, currency_boost = compute_currency_tag(pair, pf, all_pair_patterns)
 
-    log.info(f"[RPDE_VAL] {pair} cluster={pattern.get('cluster_id', '?')} occ={occurrences} "
-             f"wr={win_rate:.1%} pf={profit_factor:.2f} tier={tier or 'NONE'} currency={currency_tag}")
+    log.info(f"[RPDE_VAL] {pair} cluster={pattern.get('cluster_id', '?')} "
+             f"occ={occurrences} wr={win_rate:.1%} pf={profit_factor:.2f} tier={tier or 'NONE'} "
+             f"(members={member_count}, similar_non_members=0, FALLBACK)")
 
     return {"valid": valid, "tier": tier, "statistics": stats,
             "currency_tag": currency_tag, "currency_boost_pairs": currency_boost,
             "rejection_reasons": rejection_reasons}
 
+
+# ── Batch validator (unchanged structure) ────────────────
 
 def validate_all_patterns(pair: str, candidates: list, all_moments: list,
                           all_pair_patterns: dict = None) -> list:

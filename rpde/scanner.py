@@ -33,6 +33,17 @@ from rpde.config import (
     PAIR_MOVE_THRESHOLDS,
     SCAN_TIMEFRAME,
     MIN_BAR_SEPARATION,
+    DEAD_ZONE_HOURS_GMT,
+    FRIDAY_CLOSE_HOUR_GMT,
+    PAIR_SESSION_FILTER,
+    DEFAULT_ALLOWED_SESSIONS,
+    MIN_ATR_PERCENTILE,
+    CONFLUENCE_MIN_SCORE,
+    CONFLUENCE_THRESHOLD_ORDER_FLOW_DELTA,
+    CONFLUENCE_THRESHOLD_ORDER_FLOW_IMBALANCE,
+    CONFLUENCE_THRESHOLD_ATR_PERCENTILE,
+    CONFLUENCE_THRESHOLD_PD_ZONE,
+    CONFLUENCE_TIER1_SESSIONS,
 )
 from core.pip_utils import get_pip_size
 from core.logger import get_logger
@@ -274,6 +285,65 @@ def _look_forward(closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
 
 
 # ════════════════════════════════════════════════════════════════
+# REGIME FILTER: Session Classification and Bar Filtering
+# ════════════════════════════════════════════════════════════════
+
+# Session classification from GMT hour
+_SESSION_MAP = {
+    (0, 2): "SYDNEY",           # Sydney open (variable, 0-2 GMT approx)
+    (2, 7): "ASIAN_MIDDAY",     # Dead zone — skip
+    (7, 9): "LONDON_OPEN",      # London open
+    (9, 13): "LONDON_SESSION",  # Full London session
+    (13, 16): "NY_LONDON_OVERLAP",  # Overlap
+    (16, 20): "NY_AFTERNOON",   # Dead zone — skip
+    (20, 22): "NEWYORK_SESSION", # NY session after overlap
+    (22, 24): "SYDNEY",         # Late Sydney/early Asian
+}
+
+
+def _session_from_gmt_hour(hour: int, pair: str = None) -> str:
+    """Classify session from GMT hour. Returns session name or 'DEAD_ZONE'."""
+    for (start, end), name in _SESSION_MAP.items():
+        if start <= hour < end:
+            return name
+    return "DEAD_ZONE"
+
+
+def _is_bar_allowed(pair: str, bar_time, atr_percentile: float = None) -> tuple:
+    """
+    Check if a bar passes all regime filters.
+
+    Returns (allowed: bool, reason: str).
+    """
+    hour_gmt = bar_time.hour
+
+    # 1. Dead zone check (hard skip — all pairs)
+    for start, end in DEAD_ZONE_HOURS_GMT:
+        if start <= hour_gmt < end:
+            return (False, f"dead_zone_{start}-{end}")
+
+    # 2. Friday close check
+    if bar_time.weekday() == 4 and hour_gmt >= FRIDAY_CLOSE_HOUR_GMT:
+        return (False, "friday_close")
+
+    # 3. Sunday open check (first few hours of Sunday = wide spreads)
+    if bar_time.weekday() == 6 and hour_gmt < 2:
+        return (False, "sunday_open")
+
+    # 4. Session filter per pair
+    session = _session_from_gmt_hour(hour_gmt, pair)
+    allowed_sessions = PAIR_SESSION_FILTER.get(pair, DEFAULT_ALLOWED_SESSIONS)
+    if session not in allowed_sessions:
+        return (False, f"session_{session}")
+
+    # 5. ATR percentile filter (if available)
+    if atr_percentile is not None and atr_percentile < MIN_ATR_PERCENTILE:
+        return (False, f"low_vol_{atr_percentile:.0f}pct")
+
+    return (True, "ok")
+
+
+# ════════════════════════════════════════════════════════════════
 # MAIN: Scan a Single Pair for Golden Moments
 # ════════════════════════════════════════════════════════════════
 
@@ -369,6 +439,8 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
     sell_count = 0
     total_move_pips = 0.0
     golden_moments = []
+    bars_filtered = 0
+    bars_low_confluence = 0
     last_moment_bar = -MIN_BAR_SEPARATION - 1  # Enforce separation
 
     log.info(f"[RPDE_SCANNER] Scanning bars {warmup} to {scan_end - 1} "
@@ -383,6 +455,14 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
 
         # Enforce minimum separation between golden moments
         if (i - last_moment_bar) < MIN_BAR_SEPARATION:
+            continue
+
+        # v5.1: Regime filter — skip bars in dead zones, wrong sessions, low vol
+        bar_time = df['time'].iloc[i]
+        atr_pct = df['atr_percentile'].iloc[i] if 'atr_percentile' in df.columns else None
+        allowed, filter_reason = _is_bar_allowed(pair, bar_time, atr_pct)
+        if not allowed:
+            bars_filtered += 1
             continue
 
         # Look forward for significant move
@@ -439,6 +519,13 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
             except Exception as ex:
                 log.debug(f"[RPDE_SCANNER] Snapshot failed at bar {i}: {ex}")
 
+        # v5.1: Institutional confluence scoring — filter low-confluence moments
+        confluence = _score_confluence(moment)
+        moment['confluence_score'] = confluence
+        if confluence < CONFLUENCE_MIN_SCORE:
+            bars_low_confluence += 1
+            continue
+
         golden_moments.append(moment)
         last_moment_bar = i
 
@@ -486,6 +573,8 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
 
     log.info(f"[RPDE_SCANNER] ──── {pair} scan complete ────")
     log.info(f"[RPDE_SCANNER]   Bars scanned:    {bars_scanned:,}")
+    log.info(f"[RPDE_SCANNER]   Bars filtered (regime):  {bars_filtered}")
+    log.info(f"[RPDE_SCANNER]   Bars filtered (confluence): {bars_low_confluence}")
     log.info(f"[RPDE_SCANNER]   Golden moments:  {total_moments}")
     log.info(f"[RPDE_SCANNER]   BUY moments:     {buy_count}")
     log.info(f"[RPDE_SCANNER]   SELL moments:    {sell_count}")
@@ -501,6 +590,8 @@ def scan_pair(pair: str, days: int = 360, scan_id: str = None) -> dict:
         'avg_move_pips': avg_move,
         'scan_id': scan_id,
         'duration_seconds': duration,
+        'bars_filtered': bars_filtered,
+        'bars_low_confluence': bars_low_confluence,
         'moments': golden_moments if not _DB_AVAILABLE else [],
     }
 
@@ -622,6 +713,61 @@ def scan_all_pairs(days: int = 360) -> dict:
 # ════════════════════════════════════════════════════════════════
 # HELPER: Compute ATR Series on DataFrame
 # ════════════════════════════════════════════════════════════════
+
+def _score_confluence(moment: dict) -> int:
+    """
+    Score a golden moment's institutional confluence (0-6).
+    
+    Each criterion is worth 1 point:
+    +1  Strong order flow (delta > threshold)
+    +1  Order flow imbalance (imbalance > threshold)
+    +1  Clear market structure (trend direction exists)
+    +1  Near supply/demand zone (pd_zone < threshold)
+    +1  Above-average volatility (atr_percentile > threshold)
+    +1  Tier 1 session (London Open, L-NY Overlap, NY Open)
+    
+    Returns:
+        int: Confluence score (0-6)
+    """
+    score = 0
+    features = moment.get('feature_snapshot', {})
+    if not features:
+        return 0
+    
+    meta = features.get('_meta', {})
+    
+    # 1. Order flow delta
+    delta = features.get('of_delta')
+    if delta is not None and abs(delta) > CONFLUENCE_THRESHOLD_ORDER_FLOW_DELTA:
+        score += 1
+    
+    # 2. Order flow imbalance
+    imbalance = features.get('of_imbalance')
+    if imbalance is not None and abs(imbalance) > CONFLUENCE_THRESHOLD_ORDER_FLOW_IMBALANCE:
+        score += 1
+    
+    # 3. Market structure trend
+    structure_trend = features.get('smc_structure_trend')
+    if structure_trend is not None and structure_trend != 0:
+        score += 1
+    
+    # 4. Near PD zone
+    pd_zone = features.get('smc_pd_zone')
+    if pd_zone is not None and abs(pd_zone) < CONFLUENCE_THRESHOLD_PD_ZONE:
+        score += 1
+    
+    # 5. ATR percentile
+    atr_pct = features.get('ap_atr_percentile')
+    if atr_pct is not None and atr_pct > CONFLUENCE_THRESHOLD_ATR_PERCENTILE:
+        score += 1
+    
+    # 6. Tier 1 session
+    session = meta.get('session', '')
+    if session in CONFLUENCE_TIER1_SESSIONS:
+        score += 1
+    
+    return score
+
 
 def _compute_atr_series(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """

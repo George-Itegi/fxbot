@@ -102,7 +102,7 @@ class PatternModel:
         Returns:
             Training results dict with metrics.
         """
-        from rpde.config import XGB_PARAMS, MIN_TRAINING_SAMPLES
+        from rpde.config import XGB_PARAMS, MIN_TRAINING_SAMPLES, NEGATIVE_SAMPLE_RATIO, NEGATIVE_MAX_SAMPLES_PER_PAIR
         from sklearn.model_selection import TimeSeriesSplit
 
         t0 = time.time()
@@ -168,7 +168,87 @@ class PatternModel:
             X_list.append(row)
             y_list.append(forward_r)
 
-        # ── Step 2: Augment with Replay Buffer if requested ──
+        # ── Step 2: Add negative samples ──
+        # Sample random bars that did NOT produce big moves.
+        # This teaches the model when NOT to trade.
+        negative_count = 0
+        try:
+            from rpde.database import load_golden_moments as _load_gm
+            all_pair_moments = _load_gm(pair=self.pair)
+            
+            if all_pair_moments and len(all_pair_moments) > len(golden_moments):
+                # Identify which moments are positive samples (in golden_moments)
+                # by matching on bar_time or bar_timestamp
+                positive_times = set()
+                for m in golden_moments:
+                    bt = m.get('bar_time') or m.get('bar_timestamp')
+                    if bt is not None:
+                        if isinstance(bt, str):
+                            positive_times.add(bt)
+                        else:
+                            positive_times.add(str(bt))
+                
+                # Sample negative moments (not in the positive set)
+                import random
+                negative_candidates = [
+                    m for m in all_pair_moments 
+                    if str(m.get('bar_time') or m.get('bar_timestamp', '')) not in positive_times
+                ]
+                
+                # Random sample up to NEGATIVE_SAMPLE_RATIO * len(positive samples)
+                target_negatives = min(
+                    len(X_list) * NEGATIVE_SAMPLE_RATIO,
+                    len(negative_candidates),
+                    NEGATIVE_MAX_SAMPLES_PER_PAIR
+                )
+                
+                if target_negatives > 0 and negative_candidates:
+                    sampled_negatives = random.sample(
+                        negative_candidates, 
+                        min(target_negatives, len(negative_candidates))
+                    )
+                    
+                    for moment in sampled_negatives:
+                        features = moment.get('features') or moment.get('feature_snapshot') or {}
+                        if not features:
+                            continue
+                        
+                        row = []
+                        valid = True
+                        for feat_name in FEATURE_NAMES:
+                            val = features.get(feat_name)
+                            if val is None:
+                                valid = False
+                                break
+                            row.append(float(val))
+                        
+                        if not valid:
+                            continue
+                        
+                        # Use ACTUAL forward_return (likely near zero or negative)
+                        forward_r = moment.get('forward_return', 0.0)
+                        if forward_r is None:
+                            forward_r = 0.0
+                        try:
+                            forward_r = float(forward_r)
+                        except (TypeError, ValueError):
+                            continue
+                        
+                        # Clip to same range
+                        forward_r = max(R_CLIP_MIN, min(R_CLIP_MAX, forward_r))
+                        
+                        X_list.append(row)
+                        y_list.append(forward_r)
+                        negative_count += 1
+                    
+                    if negative_count > 0:
+                        log.info(f"[RPDE_MODEL] Added {negative_count} negative samples "
+                                 f"(ratio 1:{negative_count/len(golden_moments):.1f}, "
+                                 f"total now: {len(X_list)})")
+        except Exception as ex:
+            log.debug(f"[RPDE_MODEL] Negative sampling skipped: {ex}")
+
+        # ── Step 3: Augment with Replay Buffer if requested ──
         if use_replay:
             replay_X, replay_y = self._load_replay_buffer_data()
             if replay_X is not None and len(replay_X) > 0:
@@ -193,7 +273,7 @@ class PatternModel:
         X = np.array(X_list, dtype=np.float32)
         y = np.array(y_list, dtype=np.float32)
 
-        # ── Step 3: Time-based train/val split (80/20) ──
+        # ── Step 4: Time-based train/val split (80/20) ──
         # Use last 20% as validation (most recent data for realistic evaluation)
         split_idx = int(len(X) * 0.8)
         X_train, X_val = X[:split_idx], X[split_idx:]
@@ -212,7 +292,7 @@ class PatternModel:
         log.info(f"[RPDE_MODEL] {self.pair} split: "
                  f"train={len(X_train)}, val={len(X_val)}")
 
-        # ── Step 4: Train XGBoost ──
+        # ── Step 5: Train XGBoost ──
         import xgboost as xgb
 
         xgb_params = dict(XGB_PARAMS)
@@ -256,7 +336,7 @@ class PatternModel:
 
         self.model = model
 
-        # ── Step 5: Evaluate ──
+        # ── Step 6: Evaluate ──
         train_preds = model.predict(X_train)
         val_preds = model.predict(X_val)
 
@@ -284,7 +364,7 @@ class PatternModel:
         # Feature importance
         top_features = self._get_top_features(model, top_n=15)
 
-        # ── Step 6: Save model and metadata ──
+        # ── Step 7: Save model and metadata ──
         self.meta = {
             'pair': self.pair,
             'version': '5.0',
@@ -305,6 +385,8 @@ class PatternModel:
             'y_mean': round(float(np.mean(y)), 4),
             'y_std': round(float(np.std(y)), 4),
             'y_positive_pct': round(float(np.mean(y > 0)), 4),
+            'n_negative_samples': negative_count,
+            'total_positive_samples': len(X_list) - negative_count - skipped,
         }
 
         self.save()
