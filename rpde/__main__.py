@@ -65,6 +65,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "  python -m rpde report               Generate system status report\n"
             "  python -m rpde list                 List all active patterns\n"
             "  python -m rpde test EURUSD          Test pattern matching live\n"
+            "  python -m rpde backtest 90         Backtest pattern models\n"
+            "  python -m rpde backtest 90 --thresholds  Threshold sweep\n"
         ),
     )
     parser.add_argument(
@@ -217,6 +219,33 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=200,
         help="Number of M5 bars to load (default: 200)",
+    )
+
+    # ── backtest ────────────────────────────────────────
+    bt_parser = subparsers.add_parser(
+        "backtest",
+        help="Backtest trained pattern models on historical data",
+        description="Test pattern model discrimination ability on golden moments "
+                    "and negative samples. Reports WR, AUC, profit factor at "
+                    "different prediction thresholds.",
+    )
+    bt_parser.add_argument(
+        "days",
+        nargs="?",
+        type=int,
+        default=90,
+        help="Days of historical data to test (default: 90)",
+    )
+    bt_parser.add_argument(
+        "--pair",
+        default=None,
+        help="Test a specific pair only",
+    )
+    bt_parser.add_argument(
+        "--thresholds",
+        action="store_true",
+        default=False,
+        help="Test multiple prediction thresholds (sweep 0.0 to 4.0)",
     )
 
     # ── tft-train (Phase 2) ────────────────────────────────
@@ -796,6 +825,27 @@ def _cmd_test(args):
     print(f"\n  {'=' * 60}")
     print(f"  Timestamp: {result.get('timestamp', '?')}")
     print(f"  {'=' * 60}\n")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
+#  BACKTEST COMMAND HANDLER
+# ═══════════════════════════════════════════════════════════════
+
+def _cmd_backtest(args):
+    """Handle the 'backtest' command."""
+    try:
+        from rpde.backtest import run_backtest
+    except ImportError as e:
+        print(f"\n  ERROR: Cannot import rpde.backtest: {e}\n")
+        return 1
+
+    pair_filter = args.pair.upper() if args.pair else None
+    run_backtest(
+        days=args.days,
+        pair_filter=pair_filter,
+        test_thresholds=args.thresholds,
+    )
     return 0
 
 
@@ -1562,6 +1612,7 @@ def main():
         "report": _cmd_report,
         "list": _cmd_list,
         "test": _cmd_test,
+        "backtest": _cmd_backtest,
         "tft-train": _cmd_tft_train,
         "tft-status": _cmd_tft_status,
         "rl-train": _cmd_rl_train,
