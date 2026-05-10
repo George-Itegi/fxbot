@@ -865,8 +865,37 @@ def _compute_market_quality(df: pd.DataFrame, bar_idx: int,
 
 
 # ════════════════════════════════════════════════════════════════
-# MAIN: Extract Historical Snapshot at Bar
+# MAIN: Extract Historical Snapshot at Bar (by index or timestamp)
 # ════════════════════════════════════════════════════════════════
+
+def extract_snapshot_at_index(pair: str, bar_index: int, df_m5: pd.DataFrame) -> dict:
+    """
+    Extract all 93 features at a specific bar using its positional index.
+
+    This is the primary entry point used by the RPDE scanner, which iterates
+    over bars by integer index.  It simply reads the timestamp at bar_index
+    and delegates to extract_snapshot_at_bar(), reusing all existing logic.
+
+    Args:
+        pair: Symbol string (e.g. 'EURJPY')
+        bar_index: Integer position in df_m5 (not a DataFrame index label)
+        df_m5: Full M5 DataFrame with OHLCV data
+
+    Returns:
+        dict with all feature values, or {} on failure.
+    """
+    try:
+        if bar_index < 0 or bar_index >= len(df_m5):
+            log.debug(f"[RPDE_SNAPSHOT] bar_index {bar_index} out of range "
+                      f"(len={len(df_m5)}) for {pair}")
+            return {}
+        bar_time = df_m5.iloc[bar_index]['time']
+        return extract_snapshot_at_bar(pair, bar_time, df_m5)
+    except Exception as ex:
+        log.debug(f"[RPDE_SNAPSHOT] extract_snapshot_at_index failed at "
+                  f"bar {bar_index} for {pair}: {ex}")
+        return {}
+
 
 def extract_snapshot_at_bar(pair: str, bar_timestamp: datetime,
                              df_m5: pd.DataFrame) -> dict:

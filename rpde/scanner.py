@@ -64,13 +64,13 @@ except ImportError:
     _DB_AVAILABLE = False
 
 # ── Try to import feature snapshot extraction ────────────────
+_SNAPSHOT_AVAILABLE = False
 try:
     from rpde.feature_snapshot import extract_snapshot_at_index
     _SNAPSHOT_AVAILABLE = True
-except ImportError:
-    log.warning("[RPDE_SCANNER] feature_snapshot module not found — "
+except Exception as ex:
+    log.warning(f"[RPDE_SCANNER] feature_snapshot not available ({ex}) — "
                 "golden moments will lack 93-feature snapshots.")
-    _SNAPSHOT_AVAILABLE = False
 
 
 # ════════════════════════════════════════════════════════════════
