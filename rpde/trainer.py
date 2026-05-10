@@ -453,10 +453,14 @@ def run_full_pipeline(days: int = 360, pairs: list = None) -> dict:
                                 p = v["pattern"]
                                 val = v.get("validation", {})
                                 # Merge validation results into pattern dict
+                                # IMPORTANT: Use direct assignment (not setdefault)
+                                # so that validated WR/PF OVERRIDE the mining WR/PF.
+                                # Mining WR=100% is circular reasoning — the validator
+                                # computes the REAL WR using negative samples.
                                 p["tier"] = val.get("tier", p.get("tier", "PROBATIONARY"))
                                 if val.get("statistics"):
                                     for k, v2 in val["statistics"].items():
-                                        p.setdefault(k, v2)
+                                        p[k] = v2  # Override mining stats with validated stats
                                 flat_validated.append(p)
                         validated = flat_validated
                     except Exception as ex:

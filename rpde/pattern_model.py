@@ -285,10 +285,47 @@ class PatternModel:
         y = np.array(y_list, dtype=np.float32)
 
         # ── Step 4: Time-based train/val split (80/20) ──
-        # Use last 20% as validation (most recent data for realistic evaluation)
-        split_idx = int(len(X) * 0.8)
-        X_train, X_val = X[:split_idx], X[split_idx:]
-        y_train, y_val = y[:split_idx], y[split_idx:]
+        # IMPORTANT: We must shuffle BEFORE splitting to ensure both
+        # golden moments and negative samples appear in train AND val.
+        # Without shuffling, all negatives (appended at the end) land
+        # in the validation set only, giving val_r2=0.0 and WR=0%.
+        #
+        # We use a fixed seed for reproducibility and shuffle within
+        # a stratified fashion: sample indices proportional to the
+        # positive/negative ratio so both sets have similar composition.
+        n_pos = len(X_list) - negative_count  # golden moments (positives)
+        n_neg = negative_count
+        pos_indices = list(range(n_pos))
+        neg_indices = list(range(n_pos, n_pos + n_neg))
+
+        import random as _rng
+        _rng.seed(42)
+        _rng.shuffle(pos_indices)
+        _rng.shuffle(neg_indices)
+
+        # Assign ~80% of each class to train, ~20% to val
+        pos_split = int(len(pos_indices) * 0.8)
+        neg_split = int(len(neg_indices) * 0.8)
+        train_indices = pos_indices[:pos_split] + neg_indices[:neg_split]
+        val_indices = pos_indices[pos_split:] + neg_indices[neg_split:]
+
+        # Shuffle train/val individually for good measure
+        _rng.shuffle(train_indices)
+        _rng.shuffle(val_indices)
+
+        X_train = X[train_indices]
+        X_val = X[val_indices]
+        y_train = y[train_indices]
+        y_val = y[val_indices]
+
+        # Diagnostic: log class balance in train/val
+        train_pos = int(np.sum(y_train > 0.1))
+        train_neg = len(y_train) - train_pos
+        val_pos = int(np.sum(y_val > 0.1))
+        val_neg = len(y_val) - val_pos
+        log.info(f"[RPDE_MODEL] {self.pair} split: "
+                 f"train={len(X_train)} (pos={train_pos}, neg={train_neg}), "
+                 f"val={len(X_val)} (pos={val_pos}, neg={val_neg})")
 
         if len(X_val) < 10:
             log.warning(
@@ -296,12 +333,9 @@ class PatternModel:
                 f"{len(X_val)} samples. Using TimeSeriesSplit instead.")
             # Fallback: use TimeSeriesSplit with 3 folds
             tscv = TimeSeriesSplit(n_splits=3)
-            train_idx, val_idx = list(tscv.split(X))[-1]
-            X_train, X_val = X[train_idx], X[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
-
-        log.info(f"[RPDE_MODEL] {self.pair} split: "
-                 f"train={len(X_train)}, val={len(X_val)}")
+            train_idx2, val_idx2 = list(tscv.split(X))[-1]
+            X_train, X_val = X[train_idx2], X[val_idx2]
+            y_train, y_val = y[train_idx2], y[val_idx2]
 
         # ── Step 5: Train XGBoost ──
         import xgboost as xgb
