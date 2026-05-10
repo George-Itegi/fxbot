@@ -49,11 +49,10 @@ def run_backtest(days: int = 90, pair_filter: str = None,
         load_golden_moments, load_negative_samples,
         load_pattern_library, init_rpde_tables,
     )
-    from rpde.config import PAIR_WHITELIST
-    from config.settings import PAIR_WHITELIST as SETTINGS_PAIRS
+    from config.settings import PAIR_WHITELIST
 
     # Use the pair whitelist from settings
-    all_pairs = list(SETTINGS_PAIRS or PAIR_WHITELIST)
+    all_pairs = list(PAIR_WHITELIST)
     if pair_filter:
         all_pairs = [p for p in all_pairs if p.upper() == pair_filter.upper()]
 
