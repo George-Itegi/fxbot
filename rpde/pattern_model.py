@@ -174,12 +174,10 @@ class PatternModel:
         # Their target is forced to 0.0 so the model learns a clear
         # boundary: golden moments (R > 0) vs non-golden (R = 0).
         #
-        # v5.2 FIX: If DB doesn't have enough negatives, synthesize from
-        # golden moments (same features, target=0) to guarantee minimum
-        # 1:1 ratio.  Without this, WR stays at 100% because the model
-        # only ever sees winners.
+        # v5.2: Load real negative samples from DB.  NO synthetic
+        # generation — synthetic negatives were causing the model to
+        # predict ~0 for everything (flat model, WR=0%).
         negative_count = 0
-        synthetic_count = 0
         n_positives = len(X_list)
         target_total_negatives = min(
             n_positives * NEGATIVE_SAMPLE_RATIO,
@@ -228,32 +226,15 @@ class PatternModel:
         except Exception as ex:
             log.debug(f"[RPDE_MODEL] DB negative sampling skipped: {ex}")
 
-        # 2b. Synthesize negatives if DB didn't provide enough
-        remaining = target_total_negatives - negative_count
-        if remaining > 0:
-            import random
-            # Sample from existing golden moment features and set R=0.
-            # This teaches the model "these feature patterns don't
-            # always lead to big moves" — the features alone don't
-            # guarantee a tradeable outcome.
-            pool = list(range(n_positives))
-            synth_n = min(remaining, n_positives)  # max 1:1 synth ratio
-            if synth_n > 0:
-                sampled_idx = random.sample(pool, synth_n)
-                for idx in sampled_idx:
-                    row = list(X_list[idx])  # copy the feature vector
-                    # Add small Gaussian noise to prevent exact duplicates
-                    noise = np.random.normal(0, 0.01, size=len(row))
-                    row = [max(-5.0, min(5.0, r + n)) for r, n in zip(row, noise)]
-                    X_list.append(row)
-                    y_list.append(0.0)
-                    synthetic_count += 1
-
-        total_negatives = negative_count + synthetic_count
+        # 2b. NO synthetic negatives — use only real DB negatives.
+        # Synthetic negatives (copying golden moment features + noise) were
+        # drowning out real signal and making the model predict ~0 for
+        # everything (WR=0% in all quintiles).  Removed in v5.2.
+        total_negatives = negative_count
         if total_negatives > 0:
             ratio_str = f"{n_positives}:{total_negatives}"
             log.info(f"[RPDE_MODEL] Added {total_negatives} negative samples "
-                     f"({negative_count} DB + {synthetic_count} synthetic, "
+                     f"(all from DB — NO synthetic, "
                      f"ratio {ratio_str}, total now: {len(X_list)})")
         else:
             log.warning(f"[RPDE_MODEL] NO negative samples for {pair} — "

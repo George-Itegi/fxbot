@@ -187,8 +187,9 @@ CONFLUENCE_TIER1_SESSIONS = {"LONDON_OPEN", "NY_LONDON_OVERLAP", "NEWYORK_OPEN"}
 # ── NEGATIVE SAMPLING — Training Data ──────────────────
 
 # Ratio of negative samples to positive samples in training data
-# 1:3 means for every golden moment, sample 3 non-golden moments
-NEGATIVE_SAMPLE_RATIO = 3
+# v5.2: reduced from 3 to 1 — synthetic generation removed, use
+# only real DB negatives at 1:1 ratio to avoid drowning signal.
+NEGATIVE_SAMPLE_RATIO = 1
 
 # When searching for similar non-golden moments, use cosine distance threshold
 # Lower = stricter matching (fewer but more similar negatives)
