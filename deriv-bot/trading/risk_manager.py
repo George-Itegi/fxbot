@@ -1,0 +1,284 @@
+"""
+Risk Manager
+=============
+The most important module in the entire bot.
+Risk management is what separates surviving bots from blown accounts.
+
+ALL trades MUST pass through can_trade() before execution.
+These rules are non-negotiable.
+"""
+
+import time
+from dataclasses import dataclass
+from typing import Optional
+
+from config import (MAX_BANKROLL_PER_TRADE, MAX_DAILY_LOSS,
+                    MAX_CONSECUTIVE_LOSSES, MAX_OPEN_POSITIONS,
+                    SESSION_TIME_LIMIT_MINUTES)
+from trading.signal_generator import Signal
+from utils.logger import setup_logger
+
+logger = setup_logger("trading.risk_manager")
+
+
+@dataclass
+class RiskDecision:
+    """Result of a risk check."""
+    approved: bool
+    reason: str
+    adjusted_stake: float
+    checks: dict
+
+
+class RiskManager:
+    """
+    Gate keeper for all trades.
+    
+    Hard rules (non-negotiable):
+    - Max 2% of bankroll per trade
+    - Max 10% daily loss → halt trading
+    - 5 consecutive losses → circuit breaker
+    - Only 1 open position at a time
+    - Max 8-hour session
+    
+    Soft rules (advisory):
+    - Reduce position size during losing streaks
+    - Increase caution after drift events
+    - Halt if win rate drops below 45% over last 50 trades
+    """
+    
+    def __init__(self, initial_bankroll: float):
+        self.initial_bankroll = initial_bankroll
+        self.bankroll = initial_bankroll
+        
+        # Session tracking
+        self.session_start = time.time()
+        self._session_active = True
+        
+        # Daily tracking
+        self.daily_pnl = 0.0
+        self.daily_trades = 0
+        self._last_day = time.strftime("%Y-%m-%d")
+        
+        # Streak tracking
+        self.consecutive_losses = 0
+        self.consecutive_wins = 0
+        self.max_consecutive_losses = 0
+        
+        # Position tracking
+        self.open_positions = 0
+        self.total_trades = 0
+        
+        # State flags
+        self.circuit_breaker_active = False
+        self.daily_loss_limit_hit = False
+        self.session_expired = False
+        self.model_drift_active = False
+        
+        logger.info(f"RiskManager initialized: bankroll=${initial_bankroll:.2f}")
+    
+    def can_trade(self, signal: Signal) -> RiskDecision:
+        """
+        MASTER GATE — all trades must pass through here.
+        
+        Returns RiskDecision with approved=True only if ALL checks pass.
+        """
+        checks = {}
+        reasons = []
+        
+        # ─── 1. Circuit Breaker Check ───
+        checks["circuit_breaker"] = not self.circuit_breaker_active
+        if not checks["circuit_breaker"]:
+            reasons.append(f"Circuit breaker active ({self.consecutive_losses} losses)")
+        
+        # ─── 2. Daily Loss Limit ───
+        checks["daily_loss_limit"] = not self.daily_loss_limit_hit
+        if not checks["daily_loss_limit"]:
+            reasons.append(f"Daily loss limit hit (${self.daily_pnl:.2f})")
+        
+        # ─── 3. Session Time ───
+        session_minutes = (time.time() - self.session_start) / 60
+        self.session_expired = session_minutes >= SESSION_TIME_LIMIT_MINUTES
+        checks["session_time"] = not self.session_expired
+        if not checks["session_time"]:
+            reasons.append(f"Session expired ({session_minutes:.0f}min)")
+        
+        # ─── 4. Open Positions ───
+        checks["open_positions"] = self.open_positions < MAX_OPEN_POSITIONS
+        if not checks["open_positions"]:
+            reasons.append(f"Too many open positions ({self.open_positions})")
+        
+        # ─── 5. Position Size ───
+        max_allowed = self.bankroll * MAX_BANKROLL_PER_TRADE
+        checks["position_size"] = signal.stake <= max_allowed
+        if not checks["position_size"]:
+            reasons.append(f"Stake ${signal.stake:.2f} > max ${max_allowed:.2f}")
+        
+        # ─── 6. Consecutive Losses ───
+        checks["consecutive_losses"] = self.consecutive_losses < MAX_CONSECUTIVE_LOSSES
+        if not checks["consecutive_losses"]:
+            reasons.append(f"Max consecutive losses ({self.consecutive_losses})")
+        
+        # ─── 7. Model Drift ───
+        checks["model_drift"] = not self.model_drift_active
+        if not checks["model_drift"]:
+            reasons.append("Model in drift state")
+        
+        # ─── 8. Expected Value ───
+        checks["positive_ev"] = signal.expected_value > 0
+        if not checks["positive_ev"]:
+            reasons.append(f"Negative EV ({signal.expected_value:.4f})")
+        
+        # ─── 9. Minimum Bankroll ───
+        from config import MIN_STAKE
+        checks["min_bankroll"] = self.bankroll >= MIN_STAKE
+        if not checks["min_bankroll"]:
+            reasons.append(f"Insufficient bankroll (${self.bankroll:.2f})")
+        
+        # ─── Evaluate ───
+        approved = all(checks.values())
+        
+        if approved:
+            # Apply position sizing adjustments
+            adjusted_stake = self._adjust_stake(signal.stake)
+            reason = "All checks passed"
+            logger.info(f"✅ RISK APPROVED: stake=${adjusted_stake:.2f}")
+        else:
+            adjusted_stake = 0.0
+            reason = "; ".join(reasons)
+            logger.warning(f"❌ RISK BLOCKED: {reason}")
+        
+        return RiskDecision(
+            approved=approved,
+            reason=reason,
+            adjusted_stake=adjusted_stake,
+            checks=checks,
+        )
+    
+    def _adjust_stake(self, requested_stake: float) -> float:
+        """
+        Adjust stake based on current conditions.
+        Reduce size during losing streaks, increase during winning streaks.
+        """
+        stake = requested_stake
+        
+        # Reduce after consecutive losses
+        if self.consecutive_losses >= 3:
+            reduction = 0.5 ** (self.consecutive_losses - 2)
+            stake *= reduction
+            logger.info(f"Stake reduced {reduction:.0%} due to losing streak")
+        
+        # Cap at max allowed per trade
+        max_allowed = self.bankroll * MAX_BANKROLL_PER_TRADE
+        stake = min(stake, max_allowed)
+        
+        # Floor at minimum
+        from config import MIN_STAKE
+        stake = max(stake, MIN_STAKE)
+        
+        return round(stake, 2)
+    
+    def record_outcome(self, won: bool, stake: float, payout_received: float):
+        """
+        Record the outcome of a completed trade.
+        
+        Args:
+            won: Whether the trade was profitable
+            stake: Amount risked
+            payout_received: Total payout received (stake + profit if won, 0 if lost)
+        """
+        self.total_trades += 1
+        self.daily_trades += 1
+        
+        if won:
+            profit = payout_received - stake
+            self.daily_pnl += profit
+            self.bankroll += profit
+            self.consecutive_losses = 0
+            self.consecutive_wins += 1
+            logger.info(f"Trade WON: +${profit:.2f} (bankroll: ${self.bankroll:.2f})")
+        else:
+            self.daily_pnl -= stake
+            self.bankroll -= stake
+            self.consecutive_wins = 0
+            self.consecutive_losses += 1
+            self.max_consecutive_losses = max(
+                self.max_consecutive_losses, self.consecutive_losses
+            )
+            logger.info(f"Trade LOST: -${stake:.2f} (bankroll: ${self.bankroll:.2f})")
+        
+        # Update open positions
+        self.open_positions = max(0, self.open_positions - 1)
+        
+        # Check circuit breaker
+        if self.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+            self.circuit_breaker_active = True
+            logger.error(
+                f"🚨 CIRCUIT BREAKER ACTIVATED: "
+                f"{self.consecutive_losses} consecutive losses"
+            )
+        
+        # Check daily loss limit
+        max_daily_loss = self.initial_bankroll * MAX_DAILY_LOSS
+        if self.daily_pnl <= -max_daily_loss:
+            self.daily_loss_limit_hit = True
+            logger.error(
+                f"🚨 DAILY LOSS LIMIT HIT: "
+                f"${self.daily_pnl:.2f} (limit: ${-max_daily_loss:.2f})"
+            )
+    
+    def set_drift_state(self, is_drifting: bool):
+        """Update model drift state from drift detector."""
+        self.model_drift_active = is_drifting
+    
+    def reset_circuit_breaker(self):
+        """Manually reset circuit breaker (e.g., after analysis)."""
+        self.circuit_breaker_active = False
+        self.consecutive_losses = 0
+        logger.info("Circuit breaker reset")
+    
+    def reset_daily(self):
+        """Reset daily counters (call at start of each day)."""
+        self.daily_pnl = 0.0
+        self.daily_trades = 0
+        self.daily_loss_limit_hit = False
+        self._last_day = time.strftime("%Y-%m-%d")
+        logger.info("Daily risk counters reset")
+    
+    def new_session(self, bankroll: float = None):
+        """Start a new trading session."""
+        if bankroll:
+            self.bankroll = bankroll
+        self.session_start = time.time()
+        self.session_expired = False
+        self.circuit_breaker_active = False
+        self.open_positions = 0
+        logger.info(f"New session started: bankroll=${self.bankroll:.2f}")
+    
+    @property
+    def total_pnl(self) -> float:
+        return self.bankroll - self.initial_bankroll
+    
+    @property
+    def roi(self) -> float:
+        if self.initial_bankroll == 0:
+            return 0.0
+        return self.total_pnl / self.initial_bankroll
+    
+    def summary(self) -> dict:
+        return {
+            "bankroll": round(self.bankroll, 2),
+            "initial_bankroll": round(self.initial_bankroll, 2),
+            "total_pnl": round(self.total_pnl, 2),
+            "roi": round(self.roi * 100, 1),
+            "daily_pnl": round(self.daily_pnl, 2),
+            "daily_trades": self.daily_trades,
+            "total_trades": self.total_trades,
+            "consecutive_losses": self.consecutive_losses,
+            "consecutive_wins": self.consecutive_wins,
+            "circuit_breaker": self.circuit_breaker_active,
+            "daily_limit_hit": self.daily_loss_limit_hit,
+            "session_expired": self.session_expired,
+            "model_drift": self.model_drift_active,
+            "session_minutes": round((time.time() - self.session_start) / 60, 0),
+        }
