@@ -1,133 +1,138 @@
 {
   "status": "trained",
-  "version": "1.0-strategy",
+  "version": "1.1-strategy-incremental",
   "model_type": "XGBRegressor",
   "target": "profit_r (R-multiple)",
   "strategy": "INSTITUTIONAL_CANDLES",
   "strategy_key": "inst_candles",
   "layer": 1,
-  "n_features": 71,
-  "total_trades": 190,
-  "wins": 88,
-  "losses": 102,
-  "win_rate": 46.3,
-  "mean_r": 0.158,
+  "n_features": 93,
+  "total_trades": 154,
+  "wins": 60,
+  "losses": 94,
+  "win_rate": 39.0,
+  "mean_r": -0.026,
   "median_r": -1.0,
-  "train_mae": 0.1329,
-  "val_mae": 0.3278,
-  "val_rmse": 0.5257,
-  "val_r2": 0.8232,
-  "val_correlation": 0.9112,
+  "train_mae": 0.1999,
+  "val_mae": 0.5811,
+  "val_rmse": 0.6952,
+  "val_r2": 0.6462,
+  "val_correlation": 0.8848,
   "pass_threshold": 0.2,
-  "best_iteration": 341,
-  "pass_count": 87,
-  "reject_count": 103,
+  "best_iteration": 3049,
+  "training_mode": "incremental",
+  "previous_trees": 1760,
+  "new_trades_since_last": 154,
+  "replay_buffer_used": true,
+  "replay_sample_size": 1000,
+  "pass_count": 60,
+  "reject_count": 94,
   "pass_wr": 100.0,
-  "reject_wr": 1.0,
+  "reject_wr": 0.0,
   "top_features": [
     [
-      "vw_position",
-      0.05420000106096268
-    ],
-    [
-      "sym_is_commodity",
-      0.052000001072883606
-    ],
-    [
-      "hist_ps_avg_r_recent",
-      0.0471000000834465
-    ],
-    [
-      "ss_trend_continuation",
-      0.045499999076128006
-    ],
-    [
-      "smc_structure_trend",
-      0.04190000146627426
+      "sym_is_jpy",
+      0.10570000112056732
     ],
     [
       "hist_ps_avg_r_trend",
-      0.03440000116825104
+      0.04050000011920929
     ],
     [
-      "hist_ps_wr_recent",
-      0.021299999207258224
+      "hist_ps_avg_r_decay",
+      0.02979999966919422
     ],
     [
-      "sym_is_jpy",
-      0.019899999722838402
+      "tp_score",
+      0.02930000051856041
+    ],
+    [
+      "hist_ps_trades_all",
+      0.027699999511241913
+    ],
+    [
+      "fx_spread_pips",
+      0.02759999968111515
+    ],
+    [
+      "fq_final_score",
+      0.026799999177455902
+    ],
+    [
+      "tp_tp_pips",
+      0.026599999517202377
     ],
     [
       "of_rd_bias",
-      0.01850000023841858
+      0.026000000536441803
     ],
     [
-      "vw_pip_from_vwap",
-      0.015399999916553497
+      "hist_ps_wr_recent",
+      0.02590000070631504
     ],
     [
-      "fq_market_score",
-      0.015200000256299973
+      "tp_sl_pips",
+      0.02539999969303608
     ],
     [
       "ss_inst_candles",
-      0.014600000344216824
+      0.025299999862909317
     ],
     [
-      "smc_pd_zone",
-      0.014499999582767487
+      "smc_pips_to_eq",
+      0.025100000202655792
     ],
     [
-      "hist_ps_wr_all",
-      0.014499999582767487
+      "vs_momentum_velocity",
+      0.023499999195337296
     ],
     [
-      "fq_combined_bias",
-      0.01360000018030405
+      "fq_market_score",
+      0.022600000724196434
     ]
   ],
   "calibration": [
     {
       "Q1 (worst)": {
-        "predicted_r": -1.04,
+        "predicted_r": -1.034,
         "actual_mean_r": -1.0,
         "win_rate_pct": 0.0,
-        "count": 7
+        "count": 6
       }
     },
     {
       "Q2": {
-        "predicted_r": -0.86,
+        "predicted_r": -0.542,
         "actual_mean_r": -1.0,
         "win_rate_pct": 0.0,
-        "count": 7
+        "count": 6
       }
     },
     {
       "Q3 (middle)": {
-        "predicted_r": 0.215,
-        "actual_mean_r": -0.286,
-        "win_rate_pct": 28.6,
-        "count": 7
+        "predicted_r": -0.211,
+        "actual_mean_r": -1.0,
+        "win_rate_pct": 0.0,
+        "count": 6
       }
     },
     {
       "Q4": {
-        "predicted_r": 1.025,
-        "actual_mean_r": 1.501,
-        "win_rate_pct": 100.0,
-        "count": 7
+        "predicted_r": 0.551,
+        "actual_mean_r": 0.249,
+        "win_rate_pct": 50.0,
+        "count": 6
       }
     },
     {
       "Q5 (best)": {
-        "predicted_r": 1.395,
-        "actual_mean_r": 1.5,
+        "predicted_r": 2.047,
+        "actual_mean_r": 1.501,
         "win_rate_pct": 100.0,
-        "count": 10
+        "count": 7
       }
     }
   ],
-  "model_size_kb": 331.9,
-  "trained_at": "2026-05-05T11:54:12.965228+00:00"
+  "model_size_kb": 5192.1,
+  "trained_at": "2026-05-08T09:19:38.716633+00:00"
 }

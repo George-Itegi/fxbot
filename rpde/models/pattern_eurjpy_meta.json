@@ -1,0 +1,117 @@
+{
+  "pair": "EURJPY",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:26:32.132301+00:00",
+  "training_samples": 37881,
+  "train_samples": 30304,
+  "val_samples": 7577,
+  "skipped_moments": 91,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.390781,
+  "val_mae": 0.007628,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "tp_sl_pips",
+      0.385551
+    ],
+    [
+      "im_vix",
+      0.376655
+    ],
+    [
+      "tp_score",
+      0.220703
+    ],
+    [
+      "mr_h4_rsi",
+      0.004743
+    ],
+    [
+      "vs_choppy",
+      0.001308
+    ],
+    [
+      "st_session",
+      0.000814
+    ],
+    [
+      "st_is_overlap",
+      0.000664
+    ],
+    [
+      "vs_atr",
+      0.000561
+    ],
+    [
+      "st_is_london_open",
+      0.000476
+    ],
+    [
+      "mt_rsi_agreement",
+      0.000397
+    ],
+    [
+      "vs_surge_ratio",
+      0.000324
+    ],
+    [
+      "mr_d1_rsi",
+      0.000315
+    ],
+    [
+      "mt_mtf_score",
+      0.00031
+    ],
+    [
+      "mr_m30_rsi",
+      0.000284
+    ],
+    [
+      "mr_h1_rsi",
+      0.000281
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0011,
+      0.0,
+      0.0,
+      1515
+    ],
+    "2": [
+      0.0015,
+      0.0,
+      0.0,
+      1515
+    ],
+    "3": [
+      0.001,
+      0.0,
+      0.0,
+      1515
+    ],
+    "4": [
+      0.0015,
+      0.0,
+      0.0,
+      1515
+    ],
+    "5_TOP": [
+      0.0015,
+      0.0,
+      0.0,
+      1517
+    ]
+  },
+  "y_mean": 2.0992,
+  "y_std": 2.2969,
+  "y_positive_pct": 0.4713,
+  "n_negative_db": 2173,
+  "n_negative_synth": 17854,
+  "n_negative_total": 20027,
+  "total_positive_samples": 17854
+}

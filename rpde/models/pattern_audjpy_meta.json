@@ -1,0 +1,117 @@
+{
+  "pair": "AUDJPY",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:26:58.125939+00:00",
+  "training_samples": 36325,
+  "train_samples": 29060,
+  "val_samples": 7265,
+  "skipped_moments": 75,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.407722,
+  "val_mae": 0.009658,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "im_vix",
+      0.47654
+    ],
+    [
+      "tp_sl_pips",
+      0.294198
+    ],
+    [
+      "tp_score",
+      0.210622
+    ],
+    [
+      "vs_choppy",
+      0.001827
+    ],
+    [
+      "st_session",
+      0.001236
+    ],
+    [
+      "mr_h4_rsi",
+      0.000982
+    ],
+    [
+      "vs_atr",
+      0.000971
+    ],
+    [
+      "fq_smc_score",
+      0.000661
+    ],
+    [
+      "st_is_overlap",
+      0.000529
+    ],
+    [
+      "st_is_ny_afternoon",
+      0.000529
+    ],
+    [
+      "mr_d1_rsi",
+      0.000528
+    ],
+    [
+      "mr_h1_rsi",
+      0.000519
+    ],
+    [
+      "mt_rsi_agreement",
+      0.00047
+    ],
+    [
+      "fq_htf_score",
+      0.000455
+    ],
+    [
+      "vs_surge_ratio",
+      0.000449
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0032,
+      0.0,
+      0.0,
+      1453
+    ],
+    "2": [
+      0.0038,
+      0.0,
+      0.0,
+      1453
+    ],
+    "3": [
+      0.0036,
+      0.0,
+      0.0,
+      1453
+    ],
+    "4": [
+      0.0039,
+      0.0,
+      0.0,
+      1453
+    ],
+    "5_TOP": [
+      0.0027,
+      0.0,
+      0.0,
+      1453
+    ]
+  },
+  "y_mean": 2.1091,
+  "y_std": 2.3166,
+  "y_positive_pct": 0.466,
+  "n_negative_db": 2471,
+  "n_negative_synth": 16927,
+  "n_negative_total": 19398,
+  "total_positive_samples": 16927
+}

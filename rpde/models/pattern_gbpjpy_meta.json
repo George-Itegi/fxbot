@@ -1,0 +1,117 @@
+{
+  "pair": "GBPJPY",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:26:38.318398+00:00",
+  "training_samples": 42504,
+  "train_samples": 34003,
+  "val_samples": 8501,
+  "skipped_moments": 100,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.401864,
+  "val_mae": 0.008791,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "im_vix",
+      0.513487
+    ],
+    [
+      "tp_sl_pips",
+      0.273794
+    ],
+    [
+      "tp_score",
+      0.198288
+    ],
+    [
+      "vs_choppy",
+      0.000958
+    ],
+    [
+      "tp_direction",
+      0.000902
+    ],
+    [
+      "st_session",
+      0.00085
+    ],
+    [
+      "vs_atr",
+      0.000707
+    ],
+    [
+      "st_is_overlap",
+      0.000586
+    ],
+    [
+      "vw_price_position",
+      0.000469
+    ],
+    [
+      "st_is_london_open",
+      0.00045
+    ],
+    [
+      "ap_atr_ratio",
+      0.000419
+    ],
+    [
+      "mr_d1_rsi",
+      0.000415
+    ],
+    [
+      "vs_momentum_velocity",
+      0.000406
+    ],
+    [
+      "mt_mtf_score",
+      0.000367
+    ],
+    [
+      "mt_trend_agreement",
+      0.000355
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0056,
+      0.0,
+      0.0,
+      1700
+    ],
+    "2": [
+      0.0058,
+      0.0,
+      0.0,
+      1700
+    ],
+    "3": [
+      0.006,
+      0.0,
+      0.0,
+      1700
+    ],
+    "4": [
+      0.0061,
+      0.0,
+      0.0,
+      1700
+    ],
+    "5_TOP": [
+      0.0055,
+      0.0,
+      0.0,
+      1701
+    ]
+  },
+  "y_mean": 2.0989,
+  "y_std": 2.2621,
+  "y_positive_pct": 0.4796,
+  "n_negative_db": 1734,
+  "n_negative_synth": 20385,
+  "n_negative_total": 22119,
+  "total_positive_samples": 20385
+}

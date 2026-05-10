@@ -1,0 +1,117 @@
+{
+  "pair": "CHFJPY",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:26:47.307486+00:00",
+  "training_samples": 64366,
+  "train_samples": 51492,
+  "val_samples": 12874,
+  "skipped_moments": 183,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.321665,
+  "val_mae": 0.004126,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "im_vix",
+      0.397136
+    ],
+    [
+      "tp_sl_pips",
+      0.304982
+    ],
+    [
+      "tp_score",
+      0.290918
+    ],
+    [
+      "mr_m30_rsi",
+      0.000749
+    ],
+    [
+      "vs_atr",
+      0.000532
+    ],
+    [
+      "mr_h1_rsi",
+      0.000466
+    ],
+    [
+      "mr_d1_rsi",
+      0.000462
+    ],
+    [
+      "st_session",
+      0.000286
+    ],
+    [
+      "ap_atr_ratio",
+      0.00024
+    ],
+    [
+      "st_is_london_open",
+      0.000222
+    ],
+    [
+      "fq_smc_score",
+      0.00019
+    ],
+    [
+      "st_is_overlap",
+      0.00018
+    ],
+    [
+      "vw_price_position",
+      0.000174
+    ],
+    [
+      "mr_h4_rsi",
+      0.00015
+    ],
+    [
+      "mt_mtf_score",
+      0.000149
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0019,
+      0.0,
+      0.0,
+      2574
+    ],
+    "2": [
+      0.0019,
+      0.0,
+      0.0,
+      2574
+    ],
+    "3": [
+      0.0018,
+      0.0,
+      0.0,
+      2574
+    ],
+    "4": [
+      0.002,
+      0.0,
+      0.0,
+      2574
+    ],
+    "5_TOP": [
+      0.0021,
+      0.0,
+      0.0,
+      2578
+    ]
+  },
+  "y_mean": 1.983,
+  "y_std": 2.1315,
+  "y_positive_pct": 0.4936,
+  "n_negative_db": 824,
+  "n_negative_synth": 31771,
+  "n_negative_total": 32595,
+  "total_positive_samples": 31771
+}

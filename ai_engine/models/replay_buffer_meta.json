@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "max_size": 5000,
+  "created_at": "2026-05-08T09:19:23.629062+00:00",
+  "last_updated": "2026-05-08T09:19:43.366382+00:00",
+  "total_added": 9357,
+  "total_evicted": 9357,
+  "pair_distribution": {
+    "AUDUSD": 326,
+    "CHFJPY": 637,
+    "EURJPY": 781,
+    "XAGUSD": 768,
+    "AUDJPY": 461,
+    "AUDCAD": 223,
+    "EURUSD": 344,
+    "GBPJPY": 718,
+    "GBPUSD": 528,
+    "CADJPY": 214
+  },
+  "strategy_distribution": {
+    "OPTIMAL_TRADE_ENTRY_FIB": 267,
+    "SMC_OB_REVERSAL": 190,
+    "EMA_CROSS_MOMENTUM": 2018,
+    "TREND_CONTINUATION": 1826,
+    "BREAK_OF_STRUCTURE_MOMENTUM": 66,
+    "INSTITUTIONAL_CANDLES": 287,
+    "SUPPLY_DEMAND_ZONE_ENTRY": 346
+  },
+  "win_rate": 53.2,
+  "buffer_size": 5000
+}

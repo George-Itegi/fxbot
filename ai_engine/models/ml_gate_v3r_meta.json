@@ -1,144 +1,150 @@
 {
   "status": "trained",
-  "version": "3.1-regression",
+  "version": "3.2-regression-incremental",
   "model_type": "XGBRegressor",
   "target": "profit_r (R-multiple, continuous)",
-  "n_features": 71,
-  "total_trades": 2302,
-  "wins": 923,
-  "losses": 1379,
-  "win_rate": 40.1,
-  "mean_r": 0.246,
+  "n_features": 93,
+  "total_trades": 2000,
+  "wins": 970,
+  "losses": 1030,
+  "win_rate": 48.5,
+  "mean_r": 0.728,
   "median_r": -1.0,
-  "std_r": 1.61,
-  "positive_mean_r": 2.108,
-  "negative_mean_r": -1.0,
+  "std_r": 1.887,
+  "positive_mean_r": 2.563,
+  "negative_mean_r": -0.999,
   "r_clip_range": [
     -2.0,
     5.0
   ],
-  "train_mae": 0.1617,
-  "val_mae": 0.4272,
-  "val_rmse": 0.7533,
-  "val_r2": 0.7697,
-  "val_correlation": 0.878,
-  "best_iteration": 375,
+  "train_mae": 0.2006,
+  "val_mae": 0.4225,
+  "val_rmse": 0.5715,
+  "val_r2": 0.9033,
+  "val_correlation": 0.9538,
+  "best_iteration": 19597,
   "take_threshold": 0.3,
   "caution_threshold": 0.0,
+  "training_mode": "incremental",
+  "previous_trees": 9958,
+  "new_trades_since_last": 2000,
+  "recent_weight": 5.0,
+  "replay_buffer_used": true,
+  "replay_sample_size": 2000,
   "top_features": [
     [
-      "ss_ote_fib",
-      0.03869999945163727
+      "hist_ps_avg_r_trend",
+      0.14100000262260437
     ],
     [
-      "tp_rr_ratio",
-      0.034299999475479126
+      "vs_choppy",
+      0.04439999908208847
+    ],
+    [
+      "of_imb_strength",
+      0.04340000078082085
+    ],
+    [
+      "ss_ote_fib",
+      0.0414000004529953
+    ],
+    [
+      "st_vol_surge",
+      0.033799998462200165
+    ],
+    [
+      "of_rd_bias",
+      0.025100000202655792
+    ],
+    [
+      "sym_is_commodity",
+      0.024299999698996544
+    ],
+    [
+      "ss_smc_ob",
+      0.023800000548362732
+    ],
+    [
+      "cs_total_signals",
+      0.02329999953508377
+    ],
+    [
+      "cs_groups_agreeing",
+      0.023099999874830246
+    ],
+    [
+      "ss_bos_momentum",
+      0.022700000554323196
+    ],
+    [
+      "smc_pd_zone",
+      0.019600000232458115
+    ],
+    [
+      "fq_htf_score",
+      0.01889999955892563
     ],
     [
       "ss_sd_zone",
-      0.027499999850988388
+      0.018799999728798866
     ],
     [
-      "tp_tp_pips",
-      0.02370000071823597
-    ],
-    [
-      "ss_ema_cross",
-      0.022299999371170998
-    ],
-    [
-      "vw_pip_to_poc",
-      0.020400000736117363
-    ],
-    [
-      "smc_pips_to_eq",
-      0.0203000009059906
-    ],
-    [
-      "sym_is_jpy",
-      0.01899999938905239
-    ],
-    [
-      "hist_ps_avg_r_trend",
-      0.018200000748038292
-    ],
-    [
-      "hist_ps_trades_recent",
-      0.01769999973475933
-    ],
-    [
-      "smc_structure_trend",
-      0.017000000923871994
-    ],
-    [
-      "fq_market_score",
-      0.016200000420212746
-    ],
-    [
-      "hist_ps_trades_all",
-      0.015599999576807022
-    ],
-    [
-      "smc_smc_bias",
-      0.01510000042617321
-    ],
-    [
-      "vw_price_position",
-      0.014999999664723873
+      "tp_sl_pips",
+      0.01720000058412552
     ]
   ],
   "calibration": [
     {
       "quintile_1": {
-        "predicted_r": -1.148,
+        "predicted_r": -1.445,
         "actual_mean_r": -1.0,
         "actual_median_r": -1.0,
         "actual_std_r": 0.0,
         "win_rate_pct": 0.0,
-        "count": 92
+        "count": 80
       }
     },
     {
       "quintile_2": {
-        "predicted_r": -0.95,
+        "predicted_r": -0.878,
         "actual_mean_r": -1.0,
         "actual_median_r": -1.0,
         "actual_std_r": 0.0,
         "win_rate_pct": 0.0,
-        "count": 92
+        "count": 80
       }
     },
     {
       "quintile_3": {
-        "predicted_r": -0.5,
-        "actual_mean_r": -0.593,
+        "predicted_r": 0.226,
+        "actual_mean_r": 0.002,
         "actual_median_r": -1.0,
-        "actual_std_r": 1.11,
-        "win_rate_pct": 12.0,
-        "count": 92
+        "actual_std_r": 1.497,
+        "win_rate_pct": 35.0,
+        "count": 80
       }
     },
     {
       "quintile_4": {
-        "predicted_r": 0.82,
-        "actual_mean_r": 1.09,
-        "actual_median_r": 1.23,
-        "actual_std_r": 1.298,
-        "win_rate_pct": 79.3,
-        "count": 92
+        "predicted_r": 2.347,
+        "actual_mean_r": 2.499,
+        "actual_median_r": 2.5,
+        "actual_std_r": 0.061,
+        "win_rate_pct": 100.0,
+        "count": 80
       }
     },
     {
       "quintile_5": {
-        "predicted_r": 2.425,
-        "actual_mean_r": 2.415,
+        "predicted_r": 3.29,
+        "actual_mean_r": 2.827,
         "actual_median_r": 2.5,
-        "actual_std_r": 0.411,
-        "win_rate_pct": 98.9,
-        "count": 93
+        "actual_std_r": 0.785,
+        "win_rate_pct": 100.0,
+        "count": 80
       }
     }
   ],
-  "model_size_kb": 821.0,
-  "trained_at": "2026-05-05T11:58:17.649847+00:00"
+  "model_size_kb": 64990.2,
+  "trained_at": "2026-05-08T09:16:12.440164+00:00"
 }

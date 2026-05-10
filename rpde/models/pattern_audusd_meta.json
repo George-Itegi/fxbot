@@ -1,0 +1,117 @@
+{
+  "pair": "AUDUSD",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:27:13.033282+00:00",
+  "training_samples": 27041,
+  "train_samples": 21632,
+  "val_samples": 5409,
+  "skipped_moments": 23,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.443027,
+  "val_mae": 0.009082,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "im_vix",
+      0.56182
+    ],
+    [
+      "tp_sl_pips",
+      0.227444
+    ],
+    [
+      "tp_score",
+      0.172156
+    ],
+    [
+      "vs_choppy",
+      0.006093
+    ],
+    [
+      "st_is_ny_afternoon",
+      0.002987
+    ],
+    [
+      "st_session",
+      0.002659
+    ],
+    [
+      "vs_atr",
+      0.001739
+    ],
+    [
+      "fq_smc_score",
+      0.001367
+    ],
+    [
+      "smc_has_bos",
+      0.001147
+    ],
+    [
+      "st_is_london_open",
+      0.000974
+    ],
+    [
+      "ap_atr_ratio",
+      0.000919
+    ],
+    [
+      "fq_htf_score",
+      0.00089
+    ],
+    [
+      "mt_rsi_agreement",
+      0.000831
+    ],
+    [
+      "vs_surge_ratio",
+      0.000816
+    ],
+    [
+      "vw_position",
+      0.000799
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0039,
+      0.0,
+      0.0,
+      1081
+    ],
+    "2": [
+      0.0039,
+      0.0,
+      0.0,
+      1081
+    ],
+    "3": [
+      0.0038,
+      0.0,
+      0.0,
+      1081
+    ],
+    "4": [
+      0.0031,
+      0.0,
+      0.0,
+      1081
+    ],
+    "5_TOP": [
+      0.003,
+      0.0,
+      0.0,
+      1085
+    ]
+  },
+  "y_mean": 2.1221,
+  "y_std": 2.3661,
+  "y_positive_pct": 0.4543,
+  "n_negative_db": 2469,
+  "n_negative_synth": 12286,
+  "n_negative_total": 14755,
+  "total_positive_samples": 12286
+}

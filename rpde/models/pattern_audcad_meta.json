@@ -1,0 +1,117 @@
+{
+  "pair": "AUDCAD",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:27:27.561952+00:00",
+  "training_samples": 30677,
+  "train_samples": 24541,
+  "val_samples": 6136,
+  "skipped_moments": 72,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.436671,
+  "val_mae": 0.009159,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "im_vix",
+      0.522194
+    ],
+    [
+      "tp_sl_pips",
+      0.240557
+    ],
+    [
+      "tp_score",
+      0.20663
+    ],
+    [
+      "vs_choppy",
+      0.003916
+    ],
+    [
+      "st_is_ny_afternoon",
+      0.00238
+    ],
+    [
+      "st_session",
+      0.002141
+    ],
+    [
+      "tp_direction",
+      0.001573
+    ],
+    [
+      "vs_atr",
+      0.0015
+    ],
+    [
+      "mr_h4_rsi",
+      0.000765
+    ],
+    [
+      "mr_m15_rsi",
+      0.000764
+    ],
+    [
+      "mr_h1_rsi",
+      0.000729
+    ],
+    [
+      "smc_bos_direction",
+      0.000712
+    ],
+    [
+      "st_is_london_open",
+      0.000708
+    ],
+    [
+      "mt_rsi_agreement",
+      0.000707
+    ],
+    [
+      "of_imbalance",
+      0.000673
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0032,
+      0.0,
+      0.0,
+      1227
+    ],
+    "2": [
+      0.0036,
+      0.0,
+      0.0,
+      1227
+    ],
+    "3": [
+      0.0033,
+      0.0,
+      0.0,
+      1227
+    ],
+    "4": [
+      0.0026,
+      0.0,
+      0.0,
+      1227
+    ],
+    "5_TOP": [
+      0.0029,
+      0.0,
+      0.0,
+      1228
+    ]
+  },
+  "y_mean": 2.1011,
+  "y_std": 2.3371,
+  "y_positive_pct": 0.4575,
+  "n_negative_db": 2609,
+  "n_negative_synth": 14034,
+  "n_negative_total": 16643,
+  "total_positive_samples": 14034
+}

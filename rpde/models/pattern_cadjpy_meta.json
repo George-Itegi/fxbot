@@ -1,0 +1,117 @@
+{
+  "pair": "CADJPY",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:26:52.338309+00:00",
+  "training_samples": 31532,
+  "train_samples": 25225,
+  "val_samples": 6307,
+  "skipped_moments": 55,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.54582,
+  "val_mae": 0.012615,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "tp_score",
+      0.716356
+    ],
+    [
+      "mr_h4_rsi",
+      0.119201
+    ],
+    [
+      "vs_choppy",
+      0.01822
+    ],
+    [
+      "st_session",
+      0.011716
+    ],
+    [
+      "smc_smc_bias",
+      0.009745
+    ],
+    [
+      "vs_atr",
+      0.007312
+    ],
+    [
+      "st_is_london_open",
+      0.004573
+    ],
+    [
+      "mr_m30_rsi",
+      0.004538
+    ],
+    [
+      "of_imb_strength",
+      0.004325
+    ],
+    [
+      "vs_momentum_velocity",
+      0.004131
+    ],
+    [
+      "vs_surge_ratio",
+      0.004119
+    ],
+    [
+      "smc_structure_trend",
+      0.003857
+    ],
+    [
+      "ap_atr_ratio",
+      0.003825
+    ],
+    [
+      "mr_d1_rsi",
+      0.003808
+    ],
+    [
+      "vw_position",
+      0.00367
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0103,
+      0.0,
+      0.0,
+      1261
+    ],
+    "2": [
+      0.0093,
+      0.0,
+      0.0,
+      1261
+    ],
+    "3": [
+      0.0099,
+      0.0,
+      0.0,
+      1261
+    ],
+    "4": [
+      0.0094,
+      0.0,
+      0.0,
+      1261
+    ],
+    "5_TOP": [
+      0.01,
+      0.0,
+      0.0,
+      1263
+    ]
+  },
+  "y_mean": 2.1124,
+  "y_std": 2.3457,
+  "y_positive_pct": 0.4589,
+  "n_negative_db": 2592,
+  "n_negative_synth": 14470,
+  "n_negative_total": 17062,
+  "total_positive_samples": 14470
+}

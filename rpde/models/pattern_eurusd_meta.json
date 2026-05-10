@@ -1,0 +1,117 @@
+{
+  "pair": "EURUSD",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:27:17.555880+00:00",
+  "training_samples": 28922,
+  "train_samples": 23137,
+  "val_samples": 5785,
+  "skipped_moments": 69,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.476994,
+  "val_mae": 0.007307,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "im_vix",
+      0.530491
+    ],
+    [
+      "tp_score",
+      0.220934
+    ],
+    [
+      "tp_sl_pips",
+      0.214042
+    ],
+    [
+      "vs_choppy",
+      0.002947
+    ],
+    [
+      "st_session",
+      0.002006
+    ],
+    [
+      "mt_trend_agreement",
+      0.001597
+    ],
+    [
+      "st_is_london_open",
+      0.001574
+    ],
+    [
+      "st_is_ny_afternoon",
+      0.001563
+    ],
+    [
+      "vs_atr",
+      0.001199
+    ],
+    [
+      "vs_market_state",
+      0.00118
+    ],
+    [
+      "fq_smc_score",
+      0.00116
+    ],
+    [
+      "vw_position",
+      0.001078
+    ],
+    [
+      "vs_momentum_velocity",
+      0.000945
+    ],
+    [
+      "ap_atr_ratio",
+      0.000921
+    ],
+    [
+      "mr_d1_rsi",
+      0.000869
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0037,
+      0.0,
+      0.0,
+      1157
+    ],
+    "2": [
+      0.0035,
+      0.0,
+      0.0,
+      1157
+    ],
+    "3": [
+      0.0035,
+      0.0,
+      0.0,
+      1157
+    ],
+    "4": [
+      0.004,
+      0.0,
+      0.0,
+      1157
+    ],
+    "5_TOP": [
+      0.0045,
+      0.0,
+      0.0,
+      1157
+    ]
+  },
+  "y_mean": 2.1063,
+  "y_std": 2.3516,
+  "y_positive_pct": 0.4545,
+  "n_negative_db": 2630,
+  "n_negative_synth": 13146,
+  "n_negative_total": 15776,
+  "total_positive_samples": 13146
+}

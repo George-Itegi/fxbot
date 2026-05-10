@@ -1,0 +1,117 @@
+{
+  "pair": "XAUUSD",
+  "version": "5.2",
+  "trained_at": "2026-05-09T23:27:08.716156+00:00",
+  "training_samples": 10846,
+  "train_samples": 8676,
+  "val_samples": 2170,
+  "skipped_moments": 0,
+  "n_features": 93,
+  "incremental": false,
+  "use_replay": false,
+  "train_mae": 0.457259,
+  "val_mae": 0.009816,
+  "val_r2": 0.0,
+  "val_corr": 0.0,
+  "top_features": [
+    [
+      "im_vix",
+      0.466929
+    ],
+    [
+      "tp_sl_pips",
+      0.297522
+    ],
+    [
+      "tp_score",
+      0.201037
+    ],
+    [
+      "st_is_london_open",
+      0.002286
+    ],
+    [
+      "st_session",
+      0.002019
+    ],
+    [
+      "mt_trend_agreement",
+      0.001434
+    ],
+    [
+      "smc_structure_trend",
+      0.001349
+    ],
+    [
+      "fq_smc_score",
+      0.001294
+    ],
+    [
+      "mt_mtf_score",
+      0.001212
+    ],
+    [
+      "st_is_overlap",
+      0.001161
+    ],
+    [
+      "smc_smc_bias",
+      0.001111
+    ],
+    [
+      "fq_htf_score",
+      0.001048
+    ],
+    [
+      "mt_rsi_agreement",
+      0.001006
+    ],
+    [
+      "mr_d1_rsi",
+      0.000995
+    ],
+    [
+      "vs_surge_ratio",
+      0.000985
+    ]
+  ],
+  "quintile_calibration": {
+    "1_BOTTOM": [
+      0.0059,
+      0.0,
+      0.0,
+      434
+    ],
+    "2": [
+      0.0063,
+      0.0,
+      0.0,
+      434
+    ],
+    "3": [
+      0.006,
+      0.0,
+      0.0,
+      434
+    ],
+    "4": [
+      0.0059,
+      0.0,
+      0.0,
+      434
+    ],
+    "5_TOP": [
+      0.0066,
+      0.0,
+      0.0,
+      434
+    ]
+  },
+  "y_mean": 1.9219,
+  "y_std": 2.1621,
+  "y_positive_pct": 0.4641,
+  "n_negative_db": 778,
+  "n_negative_synth": 5034,
+  "n_negative_total": 5812,
+  "total_positive_samples": 5034
+}
