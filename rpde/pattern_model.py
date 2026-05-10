@@ -412,7 +412,7 @@ class PatternModel:
             'y_std': round(float(np.std(y)), 4),
             'y_positive_pct': round(float(np.mean(y > 0)), 4),
             'n_negative_db': negative_count,
-            'n_negative_synth': synthetic_count,
+            'n_negative_synth': 0,  # v5.2: synthetic generation removed
             'n_negative_total': total_negatives,
             'total_positive_samples': n_positives,
         }
