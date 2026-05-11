@@ -1,5 +1,5 @@
 """
-Deriv Over/Under Bot — Multi-Market Orchestrator v5
+Deriv Over/Under Bot — Multi-Market Orchestrator v7
 =====================================================
 Multiple MarketWorkers -> MarketSelector (bandit) -> shared RiskManager -> Execute -> Learn
 
@@ -20,6 +20,7 @@ from config import (DEFAULT_SYMBOL, INITIAL_BANKROLL, DEFAULT_MARKETS,
                     OVER_BARRIER, UNDER_BARRIER,
                     MODEL_SNAPSHOT_INTERVAL, MODEL_TYPE, MIN_STAKE,
                     MAX_OPEN_POSITIONS, MIN_TRADE_INTERVAL_SEC,
+                    ALLOW_MULTIPLE_TRADES, MAX_CONCURRENT_TRADES,
                     get_symbol_decimals, get_symbol_category,
                     supports_digit_contracts, SYMBOLS, VALID_MULTI_MARKET_SYMBOLS)
 from data.deriv_ws import DerivWS
@@ -58,12 +59,12 @@ class DerivBot:
 
         self.running = False
         self._shutdown_done = False
-        self._active_trade_symbol: Optional[str] = None
-        self._active_trade_time: float = 0.0      # When the current trade was opened
+        self._active_trades: dict[str, float] = {}   # symbol → open_time (supports multiple concurrent trades)
         self._contract_to_symbol: dict[int, str] = {}
         self._real_balance: float = 0.0
         self._global_trade_counter = 0
         self._last_trade_time: float = 0.0
+        self._symbol_cooldowns: dict[str, float] = {}  # symbol → cooldown expiry (per-market loss cooldowns)
 
         # Trade timeout — if a trade stays open longer than this, auto-clear it.
         # A 5-10 tick contract should settle in under 30 seconds.
@@ -96,6 +97,10 @@ class DerivBot:
         logger.info("")
         logger.info("  Martingale: 2x on loss (max 5 steps, $50 cap)")
         logger.info("  Force trade: YES when 100% agree + conf >= 60% + EV > 0")
+        if ALLOW_MULTIPLE_TRADES:
+            logger.info(f"  Multi-trade: UP TO {MAX_CONCURRENT_TRADES} markets simultaneously")
+        else:
+            logger.info("  Multi-trade: OFF (one trade at a time)")
         logger.info("  Circuit breaker: 10 losses -> 30s cooldown")
         logger.info("  No daily trade limit (demo training mode)")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
@@ -145,23 +150,23 @@ class DerivBot:
                 # If a trade has been open for too long, the Deriv result callback
                 # was probably missed (network glitch, WS reconnection, etc.).
                 # Auto-clear it so the bot can resume trading.
-                if self._active_trade_symbol is not None:
-                    elapsed = time.time() - self._active_trade_time
+                for sym, open_time in list(self._active_trades.items()):
+                    elapsed = time.time() - open_time
                     if elapsed > self._trade_timeout_sec:
                         logger.warning(
-                            f"STUCK TRADE DETECTED: {self._active_trade_symbol} has been open "
+                            f"STUCK TRADE DETECTED: {sym} has been open "
                             f"for {elapsed:.0f}s (timeout={self._trade_timeout_sec:.0f}s). "
                             f"Auto-clearing to resume trading."
                         )
                         # Clean up any pending contracts for this symbol
-                        worker = self.workers.get(self._active_trade_symbol)
+                        worker = self.workers.get(sym)
                         if worker:
                             for cid in list(worker.executor.pending_contracts.keys()):
                                 self._contract_to_symbol.pop(cid, None)
                             worker.executor.pending_contracts.clear()
-                        # Reset the stuck state
-                        self._active_trade_symbol = None
-                        self.risk_mgr.open_positions = 0
+                        # Reset the stuck state for this symbol
+                        self._active_trades.pop(sym, None)
+                        self.risk_mgr.open_positions = len(self._active_trades)
                         self._last_trade_time = time.time()
 
                 if (self._global_trade_counter > 0 and
@@ -224,8 +229,13 @@ class DerivBot:
 
             signal = worker.process_tick(tick_data)
 
-            if signal is not None and self._active_trade_symbol is None:
+            max_positions = MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1
+            if signal is not None and len(self._active_trades) < max_positions:
+                # Check global minimum interval
                 if time.time() - self._last_trade_time < MIN_TRADE_INTERVAL_SEC:
+                    return
+                # Check per-symbol cooldown (from recent losses on this market)
+                if symbol in self._symbol_cooldowns and time.time() < self._symbol_cooldowns[symbol]:
                     return
                 # CRITICAL: Fire as separate task to avoid async deadlock.
                 # If we await here, the recv loop is blocked and can't read
@@ -236,11 +246,16 @@ class DerivBot:
             logger.error(f"Error in _on_tick ({symbol}): {e}", exc_info=True)
 
     async def _evaluate_and_trade(self):
-        if self._active_trade_symbol is not None:
+        max_positions = MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1
+        if len(self._active_trades) >= max_positions:
             return
 
         best_symbol = self.selector.select_market(self.workers)
         if best_symbol is None:
+            return
+
+        # Can't open a second trade on the same market (one trade per market always)
+        if best_symbol in self._active_trades:
             return
 
         worker = self.workers[best_symbol]
@@ -280,9 +295,8 @@ class DerivBot:
             worker.clear_signal()
             return
 
-        self._active_trade_symbol = best_symbol
-        self._active_trade_time = time.time()  # Track when trade was opened
-        self.risk_mgr.open_positions += 1
+        self._active_trades[best_symbol] = time.time()  # Lock this market
+        self.risk_mgr.open_positions = len(self._active_trades)
         self.trade_logger.log_signal(signal)
 
         try:
@@ -306,13 +320,13 @@ class DerivBot:
                 )
             else:
                 logger.warning(f"Trade FAILED ({best_symbol}): {result.error}")
-                self.risk_mgr.open_positions -= 1
-                self._active_trade_symbol = None
+                self._active_trades.pop(best_symbol, None)
+                self.risk_mgr.open_positions = len(self._active_trades)
 
         except Exception as e:
             logger.error(f"Execute error ({best_symbol}): {e}", exc_info=True)
-            self.risk_mgr.open_positions -= 1
-            self._active_trade_symbol = None
+            self._active_trades.pop(best_symbol, None)
+            self.risk_mgr.open_positions = len(self._active_trades)
 
     async def _on_trade_result(self, contract_data: dict):
         contract_id = contract_data.get("contract_id")
@@ -343,17 +357,25 @@ class DerivBot:
         self._global_trade_counter += 1
         worker.trade_counter += 1
 
-        # ─── Global loss cooldown ───
-        # After a loss, wait longer before the next trade to let models adapt
+        # ─── Loss cooldown ───
+        # After a loss, wait before the next trade to let models adapt
         if not won:
             # Scale cooldown with consecutive losses
             consec = self.risk_mgr.consecutive_losses
             if consec >= 3:
-                self._last_trade_time = time.time() + 30  # 30s after 3+ losses
+                cooldown_time = 30  # 30s after 3+ losses
             elif consec >= 2:
-                self._last_trade_time = time.time() + 15  # 15s after 2 losses
+                cooldown_time = 15  # 15s after 2 losses
             else:
-                self._last_trade_time = time.time() + 5   # 5s after 1 loss
+                cooldown_time = 5   # 5s after 1 loss
+
+            if ALLOW_MULTIPLE_TRADES:
+                # Per-symbol cooldown: only the losing market waits,
+                # other markets can still trade freely
+                self._symbol_cooldowns[symbol] = time.time() + cooldown_time
+            else:
+                # Global cooldown: all markets wait (old behavior)
+                self._last_trade_time = time.time() + cooldown_time
 
         pnl = payout - stake if won else -stake
         self.selector.record_outcome(symbol, won, pnl)
@@ -382,7 +404,7 @@ class DerivBot:
         else:
             self.risk_mgr.set_drift_state(False)
 
-        self._active_trade_symbol = None
+        self._active_trades.pop(symbol, None)
         self._last_trade_time = time.time()
 
         if self._global_trade_counter % 10 == 0:
@@ -405,10 +427,13 @@ class DerivBot:
         stake_summary = self.stake_mgr.summary()
 
         logger.info("=" * 65)
+        active_count = len(self._active_trades)
+        active_syms = ", ".join(self._active_trades.keys()) if self._active_trades else "none"
         logger.info(f"  TRADE #{self._global_trade_counter} | "
                      f"Balance: ${risk_summary['bankroll']:.2f} | "
                      f"P&L: ${risk_summary['total_pnl']:.2f} | "
-                     f"Consec.L: {risk_summary['consecutive_losses']}")
+                     f"Consec.L: {risk_summary['consecutive_losses']} | "
+                     f"Active: {active_count}/{MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1} [{active_syms}]")
         logger.info(
             f"  Stake Mgr: wr={stake_summary['recent_win_rate']:.1%} "
             f"dd={stake_summary['current_drawdown_pct']}% "

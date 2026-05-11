@@ -1,15 +1,15 @@
 """
-Deriv Over/Under Bot — Configuration v6
+Deriv Over/Under Bot — Configuration v7
 =========================================
 Multi-market architecture — ALL volatility markets with independent models.
 Each market gets its OWN ensemble model (logistic + HAT + SRP).
 LIVE trading on demo account — limits removed for overnight training.
 
-v6 Changes:
-- Added ALL volatility + 1-second index markets
-- Each market runs its own independent model ensemble
-- Martingale 2x on loss for stake recovery
-- Force trade when all ensemble models agree 100%
+v7 Changes:
+- Added ALLOW_MULTIPLE_TRADES flag for concurrent trades across markets
+- MAX_CONCURRENT_TRADES caps simultaneous open positions
+- Per-symbol loss cooldown when multi-trade is on (only losing market waits)
+- Set ALLOW_MULTIPLE_TRADES=False for old one-at-a-time behavior
 """
 
 import os
@@ -165,12 +165,19 @@ MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
 MIN_TRADE_INTERVAL_SEC = 2    # Minimum seconds between trades
 
+# ─── Multi-Trade Mode ───
+# When True, multiple markets can trade simultaneously (each still limited to 1 trade).
+# When False, only ONE trade across ALL markets at a time (old behavior).
+ALLOW_MULTIPLE_TRADES = True     # True = multiple markets trade simultaneously; False = one at a time
+MAX_CONCURRENT_TRADES = 5        # Max simultaneous open trades across all markets (when ALLOW_MULTIPLE_TRADES=True)
+                                   # Each market still limited to 1 trade at a time regardless
+
 # ─── Risk Management (RELAXED for demo overnight training) ───
 MAX_BANKROLL_PER_TRADE = 0.05    # 5% max per trade (dynamic: min stake at low conf, up to 5% at high conf)
 MAX_DAILY_LOSS = 1.0             # 100% — don't stop on losses (demo training)
 MAX_CONSECUTIVE_LOSSES = 10      # Circuit breaker after 10 consecutive losses
 CIRCUIT_BREAKER_COOLDOWN_SEC = 30  # Short 30s cooldown (demo training)
-MAX_OPEN_POSITIONS = 1           # One position at a time (across all markets)
+MAX_OPEN_POSITIONS = MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1  # Dynamic based on multi-trade mode
 SESSION_TIME_LIMIT_MINUTES = 0   # 0 = unlimited (demo training mode)
 
 # ─── Kelly Criterion ───
