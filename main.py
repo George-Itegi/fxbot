@@ -59,10 +59,16 @@ class DerivBot:
         self.running = False
         self._shutdown_done = False
         self._active_trade_symbol: Optional[str] = None
+        self._active_trade_time: float = 0.0      # When the current trade was opened
         self._contract_to_symbol: dict[int, str] = {}
         self._real_balance: float = 0.0
         self._global_trade_counter = 0
         self._last_trade_time: float = 0.0
+
+        # Trade timeout — if a trade stays open longer than this, auto-clear it.
+        # A 5-10 tick contract should settle in under 30 seconds.
+        # If we haven't received the result in 60s, something went wrong.
+        self._trade_timeout_sec = 60.0
 
         self.ws.on_tick = self._on_tick
         self.ws.on_trade_result = self._on_trade_result
@@ -134,6 +140,29 @@ class DerivBot:
         try:
             while self.running:
                 await asyncio.sleep(1)
+
+                # ─── STUCK TRADE DETECTION ───
+                # If a trade has been open for too long, the Deriv result callback
+                # was probably missed (network glitch, WS reconnection, etc.).
+                # Auto-clear it so the bot can resume trading.
+                if self._active_trade_symbol is not None:
+                    elapsed = time.time() - self._active_trade_time
+                    if elapsed > self._trade_timeout_sec:
+                        logger.warning(
+                            f"STUCK TRADE DETECTED: {self._active_trade_symbol} has been open "
+                            f"for {elapsed:.0f}s (timeout={self._trade_timeout_sec:.0f}s). "
+                            f"Auto-clearing to resume trading."
+                        )
+                        # Clean up any pending contracts for this symbol
+                        worker = self.workers.get(self._active_trade_symbol)
+                        if worker:
+                            for cid in list(worker.executor.pending_contracts.keys()):
+                                self._contract_to_symbol.pop(cid, None)
+                            worker.executor.pending_contracts.clear()
+                        # Reset the stuck state
+                        self._active_trade_symbol = None
+                        self.risk_mgr.open_positions = 0
+                        self._last_trade_time = time.time()
 
                 if (self._global_trade_counter > 0 and
                         self._global_trade_counter % MODEL_SNAPSHOT_INTERVAL == 0):
@@ -252,6 +281,7 @@ class DerivBot:
             return
 
         self._active_trade_symbol = best_symbol
+        self._active_trade_time = time.time()  # Track when trade was opened
         self.risk_mgr.open_positions += 1
         self.trade_logger.log_signal(signal)
 
