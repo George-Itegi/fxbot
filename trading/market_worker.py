@@ -134,10 +134,6 @@ class MarketWorker:
     def process_tick(self, tick_data: dict) -> Optional[Signal]:
         """Process a new tick. Returns a Signal if one is generated."""
         try:
-            # ─── Loss streak cooldown check ───
-            if time.time() < self._loss_streak_cooldown_until:
-                return None
-
             epoch = tick_data.get("epoch", time.time())
             quote = tick_data.get("quote", 0)
             decimal_places = tick_data.get("decimal_places")
@@ -174,15 +170,14 @@ class MarketWorker:
                     f"{blocked_info}"
                 )
 
-            if not prediction.is_tradeable:
+            if not prediction.is_tradeable and prediction.model_agreement < 1.0:
+                # Not tradeable AND not 100% agreement → skip
                 self._latest_signal = None
                 return None
 
             # ─── Direction block check ───
-            # If a direction is blocked (too many losses in that direction),
-            # skip signals in that direction until the block expires
-            if self._blocked_direction and time.time() < self._blocked_until:
-                # Determine what direction this prediction would produce
+            # BUT: 100% model agreement overrides direction blocks
+            if self._blocked_direction and time.time() < self._blocked_until and prediction.model_agreement < 1.0:
                 from config import CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER
                 from config import MIN_EDGE_THRESHOLD, MIN_CONFIDENCE
                 ev_over = prediction.prob_over * self.current_payout - prediction.prob_under * 1.0
@@ -195,12 +190,9 @@ class MarketWorker:
                     pending_direction = None
 
                 if pending_direction == self._blocked_direction:
-                    # Skip this signal — direction is blocked
                     self._latest_signal = None
                     return None
-                # If the opposite direction, let it through (that's the point!)
             elif time.time() >= self._blocked_until and self._blocked_direction:
-                # Block expired — reset
                 self._blocked_direction = None
 
             signal = self.signal_gen.generate(

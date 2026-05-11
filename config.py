@@ -1,8 +1,15 @@
 """
-Deriv Over/Under Bot — Configuration v5
+Deriv Over/Under Bot — Configuration v6
 =========================================
-Multi-market architecture with meta-selector.
+Multi-market architecture — ALL volatility markets with independent models.
+Each market gets its OWN ensemble model (logistic + HAT + SRP).
 LIVE trading on demo account — limits removed for overnight training.
+
+v6 Changes:
+- Added ALL volatility + 1-second index markets
+- Each market runs its own independent model ensemble
+- Martingale 2x on loss for stake recovery
+- Force trade when all ensemble models agree 100%
 """
 
 import os
@@ -109,7 +116,14 @@ def supports_digit_contracts(symbol: str) -> bool:
     return get_symbol_category(symbol) in DIGIT_CONTRACT_CATEGORIES
 
 # ─── Multi-Market Configuration ───
-DEFAULT_MARKETS = ["1HZ100V", "1HZ50V", "R_100"]
+# ALL volatility + 1s markets — each gets its own independent ensemble model
+DEFAULT_MARKETS = [
+    # 1-second indices (fastest tick rate)
+    "1HZ10V", "1HZ15V", "1HZ25V", "1HZ30V", "1HZ50V",
+    "1HZ75V", "1HZ90V", "1HZ100V",
+    # Standard volatility indices
+    "R_10", "R_25", "R_50", "R_75", "R_100",
+]
 VALID_MULTI_MARKET_SYMBOLS = [
     "1HZ10V", "1HZ15V", "1HZ25V", "1HZ30V", "1HZ50V",
     "1HZ75V", "1HZ90V", "1HZ100V",

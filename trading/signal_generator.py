@@ -72,6 +72,10 @@ class SignalGenerator:
         """
         Generate a trade signal from model prediction + current payout.
         
+        RULE: When ALL ensemble models agree 100%, a trade MUST occur.
+        This overrides confidence thresholds and EV thresholds.
+        The models agreeing 100% is the strongest possible signal.
+        
         Args:
             prediction: Model's output (probabilities, confidence)
             features: Feature dict at prediction time (stored for later learning)
@@ -82,7 +86,71 @@ class SignalGenerator:
         Returns:
             Signal if conditions met, None otherwise.
         """
-        # ─── Pre-trade Checks ───
+        # ─── FORCE TRADE: All 3 models agree 100% ───
+        # This is the STRONGEST signal — override everything except cooldown
+        all_models_agree = prediction.model_agreement >= 1.0
+        
+        if all_models_agree:
+            # Even with 100% agreement, respect minimum cooldown
+            time_since_last = time.time() - self._last_signal_time
+            if time_since_last < 1:  # Only 1s cooldown for 100% agreement
+                self._skip("cooldown")
+                return None
+            
+            # Force a trade — calculate which direction
+            ev_over = prediction.prob_over * payout - prediction.prob_under * 1.0
+            ev_under = prediction.prob_under * payout - prediction.prob_over * 1.0
+            
+            # Select duration
+            if self._duration_optimizer and DYNAMIC_DURATION:
+                duration = self._duration_optimizer.select_duration()
+            else:
+                duration = CONTRACT_DURATION
+            
+            # Determine direction — go with the ensemble majority
+            if prediction.prob_over >= prediction.prob_under:
+                direction = CONTRACT_TYPE_OVER
+                confidence = prediction.prob_over
+                ev = ev_over
+                barrier = OVER_BARRIER
+            else:
+                direction = CONTRACT_TYPE_UNDER
+                confidence = prediction.prob_under
+                ev = ev_under
+                barrier = UNDER_BARRIER
+            
+            kelly = self._kelly_fraction(confidence, payout)
+            stake = self._calculate_stake(kelly, bankroll,
+                                          confidence=confidence,
+                                          agreement=prediction.model_agreement,
+                                          ev=max(ev, 0.01))
+            
+            reason = (
+                f"FORCED (100% AGREEMENT): {direction.replace('DIGIT', '').title()} "
+                f"prob={confidence:.2%}, EV={ev:+.3f}, payout={payout:.0%}, "
+                f"dur={duration}t, agree=100%, stake=${stake:.2f}"
+            )
+            
+            signal = Signal(
+                direction=direction,
+                barrier=barrier,
+                confidence=confidence,
+                expected_value=round(max(ev, 0.01), 4),
+                kelly_fraction=kelly,
+                stake=stake,
+                contract_duration=duration,
+                timestamp=time.time(),
+                features_snapshot=features.copy(),
+                reason=reason,
+                model_agreement=prediction.model_agreement,
+            )
+            
+            self._signals_generated += 1
+            self._last_signal_time = time.time()
+            logger.info(f"SIGNAL: {signal.reason}")
+            return signal
+        
+        # ─── Normal Pre-trade Checks (when NOT 100% agreement) ───
         
         # Check drift
         if model_in_drift:

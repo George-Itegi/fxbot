@@ -70,26 +70,28 @@ class DerivBot:
         self.ws.on_error = self._on_error
 
         logger.info(
-            f"DerivBot v5 initialized: {len(self.markets)} markets, "
+            f"DerivBot v6 initialized: {len(self.markets)} markets, "
             f"LIVE mode, model={self.model_type}"
         )
         logger.info(f"  Markets: {', '.join(self.markets)}")
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v5 — MULTI-MARKET LIVE TRADING")
-        logger.info(f"  Markets:    {', '.join(self.markets)}")
+        logger.info("  DERIV OVER/UNDER BOT v6 — MULTI-MARKET LIVE TRADING")
+        logger.info(f"  Markets:    {len(self.markets)} markets (each with own model)")
+        for i, m in enumerate(self.markets):
+            logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
         logger.info(f"  Mode:       LIVE (demo account)")
-        logger.info(f"  Model:      {self.model_type}")
+        logger.info(f"  Model:      {self.model_type} (per market)")
         logger.info(f"  Selector:   Market bandit (epsilon=10%)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info(f"  Barrier:    Over {OVER_BARRIER} / Under {UNDER_BARRIER}")
         logger.info(f"  Duration:   1-10t (dynamic per market)")
         logger.info("")
+        logger.info("  Martingale: 2x on loss (max 5 steps, $50 cap)")
+        logger.info("  Force trade: YES when all 3 models agree 100%")
         logger.info("  Circuit breaker: 10 losses -> 30s cooldown")
-        logger.info("  Dynamic stakes: confidence + agreement + drawdown recovery")
         logger.info("  No daily trade limit (demo training mode)")
-        logger.info("  No session time limit (demo training mode)")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
         logger.info("=" * 65)
 
@@ -379,7 +381,8 @@ class DerivBot:
             f"  Stake Mgr: wr={stake_summary['recent_win_rate']:.1%} "
             f"dd={stake_summary['current_drawdown_pct']}% "
             f"streak=W{stake_summary['consecutive_wins']}/L{stake_summary['consecutive_losses']} "
-            f"{'[RECOVERY]' if stake_summary['recovery_mode'] else ''}"
+            f"martingale_step={stake_summary['martingale_step']} "
+            f"martingale_next={stake_summary['martingale_next_mult']}x"
         )
         logger.info(f"  Market Selector: last={selector_summary['last_selected']}")
 
@@ -436,7 +439,7 @@ class DerivBot:
             f"  Stake Mgr:      wr={stake_summary['recent_win_rate']:.1%} "
             f"dd={stake_summary['current_drawdown_pct']}% "
             f"peak=${stake_summary['peak_bankroll']:.2f} "
-            f"{'[RECOVERY]' if stake_summary['recovery_mode'] else ''}"
+            f"martingale_step={stake_summary['martingale_step']}"
         )
         logger.info("")
         logger.info("  Per-Market:")
@@ -461,7 +464,7 @@ class DerivBot:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Deriv Over/Under Bot v5 — Multi-Market Live Demo Trading"
+        description="Deriv Over/Under Bot v6 — Multi-Market Live Demo Trading"
     )
     parser.add_argument(
         "--markets", nargs="+", default=DEFAULT_MARKETS,
