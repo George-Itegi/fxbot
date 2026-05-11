@@ -7,7 +7,9 @@ Each MarketWorker encapsulates all components for ONE trading symbol.
 import time
 from typing import Optional
 
-from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE)
+from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE,
+                    TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
+                    DRIFT_RETRAIN_ENABLED, DRIFT_RETRAIN_COOLDOWN)
 from data.tick_aggregator import TickAggregator
 from data.feature_engine import FeatureEngine
 from models.online_learner import OverUnderModel
@@ -58,6 +60,11 @@ class MarketWorker:
         self._latest_signal: Optional[Signal] = None
         self._signal_time: float = 0.0
         self._signal_freshness_sec = 5.0
+
+        # ─── Per-tick live learning ───
+        self._tick_learn_enabled = TICK_LEARN_ENABLED
+        self._tick_learn_interval = TICK_LEARN_INTERVAL
+        self._last_drift_retrain_time: float = 0.0
 
         # ─── Direction Cooldown (anti-stuck mechanism) ───
         # After losing on Over, block Over signals for a while so the bot
@@ -150,6 +157,13 @@ class MarketWorker:
             features = self.feature_engine.compute_features()
             if features is None:
                 return None
+
+            # ─── Per-tick live learning ───
+            # Learn from the actual outcome of this tick, not just trade outcomes.
+            # This makes the model adapt MUCH faster to pattern changes.
+            if self._tick_learn_enabled and self.live_tick_count % self._tick_learn_interval == 0:
+                label = 1 if tick.digit > OVER_BARRIER else 0
+                self.model.learn_one(features, label)
 
             prediction = self.model.predict(features)
 
@@ -300,6 +314,32 @@ class MarketWorker:
         drift_event = self.drift_detector.update(outcome)
         if drift_event:
             self.duration_optimizer.on_drift_detected()
+
+            # ─── Drift-triggered retrain ───
+            # On CRITICAL drift, rebuild the model from the replay buffer.
+            # This wipes stale weights and rebuilds from recent data.
+            # Cooldown prevents thrashing (retraining too often).
+            if (DRIFT_RETRAIN_ENABLED
+                    and drift_event.severity == "critical"
+                    and time.time() - self._last_drift_retrain_time > DRIFT_RETRAIN_COOLDOWN):
+                buffer_size = len(self.model.replay_buffer)
+                if buffer_size >= 100:
+                    logger.warning(
+                        f"🚨 CRITICAL DRIFT on {self.symbol}! "
+                        f"Retraining model from {buffer_size} buffer samples..."
+                    )
+                    self.model.retrain_from_buffer()
+                    self.drift_detector.reset()
+                    self._last_drift_retrain_time = time.time()
+                    logger.info(
+                        f"✅ {self.symbol} retrained → v{self.model.stats.model_version}, "
+                        f"accuracy={self.model.stats.accuracy:.1%}"
+                    )
+                else:
+                    logger.warning(
+                        f"Drift retrain skipped: buffer too small ({buffer_size} < 100)"
+                    )
+
             return drift_event
         return None
 

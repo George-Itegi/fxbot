@@ -198,6 +198,20 @@ L2_REGULARIZATION = 0.01
 REPLAY_BUFFER_SIZE = 5000
 DRIFT_DETECTION_SENSITIVITY = 0.001
 
+# ─── Per-Tick Live Learning ───
+# When enabled, models learn from EVERY tick during live trading (not just trade outcomes).
+# This makes models adapt MUCH faster to changing patterns.
+# The interval controls how often: 1 = every tick, 5 = every 5th tick, etc.
+# Default OFF — use --tick-learn CLI flag to enable.
+TICK_LEARN_ENABLED = False
+TICK_LEARN_INTERVAL = 5    # Learn every Nth tick (1=all, 5=every 5th, 10=every 10th)
+
+# ─── Drift Retrain ───
+# When drift is detected, automatically retrain the model from the replay buffer.
+# This wipes the current model and rebuilds it from recent data.
+DRIFT_RETRAIN_ENABLED = True   # Retrain from buffer on critical drift
+DRIFT_RETRAIN_COOLDOWN = 120   # Minimum seconds between drift retrains (avoid thrashing)
+
 # ─── Model Persistence ───
 MODEL_SNAPSHOT_INTERVAL = 50
 MODEL_DIR = BASE_DIR / "data" / "models"

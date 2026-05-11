@@ -21,6 +21,7 @@ from config import (DEFAULT_SYMBOL, INITIAL_BANKROLL, DEFAULT_MARKETS,
                     MODEL_SNAPSHOT_INTERVAL, MODEL_TYPE, MIN_STAKE,
                     MAX_OPEN_POSITIONS, MIN_TRADE_INTERVAL_SEC,
                     ALLOW_MULTIPLE_TRADES, MAX_CONCURRENT_TRADES,
+                    TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
                     get_symbol_decimals, get_symbol_category,
                     supports_digit_contracts, SYMBOLS, VALID_MULTI_MARKET_SYMBOLS)
 import config as config
@@ -104,6 +105,11 @@ class DerivBot:
             logger.info("  Multi-trade: OFF (one trade at a time)")
         logger.info("  Circuit breaker: 10 losses -> 30s cooldown")
         logger.info("  No daily trade limit (demo training mode)")
+        if config.TICK_LEARN_ENABLED:
+            logger.info(f"  Per-tick learning: ON (every {config.TICK_LEARN_INTERVAL}th tick)")
+        else:
+            logger.info("  Per-tick learning: OFF (models only learn from trade outcomes)")
+        logger.info("  Drift retrain: ON (rebuild model from buffer on critical drift)")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
         logger.info("=" * 65)
 
@@ -553,6 +559,14 @@ def main():
         "--max-concurrent", type=int, default=None,
         help="Max simultaneous open trades (default: 5 with --multi-trade, 1 without)"
     )
+    parser.add_argument(
+        "--tick-learn", action="store_true", default=False,
+        help="Enable per-tick model learning during live trading (models learn from every Nth tick, not just trade outcomes)"
+    )
+    parser.add_argument(
+        "--tick-learn-interval", type=int, default=None,
+        help="Learn every Nth tick when --tick-learn is on (default: 5, use 1 for every tick)"
+    )
 
     args = parser.parse_args()
 
@@ -581,10 +595,19 @@ def main():
         config.MAX_CONCURRENT_TRADES = 5
         config.MAX_OPEN_POSITIONS = 5
 
+    # ─── Apply CLI overrides for per-tick learning ───
+    if args.tick_learn:
+        config.TICK_LEARN_ENABLED = True
+    if args.tick_learn_interval is not None:
+        config.TICK_LEARN_INTERVAL = args.tick_learn_interval
+
     # Re-read the effective settings for logging
     multi = config.ALLOW_MULTIPLE_TRADES
     max_c = config.MAX_CONCURRENT_TRADES
+    tick_learn = config.TICK_LEARN_ENABLED
+    tick_interval = config.TICK_LEARN_INTERVAL
     logger.info(f"Multi-trade mode: {'ON' if multi else 'OFF'} (max concurrent: {max_c})")
+    logger.info(f"Per-tick learning: {'ON' if tick_learn else 'OFF'} (every {tick_interval}th tick)")
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
