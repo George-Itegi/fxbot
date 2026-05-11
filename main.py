@@ -23,6 +23,7 @@ from config import (DEFAULT_SYMBOL, INITIAL_BANKROLL, DEFAULT_MARKETS,
                     ALLOW_MULTIPLE_TRADES, MAX_CONCURRENT_TRADES,
                     get_symbol_decimals, get_symbol_category,
                     supports_digit_contracts, SYMBOLS, VALID_MULTI_MARKET_SYMBOLS)
+import config as config
 from data.deriv_ws import DerivWS
 from trading.market_worker import MarketWorker
 from trading.market_selector import MarketSelector
@@ -272,11 +273,14 @@ class DerivBot:
         )
         signal.stake = dynamic_stake
 
-        # Log stake breakdown for transparency
+        # Mark if this is a martingale recovery trade (risk manager won't reduce it)
         breakdown = self.stake_mgr.state.last_stake_breakdown
+        signal.is_martingale = breakdown.get("mode") == "martingale_recovery" if breakdown else False
+
+        # Log stake breakdown for transparency
         if breakdown and len(breakdown) > 2:
-            recovery_tag = " [MARTINGALE RECOVERY]" if breakdown.get('recovery_mode') else ""
-            martingale_info = f" martingale={breakdown.get('martingale_factor', 1):.1f}x" if breakdown.get('martingale_step', 0) > 0 else ""
+            recovery_tag = " [MARTINGALE RECOVERY — loss reduction BYPASSED]" if signal.is_martingale else ""
+            martingale_info = f" martingale={breakdown.get('martingale_step', 0)}x2" if breakdown.get('martingale_step', 0) > 0 else ""
             logger.info(
                 f"STAKE: ${dynamic_stake:.2f} = "
                 f"base=${breakdown.get('base_stake', 0):.2f} × "
@@ -540,6 +544,14 @@ def main():
         default=MODEL_TYPE,
         help=f"Model type (default: {MODEL_TYPE})"
     )
+    parser.add_argument(
+        "--multi-trade", action="store_true", default=False,
+        help="Allow multiple markets to trade simultaneously"
+    )
+    parser.add_argument(
+        "--max-concurrent", type=int, default=None,
+        help="Max simultaneous open trades (default: 5 with --multi-trade, 1 without)"
+    )
 
     args = parser.parse_args()
 
@@ -557,6 +569,21 @@ def main():
         bankroll=args.bankroll,
         model_type=args.model,
     )
+
+    # ─── Apply CLI overrides for multi-trade mode ───
+    if args.multi_trade:
+        config.ALLOW_MULTIPLE_TRADES = True
+    if args.max_concurrent is not None:
+        config.MAX_CONCURRENT_TRADES = args.max_concurrent
+        config.MAX_OPEN_POSITIONS = args.max_concurrent
+    elif args.multi_trade and args.max_concurrent is None:
+        config.MAX_CONCURRENT_TRADES = 5
+        config.MAX_OPEN_POSITIONS = 5
+
+    # Re-read the effective settings for logging
+    multi = config.ALLOW_MULTIPLE_TRADES
+    max_c = config.MAX_CONCURRENT_TRADES
+    logger.info(f"Multi-trade mode: {'ON' if multi else 'OFF'} (max concurrent: {max_c})")
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

@@ -168,7 +168,7 @@ MIN_TRADE_INTERVAL_SEC = 2    # Minimum seconds between trades
 # ─── Multi-Trade Mode ───
 # When True, multiple markets can trade simultaneously (each still limited to 1 trade).
 # When False, only ONE trade across ALL markets at a time (old behavior).
-ALLOW_MULTIPLE_TRADES = True     # True = multiple markets trade simultaneously; False = one at a time
+ALLOW_MULTIPLE_TRADES = False    # Default OFF — use --multi-trade CLI flag to enable
 MAX_CONCURRENT_TRADES = 5        # Max simultaneous open trades across all markets (when ALLOW_MULTIPLE_TRADES=True)
                                    # Each market still limited to 1 trade at a time regardless
 

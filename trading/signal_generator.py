@@ -38,6 +38,7 @@ class Signal:
     features_snapshot: dict  # Features at signal time (for learning later)
     reason: str             # Human-readable reason for the signal
     model_agreement: float  # Fraction of sub-models that agree (ensemble)
+    is_martingale: bool = False  # True if this is a martingale recovery trade
 
 
 class SignalGenerator:

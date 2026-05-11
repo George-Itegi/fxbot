@@ -192,8 +192,10 @@ class RiskManager:
         approved = all(checks.values())
 
         if approved:
-            adjusted_stake = self._adjust_stake(signal.stake)
+            adjusted_stake = self._adjust_stake(signal.stake, is_martingale=signal.is_martingale)
             reason = "All checks passed"
+            if signal.is_martingale:
+                reason += " (martingale recovery — loss reduction bypassed)"
             logger.info(f"RISK APPROVED: stake=${adjusted_stake:.2f}")
         else:
             adjusted_stake = 0.0
@@ -207,24 +209,30 @@ class RiskManager:
             checks=checks,
         )
 
-    def _adjust_stake(self, requested_stake: float) -> float:
+    def _adjust_stake(self, requested_stake: float, is_martingale: bool = False) -> float:
         """
         Adjust stake based on current conditions.
         Gentler reduction during losing streaks: 15% per consecutive loss
         (not the previous 50% per loss which was too aggressive).
+
+        MARTINGALE BYPASS: During martingale recovery, the stake is 2x the
+        last lost stake by design — reducing it defeats the recovery strategy.
+        So we skip the loss-based reduction and only enforce the hard cap.
         """
         stake = requested_stake
 
-        # Gradual reduction: 15% less per consecutive loss
-        if self.consecutive_losses >= 2:
-            reduction = max(0.25, 1.0 - (self.STAKE_REDUCTION_PER_LOSS * self.consecutive_losses))
-            stake *= reduction
-            logger.info(
-                f"Stake reduced to {reduction:.0%} due to {self.consecutive_losses} "
-                f"consecutive losses"
-            )
+        # ─── Martingale recovery: only apply hard cap, no loss reduction ───
+        if not is_martingale:
+            # Gradual reduction: 15% less per consecutive loss
+            if self.consecutive_losses >= 2:
+                reduction = max(0.25, 1.0 - (self.STAKE_REDUCTION_PER_LOSS * self.consecutive_losses))
+                stake *= reduction
+                logger.info(
+                    f"Stake reduced to {reduction:.0%} due to {self.consecutive_losses} "
+                    f"consecutive losses"
+                )
 
-        # Cap at max allowed per trade (2% bankroll)
+        # Cap at max allowed per trade (2% bankroll) — ALWAYS enforced, even martingale
         max_allowed = self.bankroll * MAX_BANKROLL_PER_TRADE
         stake = min(stake, max_allowed)
 
