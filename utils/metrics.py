@@ -29,6 +29,7 @@ class TradeRecord:
     payout: float         # Actual payout received (0 if lost)
     won: bool
     balance_after: float
+    duration: int = 5     # Contract duration in ticks
     notes: str = ""
 
 
@@ -75,6 +76,7 @@ class PerformanceTracker:
                 payout DOUBLE DEFAULT 0,
                 won TINYINT NOT NULL,
                 balance_after DOUBLE,
+                duration INT DEFAULT 5,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_symbol (symbol),
@@ -83,6 +85,11 @@ class PerformanceTracker:
                 INDEX idx_timestamp (timestamp)
             )
         """)
+        # Add duration column if it doesn't exist (migration for old tables)
+        try:
+            execute_query("ALTER TABLE deriv_trades ADD COLUMN duration INT DEFAULT 5 AFTER balance_after")
+        except Exception:
+            pass  # Column already exists
         execute_query("""
             CREATE TABLE IF NOT EXISTS deriv_daily_summary (
                 date VARCHAR(10) PRIMARY KEY,
@@ -153,11 +160,11 @@ class PerformanceTracker:
         execute_query(
             """INSERT INTO deriv_trades 
                (timestamp, symbol, direction, barrier, confidence,
-                expected_value, stake, payout, won, balance_after, notes)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                expected_value, stake, payout, won, balance_after, duration, notes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (trade.timestamp, trade.symbol, trade.direction, trade.barrier,
              trade.confidence, trade.expected_value, trade.stake, trade.payout,
-             int(trade.won), trade.balance_after, trade.notes)
+             int(trade.won), trade.balance_after, trade.duration, trade.notes)
         )
         
         # Check for day rollover

@@ -396,6 +396,7 @@ class DerivBot:
             payout=payout - stake if won else 0,
             won=won,
             balance_after=self.risk_mgr.bankroll,
+            duration=signal.contract_duration,
             notes=f"contract={contract_id}",
         )
         self.perf_tracker.record_trade(trade)

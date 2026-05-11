@@ -1,7 +1,8 @@
 """
-Deriv Bot — Live Dashboard
+Deriv Bot — Live Dashboard v2
 ============================
 FastAPI-based dashboard for monitoring bot performance in real-time.
+v2: Market/Volatility column, Duration/Ticks column, Load More pagination.
 """
 
 import asyncio
@@ -18,13 +19,13 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import DASHBOARD_PORT, DASHBOARD_HOST
+from config import DASHBOARD_PORT, DASHBOARD_HOST, SYMBOLS
 from utils.logger import setup_logger
 
 logger = setup_logger("dashboard.app")
 
 
-# ─── Dashboard HTML (defined BEFORE routes — uvicorn.run() blocks!) ───
+# ─── Dashboard HTML ───
 HTML_RESPONSE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -94,6 +95,14 @@ HTML_RESPONSE = """
             margin-bottom: 16px;
             padding-bottom: 8px;
             border-bottom: 1px solid #2a2a4a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .section h2 .trade-count {
+            font-size: 13px;
+            color: #888;
+            font-weight: 400;
         }
         .trades-table {
             width: 100%;
@@ -104,6 +113,7 @@ HTML_RESPONSE = """
             text-align: left;
             border-bottom: 1px solid #1a1a2e;
             font-size: 13px;
+            white-space: nowrap;
         }
         .trades-table th {
             color: #888;
@@ -111,8 +121,32 @@ HTML_RESPONSE = """
             font-size: 11px;
             letter-spacing: 1px;
         }
+        .trades-table tr:hover {
+            background: #1a1a2e;
+        }
         .win { color: #00e676; }
         .loss { color: #ff5252; }
+        .market-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .market-1s { background: #1a237e; color: #82b1ff; }
+        .market-vol { background: #1b5e20; color: #69f0ae; }
+        .market-other { background: #3e2723; color: #ffab91; }
+        .duration-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #263238;
+            color: #80cbc4;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .direction-over { color: #69f0ae; }
+        .direction-under { color: #ff8a80; }
         .drift-alert {
             background: #ff5252;
             color: white;
@@ -123,12 +157,48 @@ HTML_RESPONSE = """
             font-weight: 600;
         }
         .drift-alert.active { display: block; }
+        .load-more-container {
+            text-align: center;
+            padding: 16px 0;
+        }
+        .load-more-btn {
+            background: #1a1a2e;
+            color: #00d4ff;
+            border: 1px solid #2a2a4a;
+            padding: 10px 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .load-more-btn:hover {
+            background: #2a2a4a;
+            border-color: #00d4ff;
+        }
+        .load-more-btn:disabled {
+            color: #555;
+            border-color: #333;
+            cursor: default;
+        }
         .footer {
             text-align: center;
             padding: 20px;
             color: #555;
             font-size: 12px;
         }
+        .loading-spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #2a2a4a;
+            border-top: 2px solid #00d4ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -170,8 +240,8 @@ HTML_RESPONSE = """
             <div class="value" id="modelacc">0.0%</div>
         </div>
         <div class="card">
-            <div class="label">Symbol</div>
-            <div class="value" id="symbol">R_100</div>
+            <div class="label">Markets</div>
+            <div class="value" id="symbol">13</div>
         </div>
         <div class="card">
             <div class="label">Uptime</div>
@@ -180,33 +250,48 @@ HTML_RESPONSE = """
     </div>
 
     <div class="section">
-        <h2>Recent Trades</h2>
-        <table class="trades-table">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Time</th>
-                    <th>Direction</th>
-                    <th>Barrier</th>
-                    <th>Stake</th>
-                    <th>Confidence</th>
-                    <th>Result</th>
-                    <th>P&amp;L</th>
-                </tr>
-            </thead>
-            <tbody id="trades-body">
-                <tr><td colspan="8" style="text-align:center;color:#555;">Waiting for trades...</td></tr>
-            </tbody>
-        </table>
+        <h2>
+            <span>Recent Trades</span>
+            <span class="trade-count" id="trade-count">Showing 0 of 0</span>
+        </h2>
+        <div style="overflow-x:auto;">
+            <table class="trades-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Time</th>
+                        <th>Market</th>
+                        <th>Direction</th>
+                        <th>Barrier</th>
+                        <th>Duration</th>
+                        <th>Stake</th>
+                        <th>Confidence</th>
+                        <th>EV</th>
+                        <th>Result</th>
+                        <th>P&amp;L</th>
+                    </tr>
+                </thead>
+                <tbody id="trades-body">
+                    <tr><td colspan="11" style="text-align:center;color:#555;">Waiting for trades...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="load-more-container">
+            <button class="load-more-btn" id="load-more-btn" onclick="loadMoreTrades()">
+                Load More Trades
+            </button>
+        </div>
     </div>
 
     <div class="footer">
-        Deriv Over/Under Bot v1.0 | Updates every 2s
+        Deriv Over/Under Bot v7 | Updates every 2s
     </div>
 
     <script>
         let ws;
         let reconnectTimer;
+        let currentLimit = 20;
+        let totalTrades = 0;
 
         function connectWS() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -250,6 +335,30 @@ HTML_RESPONSE = """
             return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
         }
 
+        function getMarketClass(symbol) {
+            if (symbol && symbol.startsWith('1HZ')) return 'market-1s';
+            if (symbol && symbol.startsWith('R_')) return 'market-vol';
+            return 'market-other';
+        }
+
+        function getMarketName(symbol) {
+            var names = {
+                '1HZ10V': 'Vol 10 (1s)', '1HZ15V': 'Vol 15 (1s)',
+                '1HZ25V': 'Vol 25 (1s)', '1HZ30V': 'Vol 30 (1s)',
+                '1HZ50V': 'Vol 50 (1s)', '1HZ75V': 'Vol 75 (1s)',
+                '1HZ90V': 'Vol 90 (1s)', '1HZ100V': 'Vol 100 (1s)',
+                'R_10': 'Vol 10', 'R_25': 'Vol 25', 'R_50': 'Vol 50',
+                'R_75': 'Vol 75', 'R_100': 'Vol 100'
+            };
+            return names[symbol] || symbol;
+        }
+
+        function formatDirection(dir) {
+            if (dir === 'DIGITOVER') return '<span class="direction-over">Over</span>';
+            if (dir === 'DIGITUNDER') return '<span class="direction-under">Under</span>';
+            return dir;
+        }
+
         function updateUI(state) {
             if (!state) return;
 
@@ -268,8 +377,10 @@ HTML_RESPONSE = """
             document.getElementById('winrate').textContent = (state.win_rate || 0).toFixed(1) + '%';
             document.getElementById('trades').textContent = state.total_trades || 0;
             document.getElementById('modelacc').textContent = (state.model_accuracy || 0).toFixed(1) + '%';
-            document.getElementById('symbol').textContent = state.symbol || 'N/A';
+            document.getElementById('symbol').textContent = state.markets_count || 13;
             document.getElementById('uptime').textContent = formatUptime(state.uptime_seconds || 0);
+
+            totalTrades = state.total_trades || 0;
 
             var runBadge = document.getElementById('run-badge');
             runBadge.textContent = state.running ? 'RUNNING' : 'STOPPED';
@@ -283,6 +394,63 @@ HTML_RESPONSE = """
                 'drift-alert ' + (state.drift_active ? 'active' : '');
         }
 
+        function renderTrades(trades) {
+            if (!trades || trades.length === 0) return;
+            var tbody = document.getElementById('trades-body');
+            var html = trades.map(function(t) {
+                var won = t.won;
+                var cls = won ? 'win' : 'loss';
+                var result = won ? 'WIN' : 'LOSS';
+                var pl = won ? t.payout : -Number(t.stake);
+                var symbol = t.symbol || 'N/A';
+                var duration = t.duration || 5;
+                var ev = Number(t.expected_value || 0);
+
+                return '<tr>' +
+                    '<td>' + t.trade_id + '</td>' +
+                    '<td>' + formatTime(t.timestamp) + '</td>' +
+                    '<td><span class="market-badge ' + getMarketClass(symbol) + '">' + getMarketName(symbol) + '</span></td>' +
+                    '<td>' + formatDirection(t.direction) + '</td>' +
+                    '<td>' + t.barrier + '</td>' +
+                    '<td><span class="duration-badge">' + duration + 't</span></td>' +
+                    '<td>$' + Number(t.stake).toFixed(2) + '</td>' +
+                    '<td>' + (Number(t.confidence) * 100).toFixed(0) + '%</td>' +
+                    '<td>' + (ev >= 0 ? '+' : '') + ev.toFixed(3) + '</td>' +
+                    '<td class="' + cls + '">' + result + '</td>' +
+                    '<td class="' + cls + '">' + (pl >= 0 ? '+' : '') + '$' + Math.abs(Number(pl)).toFixed(2) + '</td>' +
+                    '</tr>';
+            }).join('');
+            tbody.innerHTML = html;
+
+            // Update trade count
+            document.getElementById('trade-count').textContent =
+                'Showing ' + trades.length + ' of ' + totalTrades;
+
+            // Update load more button
+            var btn = document.getElementById('load-more-btn');
+            if (trades.length >= totalTrades) {
+                btn.disabled = true;
+                btn.textContent = 'All trades loaded';
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Load More Trades (' + (totalTrades - trades.length) + ' remaining)';
+            }
+        }
+
+        function loadMoreTrades() {
+            currentLimit += 20;
+            var btn = document.getElementById('load-more-btn');
+            btn.innerHTML = '<span class="loading-spinner"></span>Loading...';
+            btn.disabled = true;
+
+            fetch('/api/trades?limit=' + currentLimit).then(function(r) { return r.json(); }).then(function(trades) {
+                renderTrades(trades);
+            }).catch(function() {
+                btn.textContent = 'Load More Trades';
+                btn.disabled = false;
+            });
+        }
+
         // Poll REST endpoints for stats + trades
         setInterval(function() {
             try {
@@ -291,26 +459,10 @@ HTML_RESPONSE = """
                     if (state) updateUI(state);
                 });
 
-                fetch('/api/trades?limit=10').then(function(r) { return r.json(); }).then(function(trades) {
-                    if (!trades || trades.length === 0) return;
-                    var tbody = document.getElementById('trades-body');
-                    var html = trades.map(function(t) {
-                        var won = t.won;
-                        var cls = won ? 'win' : 'loss';
-                        var result = won ? 'WIN' : 'LOSS';
-                        var pl = won ? t.payout : -t.stake;
-                        return '<tr>' +
-                            '<td>' + t.trade_id + '</td>' +
-                            '<td>' + formatTime(t.timestamp) + '</td>' +
-                            '<td>' + t.direction + '</td>' +
-                            '<td>' + t.barrier + '</td>' +
-                            '<td>$' + Number(t.stake).toFixed(2) + '</td>' +
-                            '<td>' + (Number(t.confidence) * 100).toFixed(0) + '%</td>' +
-                            '<td class="' + cls + '">' + result + '</td>' +
-                            '<td class="' + cls + '">$' + Number(pl).toFixed(2) + '</td>' +
-                            '</tr>';
-                    }).join('');
-                    tbody.innerHTML = html;
+                fetch('/api/trades?limit=' + currentLimit).then(function(r) { return r.json(); }).then(function(trades) {
+                    if (trades && trades.length > 0) {
+                        renderTrades(trades);
+                    }
                 });
             } catch (e) {}
         }, 2000);
@@ -320,7 +472,7 @@ HTML_RESPONSE = """
 """
 
 
-app = FastAPI(title="Deriv Over/Under Bot Dashboard", version="1.0.0")
+app = FastAPI(title="Deriv Over/Under Bot Dashboard", version="2.0.0")
 
 # Shared state — updated by the bot's main loop
 _bot_state = {
@@ -345,6 +497,7 @@ _bot_state = {
     "ticks_processed": 0,
     "uptime_seconds": 0,
     "start_time": time.time(),
+    "markets_count": 13,
 }
 
 # WebSocket clients for live updates
@@ -372,9 +525,9 @@ async def get_state():
         s = tracker.summary()
         return {
             "running": True if tracker.trade_count > 0 else False,
-            "symbol": "R_100",
+            "symbol": "Multi-market",
             "mode": _bot_state.get("mode", "live"),
-            "bankroll": 100.0 + s["total_pnl"],  # initial + pnl
+            "bankroll": 100.0 + s["total_pnl"],
             "total_pnl": s["total_pnl"],
             "roi": (s["total_pnl"] / 100.0 * 100) if s["total_trades"] > 0 else 0,
             "total_trades": s["total_trades"],
@@ -383,6 +536,7 @@ async def get_state():
             "model_version": 0,
             "drift_active": False,
             "uptime_seconds": time.time() - _bot_state["start_time"],
+            "markets_count": _bot_state.get("markets_count", 13),
         }
     except Exception as e:
         logger.error(f"Failed to compute state: {e}")
