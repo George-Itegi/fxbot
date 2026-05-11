@@ -59,6 +59,17 @@ class MarketWorker:
         self._signal_time: float = 0.0
         self._signal_freshness_sec = 5.0
 
+        # ─── Direction Cooldown (anti-stuck mechanism) ───
+        # After losing on Over, block Over signals for a while so the bot
+        # doesn't keep hammering the same wrong direction
+        self._blocked_direction: Optional[str] = None  # "DIGITOVER" or "DIGITUNDER"
+        self._blocked_until: float = 0.0  # Timestamp when block expires
+        self._consecutive_same_dir_losses: int = 0  # Losses in same direction
+
+        # ─── Loss streak cooldown ───
+        # After consecutive losses, wait longer before trading again
+        self._loss_streak_cooldown_until: float = 0.0
+
         logger.info(f"MarketWorker created: {symbol}, model={model_type}")
 
     async def warmup(self, history: list):
@@ -123,6 +134,10 @@ class MarketWorker:
     def process_tick(self, tick_data: dict) -> Optional[Signal]:
         """Process a new tick. Returns a Signal if one is generated."""
         try:
+            # ─── Loss streak cooldown check ───
+            if time.time() < self._loss_streak_cooldown_until:
+                return None
+
             epoch = tick_data.get("epoch", time.time())
             quote = tick_data.get("quote", 0)
             decimal_places = tick_data.get("decimal_places")
@@ -145,6 +160,9 @@ class MarketWorker:
             if self.live_tick_count % 100 == 0:
                 model_summary = self.model.summary()
                 dur_rec = self.duration_optimizer.get_recommendation()
+                blocked_info = ""
+                if self._blocked_direction and time.time() < self._blocked_until:
+                    blocked_info = f" BLOCKED={self._blocked_direction}"
                 logger.info(
                     f"[{self.symbol} {self.live_tick_count}t] "
                     f"prob_over={prediction.prob_over:.3f} "
@@ -153,11 +171,37 @@ class MarketWorker:
                     f"acc={model_summary['accuracy']:.1f}% "
                     f"dur={dur_rec['recommended_duration']}{self._duration_unit} "
                     f"payout={self.current_payout:.2%}"
+                    f"{blocked_info}"
                 )
 
             if not prediction.is_tradeable:
                 self._latest_signal = None
                 return None
+
+            # ─── Direction block check ───
+            # If a direction is blocked (too many losses in that direction),
+            # skip signals in that direction until the block expires
+            if self._blocked_direction and time.time() < self._blocked_until:
+                # Determine what direction this prediction would produce
+                from config import CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER
+                from config import MIN_EDGE_THRESHOLD, MIN_CONFIDENCE
+                ev_over = prediction.prob_over * self.current_payout - prediction.prob_under * 1.0
+                ev_under = prediction.prob_under * self.current_payout - prediction.prob_over * 1.0
+                if ev_over > MIN_EDGE_THRESHOLD and prediction.prob_over >= MIN_CONFIDENCE:
+                    pending_direction = CONTRACT_TYPE_OVER
+                elif ev_under > MIN_EDGE_THRESHOLD and prediction.prob_under >= MIN_CONFIDENCE:
+                    pending_direction = CONTRACT_TYPE_UNDER
+                else:
+                    pending_direction = None
+
+                if pending_direction == self._blocked_direction:
+                    # Skip this signal — direction is blocked
+                    self._latest_signal = None
+                    return None
+                # If the opposite direction, let it through (that's the point!)
+            elif time.time() >= self._blocked_until and self._blocked_direction:
+                # Block expired — reset
+                self._blocked_direction = None
 
             signal = self.signal_gen.generate(
                 prediction=prediction,
@@ -213,6 +257,53 @@ class MarketWorker:
         self.duration_optimizer.record_result(
             duration=signal.contract_duration, won=won, payout=payout, stake=stake,
         )
+
+        # ─── Direction Cooldown Logic ───
+        if not won:
+            # Track consecutive losses in same direction
+            if signal.direction == self._blocked_direction or self._blocked_direction is None:
+                self._consecutive_same_dir_losses += 1
+            else:
+                self._consecutive_same_dir_losses = 1
+
+            # After 2 consecutive losses in the same direction, block that direction
+            if self._consecutive_same_dir_losses >= 2:
+                self._blocked_direction = signal.direction
+                # Block duration scales with consecutive losses
+                # 2 losses → 30s block, 3 → 60s, 4+ → 120s
+                if self._consecutive_same_dir_losses == 2:
+                    block_sec = 30
+                elif self._consecutive_same_dir_losses == 3:
+                    block_sec = 60
+                else:
+                    block_sec = 120
+                self._blocked_until = time.time() + block_sec
+                logger.warning(
+                    f"DIRECTION BLOCK: {signal.direction} blocked for {block_sec}s "
+                    f"({self._consecutive_same_dir_losses} consecutive losses in this direction)"
+                )
+
+            # ─── Loss streak cooldown ───
+            # After consecutive losses, wait before trading again
+            # 2 losses → 15s, 3 → 30s, 4+ → 60s
+            from trading.risk_manager import RiskManager
+            if self._consecutive_same_dir_losses >= 2:
+                cooldown = min(60, 15 * (self._consecutive_same_dir_losses - 1))
+                self._loss_streak_cooldown_until = time.time() + cooldown
+                logger.info(
+                    f"LOSS COOLDOWN: {cooldown}s before next trade "
+                    f"({self._consecutive_same_dir_losses} consecutive direction losses)"
+                )
+        else:
+            # Win: reset direction block and consecutive losses
+            if self._blocked_direction and signal.direction != self._blocked_direction:
+                # Won on the opposite direction — keep the block on the losing direction
+                pass
+            else:
+                # Won on same direction or no block — reset everything
+                self._consecutive_same_dir_losses = 0
+                self._blocked_direction = None
+                self._blocked_until = 0.0
 
         drift_event = self.drift_detector.update(outcome)
         if drift_event:

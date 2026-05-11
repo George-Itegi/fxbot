@@ -464,9 +464,32 @@ class OverUnderModel:
         """
         Update model AND track calibration of confidence bins.
         Use this when you have the prediction that was made before the outcome.
+        
+        CRITICAL FIX: When the model was WRONG (high confidence but wrong
+        direction), we train MULTIPLE TIMES on the correct outcome. This is
+        because one learning sample isn't enough to override 950+ warmup
+        samples. The multiplier scales with confidence — the more confident
+        the model was when wrong, the more we reinforce the correct answer.
         """
-        # Standard learning
-        self.learn_one(features, outcome)
+        # ─── Adaptive Multi-Sample Learning ───
+        # If the model was confidently wrong, it needs STRONG correction.
+        # 1 sample won't override 950 warmup samples.
+        # Scale: wrong at 90% confidence → 8 corrections, wrong at 60% → 2 corrections
+        was_wrong = (prediction.predicted_class != outcome)
+        if was_wrong and prediction.confidence > 0.55:
+            # More confidence when wrong → more corrections needed
+            # 60% wrong → 2x, 70% → 4x, 80% → 6x, 90%+ → 8x
+            confidence_excess = prediction.confidence - 0.55
+            n_corrections = min(8, max(2, int(confidence_excess * 20)))
+            logger.info(
+                f"Model was WRONG at {prediction.confidence:.0%} confidence. "
+                f"Training {n_corrections}x on correct outcome ({outcome})."
+            )
+            for _ in range(n_corrections):
+                self.learn_one(features, outcome)
+        else:
+            # Standard learning (1 sample)
+            self.learn_one(features, outcome)
         
         # Track calibration
         conf_bin = round(prediction.confidence, 1)

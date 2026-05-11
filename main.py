@@ -309,6 +309,18 @@ class DerivBot:
         self._global_trade_counter += 1
         worker.trade_counter += 1
 
+        # ─── Global loss cooldown ───
+        # After a loss, wait longer before the next trade to let models adapt
+        if not won:
+            # Scale cooldown with consecutive losses
+            consec = self.risk_mgr.consecutive_losses
+            if consec >= 3:
+                self._last_trade_time = time.time() + 30  # 30s after 3+ losses
+            elif consec >= 2:
+                self._last_trade_time = time.time() + 15  # 15s after 2 losses
+            else:
+                self._last_trade_time = time.time() + 5   # 5s after 1 loss
+
         pnl = payout - stake if won else -stake
         self.selector.record_outcome(symbol, won, pnl)
 
