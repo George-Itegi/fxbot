@@ -16,7 +16,8 @@ from config import (MIN_CONFIDENCE, MIN_EDGE_THRESHOLD, OVER_BARRIER,
                     UNDER_BARRIER, CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
                     CONTRACT_DURATION, KELLY_FRACTION, COOLDOWN_AFTER_LOSS_TICKS,
                     MIN_TRADE_INTERVAL_SEC, MAX_DAILY_TRADES,
-                    DYNAMIC_DURATION)
+                    DYNAMIC_DURATION, FORCE_TRADE_MIN_CONFIDENCE,
+                    FORCE_TRADE_MIN_EV)
 from models.online_learner import Prediction
 from utils.logger import setup_logger
 
@@ -86,20 +87,45 @@ class SignalGenerator:
         Returns:
             Signal if conditions met, None otherwise.
         """
-        # ─── FORCE TRADE: All 3 models agree 100% ───
-        # This is the STRONGEST signal — override everything except cooldown
+        # ─── FORCE TRADE: All 3 models agree 100% WITH REAL confidence ───
+        # PROBLEM: With 3 binary votes, models at 54%/46% ALL vote the same way
+        # → fake 100% "agreement" on every tick.
+        # FIX: Require (a) ensemble confidence >= 60% AND (b) positive EV.
+        # This ensures forced trades only happen when models are MEANINGFULLY aligned.
         all_models_agree = prediction.model_agreement >= 1.0
         
         if all_models_agree:
-            # Even with 100% agreement, respect minimum cooldown
-            time_since_last = time.time() - self._last_signal_time
-            if time_since_last < 1:  # Only 1s cooldown for 100% agreement
-                self._skip("cooldown")
-                return None
-            
-            # Force a trade — calculate which direction
+            # Calculate EV for both directions
             ev_over = prediction.prob_over * payout - prediction.prob_under * 1.0
             ev_under = prediction.prob_under * payout - prediction.prob_over * 1.0
+            
+            # Pick best direction
+            if prediction.prob_over >= prediction.prob_under:
+                best_confidence = prediction.prob_over
+                best_ev = ev_over
+            else:
+                best_confidence = prediction.prob_under
+                best_ev = ev_under
+            
+            # ─── GUARD: Fake agreement check ───
+            # If confidence is low (e.g., 54%), 100% vote agreement is MEANINGLESS.
+            # Models are barely leaning — don't force a trade.
+            if best_confidence < FORCE_TRADE_MIN_CONFIDENCE:
+                self._skip("forced_low_confidence")
+                return None
+            
+            # ─── GUARD: Negative EV ───
+            # Even with 100% agreement, don't trade if EV is negative.
+            # This happens when confidence is just above threshold but payout is low.
+            if best_ev < FORCE_TRADE_MIN_EV:
+                self._skip("forced_negative_ev")
+                return None
+            
+            # Even with 100% agreement, respect minimum cooldown
+            time_since_last = time.time() - self._last_signal_time
+            if time_since_last < MIN_TRADE_INTERVAL_SEC:
+                self._skip("cooldown")
+                return None
             
             # Select duration
             if self._duration_optimizer and DYNAMIC_DURATION:
@@ -123,7 +149,7 @@ class SignalGenerator:
             stake = self._calculate_stake(kelly, bankroll,
                                           confidence=confidence,
                                           agreement=prediction.model_agreement,
-                                          ev=max(ev, 0.01))
+                                          ev=ev)
             
             reason = (
                 f"FORCED (100% AGREEMENT): {direction.replace('DIGIT', '').title()} "
@@ -135,7 +161,7 @@ class SignalGenerator:
                 direction=direction,
                 barrier=barrier,
                 confidence=confidence,
-                expected_value=round(max(ev, 0.01), 4),
+                expected_value=round(ev, 4),
                 kelly_fraction=kelly,
                 stake=stake,
                 contract_duration=duration,

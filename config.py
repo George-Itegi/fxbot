@@ -154,6 +154,13 @@ MAX_STAKE = 5.0
 # ─── Signal Thresholds ───
 MIN_CONFIDENCE = 0.56
 MIN_EDGE_THRESHOLD = 0.01
+
+# ─── Forced Trade (100% agreement) ───
+# All 3 models must not only VOTE the same way but also have REAL confidence.
+# A 54% probability with 3 binary votes = fake agreement.
+# All models must have confidence >= this threshold to force a trade.
+FORCE_TRADE_MIN_CONFIDENCE = 0.60   # 60% — models must be meaningfully confident
+FORCE_TRADE_MIN_EV = 0.0           # EV must be positive to force a trade
 MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
 MIN_TRADE_INTERVAL_SEC = 2    # Minimum seconds between trades

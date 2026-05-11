@@ -127,12 +127,16 @@ class StakeManager:
         """
         Calculate the optimal stake for a given signal.
 
-        Combines:
-        1. Base stake from Kelly criterion
-        2. Confidence multiplier
-        3. Agreement multiplier
-        4. Martingale factor (2x on loss)
-        5. Streak factor
+        MARTINGALE PRIORITY:
+        If martingale is active (we lost the last trade), the next stake
+        is simply 2x the lost stake. This is the classic martingale recovery:
+          Lose $5 → next = $10
+          Lose $10 → next = $20
+          Lose $20 → next = $40
+        Capped at MAX_MARTINGALE_STEPS and MAX_MARTINGALE_STAKE.
+
+        NORMAL MODE:
+        Combines Kelly criterion, confidence, agreement, streak, and EV factors.
         """
         if bankroll < MIN_STAKE:
             self.state.last_stake_breakdown = {"reason": "bankroll_too_low"}
@@ -141,27 +145,47 @@ class StakeManager:
         # Update drawdown state
         self._update_drawdown(bankroll)
 
-        # ─── 1. Base Stake (Kelly) ───
+        # ─── MARTINGALE RECOVERY (top priority) ───
+        # If we lost the last trade, double the stake to recover.
+        # This is SIMPLE and DIRECT: 2x the last lost stake, not a complex formula.
+        if self.state.martingale_step > 0:
+            recovery_stake = self.state.last_lost_stake * self.MARTINGALE_MULTIPLIER
+
+            # Safety caps for martingale
+            max_martingale = min(self.MAX_MARTINGALE_STAKE, bankroll * 0.10)
+            recovery_stake = min(recovery_stake, max_martingale)
+            recovery_stake = max(recovery_stake, MIN_STAKE)
+            recovery_stake = round(recovery_stake, 2)
+
+            self.state.last_stake_breakdown = {
+                "mode": "martingale_recovery",
+                "last_lost_stake": round(self.state.last_lost_stake, 2),
+                "martingale_step": self.state.martingale_step,
+                "recovery_stake": recovery_stake,
+                "final_stake": recovery_stake,
+                "drawdown_pct": round(self.state.current_drawdown_pct * 100, 1),
+            }
+            return recovery_stake
+
+        # ─── NORMAL STAKE CALCULATION ───
+        # 1. Base Stake (Kelly)
         base_stake = signal.kelly_fraction * bankroll
         base_stake = max(base_stake, MIN_STAKE)
 
-        # ─── 2. Confidence Multiplier ───
+        # 2. Confidence Multiplier
         confidence_mult = self._confidence_multiplier(signal.confidence)
 
-        # ─── 3. Agreement Multiplier ───
+        # 3. Agreement Multiplier
         agreement_mult = self._agreement_multiplier(signal.model_agreement)
 
-        # ─── 4. Martingale Factor ───
-        martingale_factor = self._martingale_factor()
-
-        # ─── 5. Streak Factor ───
+        # 4. Streak Factor
         streak_factor = self._streak_factor()
 
-        # ─── 6. EV Bonus ───
+        # 5. EV Bonus
         ev_factor = self._ev_factor(signal.expected_value, payout)
 
         # ─── Combine All Factors ───
-        combined_mult = confidence_mult * agreement_mult * martingale_factor * streak_factor * ev_factor
+        combined_mult = confidence_mult * agreement_mult * streak_factor * ev_factor
 
         stake = base_stake * combined_mult
 
@@ -173,9 +197,6 @@ class StakeManager:
         # Absolute cap
         stake = min(stake, MAX_STAKE)
 
-        # Martingale absolute cap
-        stake = min(stake, self.MAX_MARTINGALE_STAKE)
-
         # Floor
         stake = max(stake, MIN_STAKE)
 
@@ -184,15 +205,16 @@ class StakeManager:
 
         # Store breakdown for logging
         self.state.last_stake_breakdown = {
+            "mode": "normal",
             "base_stake": round(base_stake, 2),
             "confidence_mult": round(confidence_mult, 2),
             "agreement_mult": round(agreement_mult, 2),
-            "martingale_factor": round(martingale_factor, 2),
             "streak_factor": round(streak_factor, 2),
             "ev_factor": round(ev_factor, 2),
             "combined_mult": round(combined_mult, 2),
             "final_stake": stake,
-            "martingale_step": self.state.martingale_step,
+            "martingale_step": 0,
+            "recovery_mode": False,
             "drawdown_pct": round(self.state.current_drawdown_pct * 100, 1),
         }
 

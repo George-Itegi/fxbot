@@ -89,7 +89,7 @@ class DerivBot:
         logger.info(f"  Duration:   1-10t (dynamic per market)")
         logger.info("")
         logger.info("  Martingale: 2x on loss (max 5 steps, $50 cap)")
-        logger.info("  Force trade: YES when all 3 models agree 100%")
+        logger.info("  Force trade: YES when 100% agree + conf >= 60% + EV > 0")
         logger.info("  Circuit breaker: 10 losses -> 30s cooldown")
         logger.info("  No daily trade limit (demo training mode)")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
@@ -231,15 +231,17 @@ class DerivBot:
         # Log stake breakdown for transparency
         breakdown = self.stake_mgr.state.last_stake_breakdown
         if breakdown and len(breakdown) > 2:
+            recovery_tag = " [MARTINGALE RECOVERY]" if breakdown.get('recovery_mode') else ""
+            martingale_info = f" martingale={breakdown.get('martingale_factor', 1):.1f}x" if breakdown.get('martingale_step', 0) > 0 else ""
             logger.info(
                 f"STAKE: ${dynamic_stake:.2f} = "
                 f"base=${breakdown.get('base_stake', 0):.2f} × "
                 f"conf={breakdown.get('confidence_mult', 1):.1f} × "
                 f"agree={breakdown.get('agreement_mult', 1):.1f} × "
-                f"dd={breakdown.get('drawdown_factor', 1):.2f} × "
                 f"streak={breakdown.get('streak_factor', 1):.1f} × "
-                f"ev={breakdown.get('ev_factor', 1):.1f} "
-                f"{'[RECOVERY]' if breakdown.get('recovery_mode') else ''}"
+                f"ev={breakdown.get('ev_factor', 1):.1f}"
+                f"{martingale_info}"
+                f"{recovery_tag}"
             )
 
         risk_decision = self.risk_mgr.can_trade(signal)
