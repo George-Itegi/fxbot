@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+logs/
+*.log
+database/*.db
+.venv/
+env/
+venv/
+ENV/
+node_modules/
+.vscode/
+.idea/
+*.pkl
+*.pk
