@@ -320,6 +320,7 @@ MARTINGALE_MIN_SETUP_SCORE = 0.50  # v11: Relaxed for martingale recovery (was 0
 MARTINGALE_SAME_MARKET = True      # MUST recover on the same market where loss occurred
 MARTINGALE_MAX_STEPS = 2           # v12.1: Max 2 recovery steps (was 3 — step 3 couldn't recover)
 MARTINGALE_FLEX_DIRECTION = True   # v12.1: Allow recovery on EITHER Over 4 or Under 5
+MARTINGALE_BANKROLL_PCT = 0.20     # v12.3: Max 20% of bankroll for recovery stakes (normal is 5%)
 MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
 MIN_TRADE_INTERVAL_SEC = 10   # v11: 10s between trades (was 15s)
