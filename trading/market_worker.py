@@ -12,7 +12,8 @@ from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE,
                     TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
                     DRIFT_RETRAIN_ENABLED, DRIFT_RETRAIN_COOLDOWN,
                     CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
-                    OBSERVATION_PERIOD_SEC)
+                    OBSERVATION_PERIOD_SEC,
+                    DYNAMIC_BARRIERS)
 from data.tick_aggregator import TickAggregator
 from data.feature_engine import FeatureEngine
 from models.online_learner import OverUnderModel
@@ -82,6 +83,7 @@ class MarketWorker:
         # Martingale state (updated from StakeManager via main.py)
         self._is_martingale_active: bool = False
         self._martingale_direction: Optional[str] = None
+        self._martingale_barrier: Optional[int] = None  # v9: Barrier from martingale origin
 
         # Direction Cooldown
         self._blocked_direction: Optional[str] = None
@@ -182,7 +184,9 @@ class MarketWorker:
             # ─── OBSERVATION PHASE ───
             # If a new setup is detected and we haven't started observation yet
             if setup.active and not self._observation_started:
-                self.setup_detector.start_observation(self.symbol, setup.freq_direction)
+                # v9: Use the barrier from the setup for observation
+                obs_direction = 1 if setup.direction == CONTRACT_TYPE_OVER else -1
+                self.setup_detector.start_observation(self.symbol, obs_direction, setup.barrier)
                 self._observation_started = True
                 self._observation_complete = False
             
@@ -217,17 +221,26 @@ class MarketWorker:
                 model_summary = self.model.summary()
                 setup_score = setup.setup_score if setup.active else 0
                 setup_dir = setup.direction.replace("DIGIT", "") if setup.active else "NONE"
+                barrier_str = f"{setup_dir}{setup.barrier}" if setup.active else "NONE"
                 obs_status = "OBSERVING" if self._observation_started and not self._observation_complete else \
                             "READY" if self._observation_complete else "NO_SETUP"
                 
-                logger.info(
-                    f"[{self.symbol} {self.live_tick_count}t] "
-                    f"setup={setup_score:.2f}({setup_dir}) "
-                    f"Over={setup.over_freq:.1%} Under={setup.under_freq:.1%} "
-                    f"edge={setup.freq_edge:.1%} "
-                    f"dur={duration}t obs={obs_status} "
-                    f"payout={self.current_payout:.2%}"
-                )
+                if setup.active:
+                    logger.info(
+                        f"[{self.symbol} {self.live_tick_count}t] "
+                        f"setup={setup_score:.2f}({barrier_str}) "
+                        f"obs={setup.observed_prob:.1%} nat={setup.natural_prob:.0%} "
+                        f"z={setup.z_score:.1f} EV={setup.best_barrier_eval.ev:+.1% if setup.best_barrier_eval else 0} "
+                        f"pay={setup.payout_rate:.1%} "
+                        f"dur={duration}t obs={obs_status}"
+                    )
+                else:
+                    logger.info(
+                        f"[{self.symbol} {self.live_tick_count}t] "
+                        f"setup={setup_score:.2f}(NONE) "
+                        f"dur={duration}t obs={obs_status} "
+                        f"payout={self.current_payout:.2%}"
+                    )
 
             # Direction block check
             if self._blocked_direction and time.time() < self._blocked_until:
@@ -238,16 +251,19 @@ class MarketWorker:
                 self._blocked_direction = None
 
             # Generate signal (setup + ML confirmation)
+            # v9: Use dynamic payout from setup (varies by barrier)
+            dynamic_payout = setup.payout_rate if setup.active else self.current_payout
             signal = self.signal_gen.generate(
                 setup=setup,
                 prediction=prediction,
                 features=features,
-                payout=self.current_payout,
+                payout=dynamic_payout,
                 bankroll=self._bankroll,
                 duration=duration,
                 model_in_drift=self.drift_detector.drift_active,
                 is_martingale=self._is_martingale_active,
                 martingale_direction=self._martingale_direction,
+                martingale_barrier=self._martingale_barrier,
             )
 
             if signal is not None:
@@ -382,8 +398,9 @@ class MarketWorker:
         signal = self.get_fresh_signal()
         if signal is None:
             return 0.0
-        # Setup score is the primary quality metric
-        return signal.confidence * signal.setup_score * signal.expected_value * self.current_payout
+        # v9: EV is the primary quality metric (not confidence * payout)
+        # A signal with 15% confidence but 50% EV is better than 80% confidence with 2% EV
+        return signal.expected_value * signal.setup_score * max(0.5, signal.z_score)
 
     def summary(self) -> dict:
         model_summary = self.model.summary()

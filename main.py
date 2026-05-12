@@ -43,7 +43,8 @@ from config import (DEFAULT_SYMBOL, INITIAL_BANKROLL, DEFAULT_MARKETS,
                     MARTINGALE_MIN_SETUP_SCORE, MARTINGALE_SAME_MARKET,
                     MARKET_STICKY_AFTER_TRADE,
                     MIN_SETUP_SCORE, OBSERVATION_PERIOD_SEC,
-                    ML_DISAGREEMENT_BLOCKS)
+                    ML_DISAGREEMENT_BLOCKS,
+                    DYNAMIC_BARRIERS, CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER)
 import config as config
 from data.deriv_ws import DerivWS
 from trading.market_worker import MarketWorker
@@ -113,30 +114,31 @@ class DerivBot:
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v8.1 — STRUCTURED QUALITY TRADING")
+        logger.info("  DERIV OVER/UNDER BOT v9 — DYNAMIC BARRIER SELECTION")
         logger.info(f"  Markets:    {len(self.markets)} markets")
         for i, m in enumerate(self.markets):
             logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
         logger.info(f"  Mode:       LIVE (demo account)")
         logger.info(f"  Model:      {self.model_type} (ML CONFIRMATION only — rules are primary)")
-        logger.info(f"  Selector:   Setup-based quality selection with market persistence")
+        logger.info(f"  Barriers:   DYNAMIC — evaluates ALL Over/Under barriers (not just Over 4/Under 5)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
-        logger.info(f"  Barrier:    Over {OVER_BARRIER} / Under {UNDER_BARRIER}")
         logger.info("")
-        logger.info("  Decision Flow:")
-        logger.info("    1. Trend check (3-window, 3-sigma) → no trend = no trade")
-        logger.info("    2. Digit frequency Over/Under → PRIMARY direction signal")
-        logger.info("    3. Observation phase (25s) → determines tick duration")
-        logger.info("    4. ML Logistic Regression → must AGREE or trade is blocked")
-        logger.info("    5. Setup quality score (≥0.70) → drives trade decision")
+        logger.info("  Decision Flow (v9):")
+        logger.info("    1. Compute per-digit frequencies across windows")
+        logger.info("    2. For each barrier (Over 0-8, Under 1-9), calculate observed prob and EV")
+        logger.info("    3. Pick the barrier with the best risk-adjusted EV")
+        logger.info("    4. Verify statistical significance (z-score > 2)")
+        logger.info("    5. ML confirmation (if disagrees, reduce confidence by 20%)")
+        logger.info("    6. Execute trade only if EV > 5%")
         logger.info("")
+        logger.info(f"  Confidence:  OBSERVED win probability (not inflated!)")
+        logger.info(f"  EV minimum:  {5}% to trade")
+        logger.info(f"  Trend:       BIAS (not strict requirement)")
+        logger.info(f"  Freq edge:   {5}%+ from natural probability (z-score > 2)")
         logger.info(f"  Profit target: ${PROFIT_TARGET_PER_MARKET:.0f} per market session")
-        logger.info(f"  Observation:   {OBSERVATION_PERIOD_SEC}s before determining duration")
-        logger.info(f"  Setup min:     {MIN_SETUP_SCORE:.2f} quality score to trade")
-        logger.info(f"  ML disagreement: {'BLOCKED' if ML_DISAGREEMENT_BLOCKS else 'penalty only'}")
-        logger.info(f"  Martingale:    2.35x on loss (max 3 steps, $10 cap)")
+        logger.info(f"  Martingale:  2.35x on loss (max 3 steps, $10 cap)")
         logger.info(f"  Martingale recovery: SAME MARKET (no switching)")
-        logger.info(f"  Market persistence: STAY on one market while setup is good")
+        logger.info(f"  Trade interval: {MIN_TRADE_INTERVAL_SEC}s minimum")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
         logger.info("=" * 65)
 
@@ -303,10 +305,12 @@ class DerivBot:
         is_martingale = self.stake_mgr.state.martingale_step > 0
         martingale_dir = self.stake_mgr.state.martingale_direction
         martingale_market = self.stake_mgr.state.martingale_market
+        martingale_barrier = self.stake_mgr.state.martingale_barrier  # v9
         
         for worker in self.workers.values():
             worker._is_martingale_active = is_martingale
             worker._martingale_direction = martingale_dir
+            worker._martingale_barrier = martingale_barrier  # v9
 
         # ─── v8.1: MANDATORY MARTINGALE SAME MARKET ───
         # If martingale is active, we MUST recover on the SAME market.
@@ -319,6 +323,7 @@ class DerivBot:
                 self.stake_mgr.state.martingale_step = 0
                 self.stake_mgr.state.martingale_direction = None
                 self.stake_mgr.state.martingale_market = None
+                self.stake_mgr.state.martingale_barrier = None  # v9
                 return
             
             # Check if the martingale market is tradable
@@ -330,6 +335,7 @@ class DerivBot:
                 self.stake_mgr.state.martingale_step = 0
                 self.stake_mgr.state.martingale_direction = None
                 self.stake_mgr.state.martingale_market = None
+                self.stake_mgr.state.martingale_barrier = None  # v9
                 return
             
             # Check if martingale market has a setup that matches our direction
@@ -354,6 +360,7 @@ class DerivBot:
                 self.stake_mgr.state.martingale_step = 0
                 self.stake_mgr.state.martingale_direction = None
                 self.stake_mgr.state.martingale_market = None
+                self.stake_mgr.state.martingale_barrier = None  # v9
                 # Fall through to normal market selection below
                 is_martingale = False
                 martingale_market = None
@@ -506,10 +513,10 @@ class DerivBot:
 
         self.risk_mgr.record_outcome(won, stake, payout)
         
-        # v8.1: Pass symbol to stake_mgr for martingale market tracking
+        # v9: Pass symbol AND barrier to stake_mgr for martingale tracking
         self.stake_mgr.record_outcome(
             won, stake, payout, self.risk_mgr.bankroll,
-            direction=signal.direction, symbol=symbol
+            direction=signal.direction, symbol=symbol, barrier=signal.barrier
         )
         
         self._global_trade_counter += 1

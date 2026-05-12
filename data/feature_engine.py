@@ -176,62 +176,61 @@ class FeatureEngine:
         """
         Digit distribution and barrier hit rates.
         
-        v8 ADDITION: Over/Under frequency split per window.
-        This is the PRIMARY direction signal — replaces ML model as decision-maker.
-        Instead of "what does the model predict?", we ask:
-        "How often do digits > 4 (Over) vs digits < 5 (Under) appear?"
-        If Over-frequency is 55% across multiple windows, Over has a 5% edge.
+        v9 ADDITION: Per-digit frequencies for ALL windows + ALL barrier Over/Under frequencies.
+        This enables dynamic barrier selection — instead of always Over 4 / Under 5,
+        the bot can evaluate ALL barriers and pick the best one.
+        
+        For each barrier B:
+        - Over B: probability = sum of digit frequencies for digits (B+1) to 9
+        - Under B: probability = sum of digit frequencies for digits 0 to (B-1)
         """
         features = {}
         
-        # Digit frequency for each digit (0-9) in short window
-        dist_short = self.agg.digit_distribution("short")
-        for d in range(10):
-            features[f"digit_freq_{d}_s"] = dist_short.get(d, 0.1)
+        # ─── Per-digit frequencies for ALL windows ───
+        # v9: Previously only short window had per-digit frequencies.
+        # Now all windows have them so setup_detector can evaluate barriers across windows.
+        for window_name in ["short", "medium", "trend_long"]:
+            dist = self.agg.digit_distribution(window_name)
+            suffix = "_s" if window_name == "short" else "_m" if window_name == "medium" else "_l"
+            for d in range(10):
+                features[f"digit_freq_{d}{suffix}"] = dist.get(d, 0.1)
+            
+            # ─── v9: Over/Under frequency for EVERY barrier in this window ───
+            # For each barrier B: Over B wins if digit > B
+            for barrier in range(0, 9):  # Over 0 through Over 8
+                over_prob = sum(dist.get(d, 0) for d in range(barrier + 1, 10))
+                features[f"over{barrier}_freq_{window_name}"] = over_prob
+            
+            # For each barrier B: Under B wins if digit < B  
+            for barrier in range(1, 10):  # Under 1 through Under 9
+                under_prob = sum(dist.get(d, 0) for d in range(0, barrier))
+                features[f"under{barrier}_freq_{window_name}"] = under_prob
         
-        # Barrier-specific hit rates across multiple windows
-        features["barrier_hit_over_short"] = self.agg.barrier_hit_rate(
-            OVER_BARRIER, "short"
-        )
-        features["barrier_hit_over_medium"] = self.agg.barrier_hit_rate(
-            OVER_BARRIER, "medium"
-        )
-        features["barrier_hit_over_long"] = self.agg.barrier_hit_rate(
-            OVER_BARRIER, "long"
-        )
-        features["barrier_hit_under_short"] = self.agg.barrier_hit_rate(
-            UNDER_BARRIER, "short"
-        )
-        features["barrier_hit_under_medium"] = self.agg.barrier_hit_rate(
-            UNDER_BARRIER, "medium"
-        )
-        
-        # ─── v8: Over/Under Frequency Split Per Window ───
-        # This is THE PRIMARY direction signal.
-        # Count digits 5-9 (Over) vs 0-4 (Under) as a percentage.
-        # Higher Over-frequency -> Over has an edge. Higher Under-frequency -> Under has an edge.
+        # ─── Legacy: Over/Under frequency split for Over 4 / Under 5 ───
+        # Kept for backward compatibility with ML model features
         for window_name in ["short", "medium", "trend_long", "long"]:
             dist = self.agg.digit_distribution(window_name)
             over_freq = sum(dist.get(d, 0) for d in range(OVER_BARRIER + 1, 10))  # digits 5-9
             under_freq = sum(dist.get(d, 0) for d in range(0, UNDER_BARRIER))       # digits 0-4
             
-            # Store as raw frequencies (0-1 range, should sum to ~1.0)
             features[f"over_freq_{window_name}"] = over_freq
             features[f"under_freq_{window_name}"] = under_freq
-            
-            # Edge: how far from 50/50? Positive = Over edge, Negative = Under edge
             features[f"ou_edge_{window_name}"] = over_freq - under_freq
             
-            # Dominance: which side is stronger? 1.0 = all Over, -1.0 = all Under, 0 = 50/50
             total = over_freq + under_freq
             if total > 0:
                 features[f"ou_dominance_{window_name}"] = (over_freq - under_freq) / total
             else:
                 features[f"ou_dominance_{window_name}"] = 0.0
         
-        # ─── Window Agreement on Direction ───
-        # How many of the 3 main windows agree on Over vs Under?
-        # This is used by the SetupDetector to validate the setup.
+        # ─── Legacy: Barrier hit rates for Over 4 / Under 5 ───
+        features["barrier_hit_over_short"] = self.agg.barrier_hit_rate(OVER_BARRIER, "short")
+        features["barrier_hit_over_medium"] = self.agg.barrier_hit_rate(OVER_BARRIER, "medium")
+        features["barrier_hit_over_long"] = self.agg.barrier_hit_rate(OVER_BARRIER, "long")
+        features["barrier_hit_under_short"] = self.agg.barrier_hit_rate(UNDER_BARRIER, "short")
+        features["barrier_hit_under_medium"] = self.agg.barrier_hit_rate(UNDER_BARRIER, "medium")
+        
+        # ─── Window Agreement on Direction (for Over 4 / Under 5) ───
         short_edge = features.get("ou_edge_short", 0.0)
         medium_edge = features.get("ou_edge_medium", 0.0)
         long_edge = features.get("ou_edge_trend_long", 0.0)
@@ -239,8 +238,8 @@ class FeatureEngine:
         over_votes = sum(1 for e in [short_edge, medium_edge, long_edge] if e > 0.02)
         under_votes = sum(1 for e in [short_edge, medium_edge, long_edge] if e < -0.02)
         
-        features["ou_window_agreement"] = max(over_votes, under_votes)  # 0-3 windows agreeing
-        features["ou_direction"] = 1 if over_votes >= under_votes else -1  # 1=Over, -1=Under
+        features["ou_window_agreement"] = max(over_votes, under_votes)
+        features["ou_direction"] = 1 if over_votes >= under_votes else -1
         features["ou_agreed_edge"] = max(short_edge, medium_edge, long_edge) if over_votes >= under_votes else min(short_edge, medium_edge, long_edge)
         
         # Change in barrier hit rate (momentum of hit rate)

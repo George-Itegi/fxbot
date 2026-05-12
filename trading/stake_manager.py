@@ -66,6 +66,7 @@ class StakeState:
     martingale_base_stake: float = 0.0  # The base stake before martingale started
     martingale_direction: Optional[str] = None  # Direction of FIRST loss — must persist!
     martingale_market: Optional[str] = None     # v8.1: Market where martingale started — MUST stay here!
+    martingale_barrier: Optional[int] = None    # v9: Barrier of FIRST loss — must persist!
 
     # Recent trade history (for win rate calculation)
     recent_results: list = field(default_factory=list)
@@ -228,7 +229,7 @@ class StakeManager:
 
     def record_outcome(self, won: bool, stake: float, payout: float,
                        bankroll: float, direction: str = None,
-                       symbol: str = None):
+                       symbol: str = None, barrier: int = None):
         """
         Record a trade outcome to update martingale and streak tracking.
 
@@ -239,6 +240,8 @@ class StakeManager:
                        Required for martingale direction persistence.
             symbol: The market symbol (e.g., "1HZ100V").
                     v8.1: Required for martingale market persistence.
+            barrier: The barrier value (e.g., 7 for Over 7).
+                     v9: Required for martingale barrier persistence.
         """
         if won:
             self.state.consecutive_wins += 1
@@ -250,6 +253,7 @@ class StakeManager:
             self.state.martingale_base_stake = 0.0
             self.state.martingale_direction = None
             self.state.martingale_market = None
+            self.state.martingale_barrier = None  # v9
         else:
             self.state.consecutive_losses += 1
             self.state.consecutive_wins = 0
@@ -257,12 +261,14 @@ class StakeManager:
             # ─── LOSS: Activate martingale ───
             # Next stake = 2.35x the lost stake
             if self.state.martingale_step == 0:
-                # First loss — record the base stake, direction, AND market
+                # First loss — record the base stake, direction, market, AND barrier
                 self.state.martingale_base_stake = stake
                 self.state.martingale_direction = direction
                 self.state.martingale_market = symbol
+                self.state.martingale_barrier = barrier  # v9
                 logger.info(
-                    f"MARTINGALE STARTED: market={symbol}, direction={direction}, lost ${stake:.2f}"
+                    f"MARTINGALE STARTED: market={symbol}, direction={direction}, "
+                    f"barrier={barrier}, lost ${stake:.2f}"
                 )
 
             self.state.last_lost_stake = stake
@@ -280,6 +286,7 @@ class StakeManager:
                 self.state.martingale_base_stake = 0.0
                 self.state.martingale_direction = None
                 self.state.martingale_market = None
+                self.state.martingale_barrier = None  # v9
             else:
                 next_stake = min(stake * self.MARTINGALE_MULTIPLIER, self.MAX_MARTINGALE_STAKE)
                 logger.info(
@@ -329,6 +336,7 @@ class StakeManager:
             "martingale_step": self.state.martingale_step,
             "martingale_direction": self.state.martingale_direction,
             "martingale_market": self.state.martingale_market,
+            "martingale_barrier": self.state.martingale_barrier,  # v9
             "martingale_next_mult": round(self.MARTINGALE_MULTIPLIER ** self.state.martingale_step, 2) if self.state.martingale_step > 0 else 1,
             "recent_win_rate": round(self.get_recent_win_rate(), 3),
             "recent_trades": len(self.state.recent_results),

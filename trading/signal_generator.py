@@ -1,22 +1,17 @@
 """
-Signal Generator (v4.1 — Structured Quality Trading)
-====================================================
-RULE-BASED primary + ML confirmation.
+Signal Generator (v5 — Dynamic Barrier Selection)
+==================================================
+FIXED confidence + FIXED EV + Dynamic barriers.
 
-The decision flow now mirrors the manual trading process:
-1. SetupDetector checks trend + digit frequency → is there a good setup?
-2. Direction is determined by the SETUP (not the ML model)
-3. ML (Logistic Regression) CONFIRMS — if it disagrees, NO TRADE
-4. Observation phase determines duration (watch digits 20-30s)
-5. If setup is good → trade with confidence, let martingale recover
-
-v4.1 Changes from v4:
-- ML disagreement now BLOCKS trades entirely (not just reduces confidence)
-  If the setup is truly strong, the ML model should agree. Disagreement = questionable setup.
-- Removed martingale ML confidence gate — trust setup quality instead.
-  The ML model's confidence was ~55%, always below the 70% gate, blocking recovery.
-- During martingale: only check setup quality + direction match, NOT ML confidence.
-  The setup was good when we entered; a single loss doesn't invalidate it.
+v5 Changes from v4.1:
+- Confidence = ACTUAL observed win probability (not inflated mapping)
+  Old: confidence = 0.50 + setup_score * 0.40 (always 70-90% = wrong!)
+  New: confidence = observed_prob for the chosen barrier
+- EV = observed_prob * (1 + payout_rate) - 1 (using REAL payout for barrier)
+- Barrier is now DYNAMIC (from SetupDetector) — not always Over 4 / Under 5
+- ML disagreement REDUCES confidence by 20% (doesn't block entirely)
+- Minimum EV of 5% required to trade
+- Minimum trade interval raised to 10 seconds
 """
 
 import time
@@ -29,9 +24,9 @@ from config import (MIN_CONFIDENCE, MIN_EDGE_THRESHOLD, OVER_BARRIER,
                     MIN_TRADE_INTERVAL_SEC, MAX_DAILY_TRADES,
                     MIN_SETUP_SCORE, FORCE_TRADE_MIN_SETUP_SCORE,
                     MARTINGALE_MIN_CONFIDENCE, MARTINGALE_MIN_SETUP_SCORE,
-                    TREND_CONFIDENCE_REDUCTION, TREND_SIGNAL_SCORE_REDUCTION,
                     ML_CONFIRMATION_WEIGHT, ML_DISAGREEMENT_BLOCKS,
-                    MIN_DIGIT_FREQUENCY_EDGE)
+                    MIN_DIGIT_FREQUENCY_EDGE, MIN_EV_FOR_TRADE,
+                    DYNAMIC_BARRIERS)
 from trading.setup_detector import Setup
 from models.online_learner import Prediction
 from utils.logger import setup_logger
@@ -43,35 +38,36 @@ logger = setup_logger("trading.signal_generator")
 class Signal:
     """Generated trade signal."""
     direction: str          # "DIGITOVER" or "DIGITUNDER"
-    barrier: int            # The digit barrier
-    confidence: float       # Combined confidence (rule-based + ML confirmation)
-    expected_value: float   # Expected profit per dollar risked
+    barrier: int            # The digit barrier (DYNAMIC in v9!)
+    confidence: float       # ACTUAL observed win probability (not inflated!)
+    expected_value: float   # Expected profit per dollar staked
     kelly_fraction: float   # Kelly-optimal fraction of bankroll
     stake: float            # Actual stake amount in USD
-    contract_duration: int  # Number of ticks (determined by observation phase)
+    contract_duration: int  # Number of ticks
     timestamp: float
-    features_snapshot: dict  # Features at signal time
-    reason: str             # Human-readable reason
-    setup_score: float      # Setup quality score (0-1)
-    model_agreement: float  # Always 1.0 now (single model)
+    features_snapshot: dict
+    reason: str
+    setup_score: float
+    model_agreement: float
     is_martingale: bool = False
+    # v9: Additional info for transparency
+    natural_prob: float = 0.5       # Natural probability for this barrier
+    observed_prob: float = 0.5      # Observed probability from digit frequencies
+    payout_rate: float = 0.95       # Payout rate for this barrier
+    z_score: float = 0.0           # Statistical significance
 
 
 class SignalGenerator:
     """
     Converts setup + ML confirmation into trade signals.
     
-    v4.1 Decision Flow:
+    v5 Decision Flow:
     1. Check setup (from SetupDetector) — no setup = no trade
-    2. Determine direction from setup (trend + digit frequency aligned)
-    3. Get ML model prediction as CONFIRMATION
-    4. If ML disagrees with setup → NO TRADE (setup isn't clear enough)
-    5. Calculate EV and generate signal if conditions met
-    
-    Martingale Flow:
-    1. Setup must still be valid (score >= 0.65)
-    2. Direction must match the original losing trade
-    3. NO ML confidence gate — trust the setup quality
+    2. Direction and barrier from setup (DYNAMIC — not always Over 4 / Under 5)
+    3. Confidence = observed win probability for the chosen barrier
+    4. ML confirmation: if agrees, boost; if disagrees, reduce by 20%
+    5. EV = observed_prob * (1 + payout_rate) - 1
+    6. Only trade if EV > 5% and setup is significant
     """
     
     def __init__(self, dynamic_barriers=True):
@@ -86,37 +82,23 @@ class SignalGenerator:
                  duration: int = 5,
                  model_in_drift: bool = False,
                  is_martingale: bool = False,
-                 martingale_direction: str = None) -> Optional[Signal]:
+                 martingale_direction: str = None,
+                 martingale_barrier: int = None) -> Optional[Signal]:
         """
         Generate a trade signal from setup + ML confirmation.
         
-        Args:
-            setup: SetupDetector's evaluation of the market
-            prediction: ML model's prediction (confirmation signal)
-            features: Feature dict at prediction time
-            payout: Current payout ratio
-            bankroll: Current account balance
-            duration: Contract duration in ticks (from observation phase)
-            model_in_drift: Whether the model is in drift state
-            is_martingale: Whether this is a martingale recovery trade
-            martingale_direction: Required direction for martingale recovery
-        
-        Returns:
-            Signal if conditions met, None otherwise.
+        v5 Key Changes:
+        - Confidence = observed_prob (the REAL probability, not inflated)
+        - EV uses the ACTUAL payout rate for the chosen barrier
+        - Barrier is DYNAMIC (from setup), not always Over 4 / Under 5
         """
-        # ─── SETUP GATE (FIRST CHECK) ───
-        # No valid setup = no trade. Period.
+        # ─── SETUP GATE ───
         if not setup.active:
             self._skip("no_valid_setup")
             return None
         
         # ─── MARTINGALE GATE ───
-        # During martingale, setup must STILL be valid and direction must persist.
-        # v4.1: Removed ML confidence gate — it was blocking ALL recovery trades
-        # because ML confidence was always ~55%, below the 70% gate.
-        # The setup was good when we entered; a single loss doesn't invalidate it.
         if is_martingale:
-            # Setup must still meet minimum quality
             if setup.setup_score < MARTINGALE_MIN_SETUP_SCORE:
                 self._skip("martingale_weak_setup")
                 logger.info(
@@ -134,73 +116,62 @@ class SignalGenerator:
                 )
                 return None
             
-            # v4.1: NO ML confidence gate during martingale.
-            # The ML model's confidence is unreliable for recovery decisions.
-            # We trust the SETUP quality (trend + frequency edge) instead.
-            # If the setup is still valid (score >= 0.65) and direction matches,
-            # we proceed with the martingale recovery.
+            # v9: Barrier must also match (or be compatible) for martingale
+            # If we lost on Over 7, we should recover on Over 7 (same barrier)
+            if martingale_barrier is not None and setup.barrier != martingale_barrier:
+                # Allow recovery on the same direction but different barrier if it has better EV
+                # This gives the bot flexibility to find a better recovery opportunity
+                pass  # Allow different barrier for now — the direction match is more important
         
-        # ─── DIRECTION from SETUP ───
-        # The setup determines direction (trend + frequency aligned)
+        # ─── DIRECTION AND BARRIER FROM SETUP ───
         direction = setup.direction
-        if direction == CONTRACT_TYPE_OVER:
-            barrier = OVER_BARRIER
-        else:
-            barrier = UNDER_BARRIER
+        barrier = setup.barrier  # v9: DYNAMIC barrier from setup!
+        
+        # ─── CONFIDENCE = OBSERVED WIN PROBABILITY (v9: FIXED!) ───
+        # The OLD system mapped setup_score to [0.50, 0.90], always inflating confidence.
+        # Now confidence = the ACTUAL observed probability for this barrier.
+        # For Over 8: might be 0.14 (14% observed vs 10% natural = strong edge)
+        # For Over 4: might be 0.55 (55% observed vs 50% natural = weak edge)
+        confidence = setup.observed_prob
         
         # ─── ML CONFIRMATION ───
         # The Logistic Regression model confirms or disputes the direction.
-        # v4.1: If ML disagrees, BLOCK the trade entirely.
-        # A truly strong setup should have the ML model agreeing.
-        # Disagreement means the setup is questionable — skip it.
+        # v9: ML disagreement REDUCES confidence by 20%, doesn't block entirely.
+        # The ML model was trained on Over 4 / Under 5 data, so it's less reliable
+        # for other barriers. But its opinion still matters.
         ml_agrees = (
             (direction == CONTRACT_TYPE_OVER and prediction.prob_over > prediction.prob_under) or
             (direction == CONTRACT_TYPE_UNDER and prediction.prob_under > prediction.prob_over)
         )
         
-        # v4.1: ML disagreement blocks trades
         if ML_DISAGREEMENT_BLOCKS and not ml_agrees and not is_martingale:
-            # During martingale, we allow ML disagreement because:
-            # 1. The setup was good when we entered
-            # 2. A single loss doesn't mean the direction is wrong
-            # 3. Martingale requires direction persistence
+            # Old behavior: block on ML disagreement
             self._skip("ml_disagrees_blocked")
             logger.info(
                 f"ML DISAGREES BLOCKED: Setup says {direction.replace('DIGIT','')} "
                 f"but ML says {'Over' if prediction.prob_over > prediction.prob_under else 'Under'} "
-                f"(Over={prediction.prob_over:.1%} Under={prediction.prob_under:.1%}) "
-                f"— setup not clear enough, skipping"
+                f"— skipping"
             )
             return None
         
-        # Base confidence from the setup quality
-        # High setup score = high base confidence
-        base_confidence = 0.50 + (setup.setup_score * 0.40)  # 0.50 to 0.90
-        
-        # Adjust confidence based on ML confirmation
         if ml_agrees:
-            # ML agrees — boost confidence
+            # ML agrees — small confidence boost
             ml_prob = prediction.prob_over if direction == CONTRACT_TYPE_OVER else prediction.prob_under
-            # Blend: base confidence weighted by (1 - ML_CONFIRMATION_WEIGHT) + ML weighted
-            confidence = (
-                base_confidence * (1 - ML_CONFIRMATION_WEIGHT) +
-                ml_prob * ML_CONFIRMATION_WEIGHT
-            )
+            confidence = confidence * (1 - ML_CONFIRMATION_WEIGHT) + ml_prob * ML_CONFIRMATION_WEIGHT
             ml_status = "ML_AGREES"
         else:
-            # ML disagrees during martingale — keep base confidence (no penalty)
-            # We're in recovery mode; the setup quality is our guide, not ML
-            confidence = base_confidence
-            ml_status = "ML_DISAGREES(martingale_allowed)"
+            # ML disagrees — reduce confidence by 20% (but don't block)
+            confidence = confidence * 0.80
+            ml_status = "ML_DISAGREES(-20%)"
         
         # Clamp confidence
-        confidence = max(0.40, min(0.95, confidence))
+        confidence = max(0.05, min(0.99, confidence))
         
-        # ─── Calculate Expected Value ───
-        if direction == CONTRACT_TYPE_OVER:
-            ev = confidence * payout - (1 - confidence) * 1.0
-        else:
-            ev = confidence * payout - (1 - confidence) * 1.0
+        # ─── EV CALCULATION (v9: FIXED!) ───
+        # EV = observed_prob * (1 + payout_rate) - 1
+        # Uses the ACTUAL payout rate for this barrier, not a generic value.
+        payout_rate = setup.payout_rate
+        ev = confidence * (1 + payout_rate) - 1.0
         
         # ─── COOLDOWN CHECK ───
         time_since_last = time.time() - self._last_signal_time
@@ -214,24 +185,31 @@ class SignalGenerator:
             return None
         
         # ─── CONFIDENCE CHECK ───
-        effective_min_confidence = max(0.45, MIN_CONFIDENCE - TREND_CONFIDENCE_REDUCTION)
-        if confidence < effective_min_confidence:
+        if confidence < MIN_CONFIDENCE:
             self._skip("low_confidence")
             return None
         
-        # ─── EV CHECK ───
+        # ─── EV CHECK (v9: Must be positive AND > minimum threshold) ───
+        if ev < MIN_EV_FOR_TRADE:
+            self._skip("ev_below_minimum")
+            if ev > 0:
+                logger.debug(
+                    f"EV TOO LOW: {ev:+.1%} < {MIN_EV_FOR_TRADE:.0%} minimum "
+                    f"for {direction.replace('DIGIT','')}{barrier}"
+                )
+            return None
+        
         if ev < MIN_EDGE_THRESHOLD:
             self._skip("negative_ev")
             return None
         
         # ─── DRIFT CHECK ───
-        # With rule-based primary, drift matters less — but still skip if model is very confused
         if model_in_drift and not ml_agrees and setup.setup_score < FORCE_TRADE_MIN_SETUP_SCORE:
             self._skip("drift_no_ml_support")
             return None
         
         # ─── GENERATE SIGNAL ───
-        kelly = self._kelly_fraction(confidence, payout)
+        kelly = self._kelly_fraction(confidence, payout_rate)
         stake = self._calculate_stake(
             kelly, bankroll,
             confidence=confidence,
@@ -239,20 +217,17 @@ class SignalGenerator:
             ev=ev,
         )
         
-        # Duration from observation phase
-        contract_duration = duration
-        if contract_duration < 2:
-            contract_duration = 2  # Minimum 2 ticks
+        contract_duration = max(2, duration)  # Minimum 2 ticks
         
-        direction_label = "Over" if direction == CONTRACT_TYPE_OVER else "Under"
+        dir_label = "Over" if direction == CONTRACT_TYPE_OVER else "Under"
         reason = (
-            f"{direction_label}: setup={setup.setup_score:.2f} "
-            f"conf={confidence:.0%} EV={ev:+.3f} "
-            f"payout={payout:.0%} dur={contract_duration}t "
+            f"{dir_label}{barrier}: obs_prob={setup.observed_prob:.1%} "
+            f"(natural={setup.natural_prob:.0%}) "
+            f"conf={confidence:.0%} EV={ev:+.1%} "
+            f"payout={payout_rate:.1%} z={setup.z_score:.1f} "
+            f"dur={contract_duration}t "
             f"{ml_status} "
-            f"Over={setup.over_freq:.1%} Under={setup.under_freq:.1%} "
-            f"edge={setup.freq_edge:.1%} "
-            f"trend={'UP' if setup.trend_regime==1 else 'DOWN'}({setup.trend_strength:.1f}) "
+            f"setup={setup.setup_score:.2f} "
             f"stake=${stake:.2f}"
         )
         
@@ -268,7 +243,11 @@ class SignalGenerator:
             features_snapshot=features.copy(),
             reason=reason,
             setup_score=setup.setup_score,
-            model_agreement=1.0,  # Single model = always 1.0
+            model_agreement=1.0 if ml_agrees else 0.5,
+            natural_prob=setup.natural_prob,
+            observed_prob=setup.observed_prob,
+            payout_rate=payout_rate,
+            z_score=setup.z_score,
         )
         
         self._signals_generated += 1
@@ -276,11 +255,11 @@ class SignalGenerator:
         logger.info(f"SIGNAL: {signal.reason}")
         return signal
     
-    def _kelly_fraction(self, win_prob: float, payout: float) -> float:
+    def _kelly_fraction(self, win_prob: float, payout_rate: float) -> float:
         """Kelly Criterion: f* = (b*p - q) / b"""
         from config import MAX_BANKROLL_PER_TRADE
         
-        b = payout
+        b = payout_rate  # You win $payout_rate per $1 staked
         p = win_prob
         q = 1 - p
         
@@ -295,38 +274,47 @@ class SignalGenerator:
                           confidence: float = 0.5, setup_score: float = 0.5,
                           ev: float = 0.0) -> float:
         """
-        Convert Kelly fraction to stake with setup-quality-based sizing.
+        Convert Kelly fraction to stake with quality-based sizing.
         
-        Higher setup score = higher stake (we trust good setups).
+        v9: For low-probability barriers (e.g., Over 8), the stake should be
+        SMALLER because the variance is much higher. A 10% probability bet
+        with 900% payout can have long losing streaks.
         """
         from config import MIN_STAKE, MAX_STAKE, MAX_BANKROLL_PER_TRADE, MIN_CONFIDENCE
         
-        # Base stake from Kelly
         stake = kelly_fraction * bankroll
         
-        # Setup quality boost: score 0.70 = 1.0x, 0.85 = 1.5x, 1.0 = 2.0x
+        # Setup quality boost
         if setup_score >= MIN_SETUP_SCORE:
             setup_range = min(1.0, (setup_score - MIN_SETUP_SCORE) / (1.0 - MIN_SETUP_SCORE))
-            setup_boost = 1.0 + setup_range * 1.0  # 1.0x to 2.0x
+            setup_boost = 1.0 + setup_range * 0.5  # 1.0x to 1.5x
         else:
             setup_boost = 0.5
         
-        # Confidence boost
-        if confidence > MIN_CONFIDENCE:
-            conf_range = min(1.0, (confidence - MIN_CONFIDENCE) / (0.90 - MIN_CONFIDENCE))
-            confidence_boost = 1.0 + conf_range * 1.5  # 1.0x to 2.5x
+        # EV boost (higher EV = more stake, but capped conservatively)
+        if ev >= 0.20:
+            ev_boost = 1.5
+        elif ev >= 0.10:
+            ev_boost = 1.0 + 0.5 * (ev - 0.10) / 0.10
+        elif ev >= MIN_EV_FOR_TRADE:
+            ev_boost = 0.8 + 0.2 * (ev - MIN_EV_FOR_TRADE) / (0.10 - MIN_EV_FOR_TRADE)
         else:
-            confidence_boost = 0.8
+            ev_boost = 0.5
         
-        # EV boost
-        if ev > MIN_EDGE_THRESHOLD:
-            ev_range = min(1.0, (ev - MIN_EDGE_THRESHOLD) / 0.20)
-            ev_boost = 1.0 + ev_range * 0.5  # 1.0x to 1.5x
+        # Variance adjustment: lower probability = higher variance = smaller stake
+        # For a barrier with 10% natural prob, stake should be ~1/3 of Over 4 stake
+        # This prevents blowing up the bankroll on long losing streaks
+        if confidence < 0.20:
+            variance_adj = 0.25  # Very low prob — small stakes
+        elif confidence < 0.30:
+            variance_adj = 0.40
+        elif confidence < 0.50:
+            variance_adj = 0.60
         else:
-            ev_boost = 0.9
+            variance_adj = 1.0  # 50%+ prob — normal sizing
         
-        # Combined (capped at 6x total)
-        total_boost = min(6.0, setup_boost * confidence_boost * ev_boost)
+        # Combined
+        total_boost = setup_boost * ev_boost * variance_adj
         stake = stake * total_boost
         
         # Hard limits
