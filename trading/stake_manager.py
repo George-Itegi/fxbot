@@ -65,6 +65,7 @@ class StakeState:
     last_lost_stake: float = 0.0        # The stake that was lost (to double from)
     martingale_base_stake: float = 0.0  # The base stake before martingale started
     martingale_direction: Optional[str] = None  # Direction of FIRST loss — must persist!
+    martingale_market: Optional[str] = None     # v8.1: Market where martingale started — MUST stay here!
 
     # Recent trade history (for win rate calculation)
     recent_results: list = field(default_factory=list)
@@ -226,7 +227,8 @@ class StakeManager:
         return stake
 
     def record_outcome(self, won: bool, stake: float, payout: float,
-                       bankroll: float, direction: str = None):
+                       bankroll: float, direction: str = None,
+                       symbol: str = None):
         """
         Record a trade outcome to update martingale and streak tracking.
 
@@ -235,6 +237,8 @@ class StakeManager:
         Args:
             direction: The direction of the trade (e.g., "DIGITOVER" or "DIGITUNDER").
                        Required for martingale direction persistence.
+            symbol: The market symbol (e.g., "1HZ100V").
+                    v8.1: Required for martingale market persistence.
         """
         if won:
             self.state.consecutive_wins += 1
@@ -245,18 +249,20 @@ class StakeManager:
             self.state.last_lost_stake = 0.0
             self.state.martingale_base_stake = 0.0
             self.state.martingale_direction = None
+            self.state.martingale_market = None
         else:
             self.state.consecutive_losses += 1
             self.state.consecutive_wins = 0
 
             # ─── LOSS: Activate martingale ───
-            # Next stake = 2x the lost stake
+            # Next stake = 2.35x the lost stake
             if self.state.martingale_step == 0:
-                # First loss — record the base stake AND direction
+                # First loss — record the base stake, direction, AND market
                 self.state.martingale_base_stake = stake
                 self.state.martingale_direction = direction
+                self.state.martingale_market = symbol
                 logger.info(
-                    f"MARTINGALE STARTED: direction={direction}, lost ${stake:.2f}"
+                    f"MARTINGALE STARTED: market={symbol}, direction={direction}, lost ${stake:.2f}"
                 )
 
             self.state.last_lost_stake = stake
@@ -266,19 +272,20 @@ class StakeManager:
             if self.state.martingale_step > self.MAX_MARTINGALE_STEPS:
                 logger.warning(
                     f"MARTINGALE MAX REACHED ({self.MAX_MARTINGALE_STEPS} steps). "
-                    f"Lost ${stake:.2f} on {self.state.martingale_direction}. "
+                    f"Lost ${stake:.2f} on {self.state.martingale_direction} @ {self.state.martingale_market}. "
                     f"Resetting to base stake — taking the loss."
                 )
                 self.state.martingale_step = 0
                 self.state.last_lost_stake = 0.0
                 self.state.martingale_base_stake = 0.0
                 self.state.martingale_direction = None
+                self.state.martingale_market = None
             else:
                 next_stake = min(stake * self.MARTINGALE_MULTIPLIER, self.MAX_MARTINGALE_STAKE)
                 logger.info(
                     f"MARTINGALE STEP {self.state.martingale_step}/{self.MAX_MARTINGALE_STEPS}: "
-                    f"Lost ${stake:.2f} on {direction}, next stake=${next_stake:.2f} "
-                    f"(must stay {self.state.martingale_direction})"
+                    f"Lost ${stake:.2f} on {direction} @ {symbol}, next stake=${next_stake:.2f} "
+                    f"(must stay {self.state.martingale_direction} on {self.state.martingale_market})"
                 )
 
         # Track recent results for win rate
@@ -321,6 +328,7 @@ class StakeManager:
             "consecutive_losses": self.state.consecutive_losses,
             "martingale_step": self.state.martingale_step,
             "martingale_direction": self.state.martingale_direction,
+            "martingale_market": self.state.martingale_market,
             "martingale_next_mult": round(self.MARTINGALE_MULTIPLIER ** self.state.martingale_step, 2) if self.state.martingale_step > 0 else 1,
             "recent_win_rate": round(self.get_recent_win_rate(), 3),
             "recent_trades": len(self.state.recent_results),

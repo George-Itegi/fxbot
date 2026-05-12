@@ -1,5 +1,5 @@
 """
-Deriv Over/Under Bot — Multi-Market Orchestrator v8
+Deriv Over/Under Bot — Multi-Market Orchestrator v8.1
 =====================================================
 Structured Quality Trading — mirrors the manual trading process:
 1. Trend check (3-window agreement, 3-sigma threshold)
@@ -8,6 +8,15 @@ Structured Quality Trading — mirrors the manual trading process:
 4. Execute few high-quality trades, then stop that market
 5. Profit target per market session ($50)
 6. Single Logistic Regression as ML CONFIRMATION
+
+v8.1 Changes from v8:
+- Martingale MUST recover on the SAME market (no switching markets)
+- ML disagreement now BLOCKS trades (if setup is strong, ML should agree)
+- Multiple trades per market: keep trading a market while setup is good
+- Raised setup quality threshold from 0.60 to 0.70
+- Removed ML confidence gate during martingale (was blocking ALL recovery)
+- After a win, continue trading the same market (don't switch)
+- Shorter loss cooldown on the martingale market (2s, not 15-30s)
 
 Usage:
   python main.py                                    # Trade all default markets
@@ -31,7 +40,10 @@ from config import (DEFAULT_SYMBOL, INITIAL_BANKROLL, DEFAULT_MARKETS,
                     get_symbol_decimals, get_symbol_category,
                     supports_digit_contracts, SYMBOLS, VALID_MULTI_MARKET_SYMBOLS,
                     PROFIT_TARGET_PER_MARKET, MARTINGALE_MIN_CONFIDENCE,
-                    MIN_SETUP_SCORE, OBSERVATION_PERIOD_SEC)
+                    MARTINGALE_MIN_SETUP_SCORE, MARTINGALE_SAME_MARKET,
+                    MARKET_STICKY_AFTER_TRADE,
+                    MIN_SETUP_SCORE, OBSERVATION_PERIOD_SEC,
+                    ML_DISAGREEMENT_BLOCKS)
 import config as config
 from data.deriv_ws import DerivWS
 from trading.market_worker import MarketWorker
@@ -47,7 +59,7 @@ logger = setup_logger("main")
 
 
 class DerivBot:
-    """Multi-market bot orchestrator — v8 Structured Quality Trading."""
+    """Multi-market bot orchestrator — v8.1 Structured Quality Trading."""
 
     def __init__(self, markets: list = None, model_type: str = None,
                  bankroll: float = None):
@@ -79,6 +91,12 @@ class DerivBot:
         self._global_trade_counter = 0
         self._last_trade_time: float = 0.0
         self._symbol_cooldowns: dict[str, float] = {}
+        
+        # v8.1: Track the "active market" — we keep trading this market
+        # until setup breaks or profit target reached
+        self._active_market: Optional[str] = None
+        self._active_market_since: float = 0.0
+        self._active_market_trades: int = 0
 
         self._trade_timeout_sec = 60.0
 
@@ -88,14 +106,14 @@ class DerivBot:
         self.ws.on_error = self._on_error
 
         logger.info(
-            f"DerivBot v8 initialized: {len(self.markets)} markets, "
+            f"DerivBot v8.1 initialized: {len(self.markets)} markets, "
             f"LIVE mode, model={self.model_type}"
         )
         logger.info(f"  Markets: {', '.join(self.markets)}")
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v8 — STRUCTURED QUALITY TRADING")
+        logger.info("  DERIV OVER/UNDER BOT v8.1 — STRUCTURED QUALITY TRADING")
         logger.info(f"  Markets:    {len(self.markets)} markets")
         for i, m in enumerate(self.markets):
             logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
@@ -109,15 +127,16 @@ class DerivBot:
         logger.info("    1. Trend check (3-window, 3-sigma) → no trend = no trade")
         logger.info("    2. Digit frequency Over/Under → PRIMARY direction signal")
         logger.info("    3. Observation phase (25s) → determines tick duration")
-        logger.info("    4. ML Logistic Regression → CONFIRMS or adjusts confidence")
-        logger.info("    5. Setup quality score → drives trade decision")
+        logger.info("    4. ML Logistic Regression → must AGREE or trade is blocked")
+        logger.info("    5. Setup quality score (≥0.70) → drives trade decision")
         logger.info("")
         logger.info(f"  Profit target: ${PROFIT_TARGET_PER_MARKET:.0f} per market session")
         logger.info(f"  Observation:   {OBSERVATION_PERIOD_SEC}s before determining duration")
         logger.info(f"  Setup min:     {MIN_SETUP_SCORE:.2f} quality score to trade")
-        logger.info(f"  Martingale:    2.35x on loss (max 3 steps, $10 cap, 85% payout adjusted)")
-        logger.info(f"  Martingale gate: {MARTINGALE_MIN_CONFIDENCE:.0%}+ confidence AND valid setup")
-        logger.info("  Market persistence: STAY on one market during setup")
+        logger.info(f"  ML disagreement: {'BLOCKED' if ML_DISAGREEMENT_BLOCKS else 'penalty only'}")
+        logger.info(f"  Martingale:    2.35x on loss (max 3 steps, $10 cap)")
+        logger.info(f"  Martingale recovery: SAME MARKET (no switching)")
+        logger.info(f"  Market persistence: STAY on one market while setup is good")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
         logger.info("=" * 65)
 
@@ -249,6 +268,32 @@ class DerivBot:
         except Exception as e:
             logger.error(f"Error in _on_tick ({symbol}): {e}", exc_info=True)
 
+    def _should_stay_on_market(self, symbol: str) -> bool:
+        """
+        v8.1: Check if we should stay on the current active market.
+        
+        We stay if:
+        1. The market still has a valid setup
+        2. Profit target not reached
+        3. Setup not broken
+        """
+        if self._active_market != symbol:
+            return False
+        
+        worker = self.workers.get(symbol)
+        if worker is None:
+            return False
+        
+        setup = worker._current_setup
+        if setup is None or not setup.active:
+            return False
+        
+        session = self.setup_detector.get_session(symbol)
+        if session and session.profit_target_reached:
+            return False
+        
+        return True
+
     async def _evaluate_and_trade(self):
         max_positions = MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1
         if len(self._active_trades) >= max_positions:
@@ -257,11 +302,109 @@ class DerivBot:
         # Push martingale state to all workers
         is_martingale = self.stake_mgr.state.martingale_step > 0
         martingale_dir = self.stake_mgr.state.martingale_direction
+        martingale_market = self.stake_mgr.state.martingale_market
+        
         for worker in self.workers.values():
             worker._is_martingale_active = is_martingale
             worker._martingale_direction = martingale_dir
 
-        best_symbol = self.selector.select_market(self.workers)
+        # ─── v8.1: MANDATORY MARTINGALE SAME MARKET ───
+        # If martingale is active, we MUST recover on the SAME market.
+        # No switching markets during recovery — the setup was good on THAT market.
+        if is_martingale and MARTINGALE_SAME_MARKET and martingale_market:
+            # Check if the martingale market is available (not at profit target, has setup)
+            worker = self.workers.get(martingale_market)
+            if worker is None:
+                logger.warning(f"MARTINGALE MARKET {martingale_market} not found — resetting martingale")
+                self.stake_mgr.state.martingale_step = 0
+                self.stake_mgr.state.martingale_direction = None
+                self.stake_mgr.state.martingale_market = None
+                return
+            
+            # Check if the martingale market is tradable
+            if not self.setup_detector.is_market_tradable(martingale_market):
+                logger.info(
+                    f"MARTINGALE MARKET {martingale_market} not tradable "
+                    f"(profit target reached or setup broken) — resetting martingale"
+                )
+                self.stake_mgr.state.martingale_step = 0
+                self.stake_mgr.state.martingale_direction = None
+                self.stake_mgr.state.martingale_market = None
+                return
+            
+            # Check if martingale market has a setup that matches our direction
+            setup = worker._current_setup
+            if setup and setup.active and setup.direction == martingale_dir:
+                # Good — we can recover on this market
+                signal = worker.get_fresh_signal()
+                if signal is not None and signal.direction == martingale_dir:
+                    best_symbol = martingale_market
+                else:
+                    # Setup is active but no fresh signal yet — wait
+                    return
+            else:
+                # Setup on martingale market doesn't match — 
+                # the direction changed, which means our setup broke.
+                # Reset martingale (take the loss) rather than chase a different direction
+                logger.info(
+                    f"MARTINGALE: Setup on {martingale_market} changed direction "
+                    f"(expected {martingale_dir}, setup says {setup.direction if setup else 'NONE'}) "
+                    f"— resetting martingale, taking the loss"
+                )
+                self.stake_mgr.state.martingale_step = 0
+                self.stake_mgr.state.martingale_direction = None
+                self.stake_mgr.state.martingale_market = None
+                # Fall through to normal market selection below
+                is_martingale = False
+                martingale_market = None
+
+        # ─── v8.1: MARKET PERSISTENCE ───
+        # If we have an active market (recently traded), stay on it if:
+        # 1. Setup is still valid
+        # 2. Profit target not reached
+        # 3. Not too long since last trade
+        if not is_martingale and self._active_market and MARKET_STICKY_AFTER_TRADE:
+            if self._should_stay_on_market(self._active_market):
+                # Stay on the active market — check for a fresh signal
+                worker = self.workers.get(self._active_market)
+                if worker:
+                    signal = worker.get_fresh_signal()
+                    if signal is not None:
+                        best_symbol = self._active_market
+                    else:
+                        # No signal yet on active market — wait
+                        return
+                else:
+                    self._active_market = None
+            else:
+                # Active market's setup broke or profit target reached — find a new one
+                old_market = self._active_market
+                self._active_market = None
+                self._active_market_trades = 0
+                logger.info(
+                    f"MARKET PERSISTENCE: Leaving {old_market} "
+                    f"(setup broken or profit target reached)"
+                )
+
+        # If we didn't pick a market from persistence or martingale, use the selector
+        if not is_martingale and (not hasattr(self, 'best_symbol') or 
+                                   (self._active_market is None and not is_martingale)):
+            best_symbol = self.selector.select_market(self.workers)
+            
+            if best_symbol is None:
+                return
+            
+            # New market selected — update active market tracking
+            if best_symbol != self._active_market:
+                if self._active_market is not None:
+                    logger.info(
+                        f"MARKET SWITCH: {self._active_market} -> {best_symbol} "
+                        f"(new setup found)"
+                    )
+                self._active_market = best_symbol
+                self._active_market_since = time.time()
+                self._active_market_trades = 0
+
         if best_symbol is None:
             return
 
@@ -285,6 +428,7 @@ class DerivBot:
 
         if breakdown and len(breakdown) > 2:
             recovery_tag = " [MARTINGALE RECOVERY]" if signal.is_martingale else ""
+            market_tag = f" [{best_symbol}]" if best_symbol != self.selector._last_selected_market else ""
             logger.info(
                 f"STAKE: ${dynamic_stake:.2f} = "
                 f"base=${breakdown.get('base_stake', 0):.2f} x "
@@ -292,7 +436,7 @@ class DerivBot:
                 f"setup={breakdown.get('setup_mult', 1):.1f} x "
                 f"streak={breakdown.get('streak_factor', 1):.1f} x "
                 f"ev={breakdown.get('ev_factor', 1):.1f}"
-                f"{recovery_tag}"
+                f"{recovery_tag}{market_tag}"
             )
 
         risk_decision = self.risk_mgr.can_trade(signal)
@@ -361,25 +505,52 @@ class DerivBot:
         stake = signal.stake
 
         self.risk_mgr.record_outcome(won, stake, payout)
-        self.stake_mgr.record_outcome(won, stake, payout, self.risk_mgr.bankroll,
-                                       direction=signal.direction)
+        
+        # v8.1: Pass symbol to stake_mgr for martingale market tracking
+        self.stake_mgr.record_outcome(
+            won, stake, payout, self.risk_mgr.bankroll,
+            direction=signal.direction, symbol=symbol
+        )
+        
         self._global_trade_counter += 1
         worker.trade_counter += 1
+        self._active_market_trades += 1
 
-        # Loss cooldown
+        # ─── v8.1: Loss cooldown — shorter for martingale market ───
+        # On the martingale market, we want to recover quickly (2s cooldown).
+        # On other markets, normal cooldown applies.
+        is_martingale_market = (
+            self.stake_mgr.state.martingale_step > 0 and
+            self.stake_mgr.state.martingale_market == symbol
+        )
+        
         if not won:
-            consec = self.risk_mgr.consecutive_losses
-            if consec >= 3:
-                cooldown_time = 30
-            elif consec >= 2:
-                cooldown_time = 15
+            if is_martingale_market:
+                # Quick cooldown on the martingale market — we need to recover
+                cooldown_time = 2  # 2 seconds between martingale recovery trades
+                logger.info(
+                    f"LOSS COOLDOWN: {cooldown_time}s on {symbol} (martingale recovery)"
+                )
             else:
-                cooldown_time = 5
+                consec = self.risk_mgr.consecutive_losses
+                if consec >= 3:
+                    cooldown_time = 30
+                elif consec >= 2:
+                    cooldown_time = 15
+                else:
+                    cooldown_time = 5
 
             if ALLOW_MULTIPLE_TRADES:
                 self._symbol_cooldowns[symbol] = time.time() + cooldown_time
             else:
                 self._last_trade_time = time.time() + cooldown_time
+        else:
+            # Win — very short cooldown, keep trading this market
+            self._last_trade_time = time.time()  # No extra delay on win
+            logger.info(
+                f"WIN on {symbol} — continuing to trade this market "
+                f"(session trade #{self._active_market_trades})"
+            )
 
         pnl = payout - stake if won else -stake
         self.selector.record_outcome(symbol, won, pnl)
@@ -413,9 +584,9 @@ class DerivBot:
             self.risk_mgr.set_drift_state(False)
 
         self._active_trades.pop(symbol, None)
-        self._last_trade_time = time.time()
 
-        # Log session info
+        # ─── v8.1: Market session management ───
+        # Check if we should stop trading this market
         session = self.setup_detector.get_session(symbol)
         if session:
             logger.info(
@@ -423,6 +594,25 @@ class DerivBot:
                 f"trades={session.session_trades} wins={session.session_wins} "
                 f"{'TARGET REACHED' if session.profit_target_reached else ''}"
             )
+            
+            # If profit target reached, clear active market
+            if session.profit_target_reached:
+                if self._active_market == symbol:
+                    logger.info(
+                        f"MARKET PERSISTENCE: Leaving {symbol} (profit target ${session.session_pnl:.2f} reached)"
+                    )
+                    self._active_market = None
+                    self._active_market_trades = 0
+
+        # Check if martingale was reset (max steps or direction changed)
+        if self.stake_mgr.state.martingale_step == 0:
+            # Martingale done (either won or max steps) — 
+            # if we just took a max-steps loss on the active market, leave it
+            if not won and self._active_market == symbol and self._active_market_trades <= 1:
+                # Only 1 trade and it was a total loss (martingale exhausted) — 
+                # the setup might not be as good as we thought. Leave.
+                self._active_market = None
+                self._active_market_trades = 0
 
         if self._global_trade_counter % 10 == 0:
             self._log_status()
@@ -445,6 +635,10 @@ class DerivBot:
             f"dd={stake_summary['current_drawdown_pct']}% "
             f"martingale_step={stake_summary['martingale_step']}"
         )
+        mart_market = stake_summary.get('martingale_market', '')
+        if mart_market:
+            logger.info(f"  Martingale market: {mart_market} direction={stake_summary['martingale_direction']}")
+        logger.info(f"  Active market: {self._active_market} (trades={self._active_market_trades})")
         logger.info(f"  Market Selector: last={selector_summary['last_selected']}")
 
         for symbol, worker in self.workers.items():
@@ -452,8 +646,9 @@ class DerivBot:
             session = self.setup_detector.get_session(symbol)
             session_pnl = f"session=${session.session_pnl:.2f}" if session else ""
             target = " TARGET!" if w_summary.get('profit_target_reached') else ""
+            active_tag = " [ACTIVE]" if symbol == self._active_market else ""
             logger.info(
-                f"  {symbol}: ticks={w_summary['live_ticks']} "
+                f"  {symbol}{active_tag}: ticks={w_summary['live_ticks']} "
                 f"trades={w_summary['trade_count']} "
                 f"setup={w_summary['setup_score']:.2f}({w_summary['setup_direction']}) "
                 f"dur={w_summary['best_duration']}{w_summary['duration_unit']} "
@@ -508,7 +703,7 @@ class DerivBot:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Deriv Over/Under Bot v8 — Structured Quality Trading"
+        description="Deriv Over/Under Bot v8.1 — Structured Quality Trading"
     )
     parser.add_argument(
         "--markets", nargs="+", default=DEFAULT_MARKETS,

@@ -173,7 +173,9 @@ DIGIT_FREQ_WINDOW_AGREEMENT = 2   # At least N of 3 windows must agree on direct
 # ─── Setup Quality ───
 # A "setup" = strong trend + clear digit frequency edge.
 # Setup score determines trade quality. Higher = better.
-MIN_SETUP_SCORE = 0.60           # Minimum setup quality to trade (0-1 scale)
+# v8.1: Raised from 0.60 to 0.70 — only trade STRONG setups.
+# Weak setups (0.60-0.70) lead to losses that martingale can't recover from.
+MIN_SETUP_SCORE = 0.70           # Minimum setup quality to trade (0-1 scale)
 
 # ─── Profit Target Per Market ───
 # After making this much profit on one market, STOP trading it.
@@ -190,14 +192,18 @@ MIN_OBSERVATION_TICKS = 10       # Need at least this many ticks during observat
 # ─── Market Session (Persistence) ───
 # Stay on one market during a setup. Don't jump between markets.
 # Only switch when: setup breaks, profit target reached, or no trade happening.
-MARKET_SESSION_MAX_IDLE_SEC = 120  # After 120s with no trade on current market, allow switch
+# v8.1: Increased idle timeout — good setups deserve patience.
+MARKET_SESSION_MAX_IDLE_SEC = 180  # After 180s with no trade on current market, allow switch
+MARKET_STICKY_AFTER_TRADE = True   # v8.1: After trading a market, keep trading it while setup is good
 
 # ─── ML Confirmation Model ───
 # The Logistic Regression model is a CONFIRMATION signal, not the driver.
 # When rules say Over and ML also says Over -> HIGH confidence -> trade
-# When rules say Over but ML says Under -> LOWER confidence -> trade with caution
+# When rules say Over but ML says Under -> NO TRADE — the setup isn't clear enough
+# v8.1: ML disagreement now BLOCKS trades entirely. If the setup is truly
+# strong, the ML model should agree. Disagreement = setup is questionable.
 ML_CONFIRMATION_WEIGHT = 0.30     # How much ML confirmation affects confidence (0-1)
-ML_DISAGREEMENT_PENALTY = 0.15    # Confidence penalty when ML disagrees with rules
+ML_DISAGREEMENT_BLOCKS = True     # v8.1: ML disagreement now BLOCKS trades (not just penalty)
 
 # ─── Confidence-Weighted Agreement ───
 SIGNAL_SCORE_METHOD = "setup_weighted"        # NEW: setup quality drives the score
@@ -227,11 +233,14 @@ TREND_CONFIDENCE_REDUCTION = 0.05    # Lower confidence by 5% for trend-aligned 
 TREND_SIGNAL_SCORE_REDUCTION = 0.05  # Lower signal_score threshold for trend-aligned trades
 
 # ─── Martingale Confidence Gate ───
-# During martingale recovery, confidence bar is higher.
-# But with trusted setups (trend + frequency edge), we allow recovery.
-# Since setups are high quality, max 3 consecutive losses expected -> 3 martingale steps.
-MARTINGALE_MIN_CONFIDENCE = 0.70   # 70%+ confident during martingale (lowered from 80% — trusted setups)
-MARTINGALE_MIN_SETUP_SCORE = 0.60  # Setup must still be valid during recovery
+# During martingale recovery, the bot MUST stay on the SAME market.
+# No switching markets during recovery — the setup was good on THAT market.
+# v8.1: Removed ML confidence gate during martingale — it was blocking recovery
+# on good setups because the ML model's confidence was low (~55%).
+# Instead, we trust the SETUP quality (trend + frequency edge) for recovery.
+MARTINGALE_MIN_CONFIDENCE = 0.55   # v8.1: Lowered — trust setup quality, not ML confidence
+MARTINGALE_MIN_SETUP_SCORE = 0.65  # v8.1: Setup must still be decent during recovery
+MARTINGALE_SAME_MARKET = True      # v8.1: MUST recover on the same market where loss occurred
 MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
 MIN_TRADE_INTERVAL_SEC = 2    # Minimum seconds between trades

@@ -1,22 +1,22 @@
 """
-Signal Generator (v4 — Structured Quality Trading)
+Signal Generator (v4.1 — Structured Quality Trading)
 ====================================================
 RULE-BASED primary + ML confirmation.
 
 The decision flow now mirrors the manual trading process:
 1. SetupDetector checks trend + digit frequency → is there a good setup?
 2. Direction is determined by the SETUP (not the ML model)
-3. ML (Logistic Regression) CONFIRMS or adjusts confidence
+3. ML (Logistic Regression) CONFIRMS — if it disagrees, NO TRADE
 4. Observation phase determines duration (watch digits 20-30s)
 5. If setup is good → trade with confidence, let martingale recover
 
-Key changes from v3:
-- Digit frequency Over/Under split is PRIMARY direction signal
-- ML model is a CONFIRMATION signal, not the decision-maker
-- Setup quality score replaces model agreement as the main quality gate
-- Observation phase determines duration
-- Less filtering within a valid setup (trust the setup)
-- Model agreement is always 1.0 (single model)
+v4.1 Changes from v4:
+- ML disagreement now BLOCKS trades entirely (not just reduces confidence)
+  If the setup is truly strong, the ML model should agree. Disagreement = questionable setup.
+- Removed martingale ML confidence gate — trust setup quality instead.
+  The ML model's confidence was ~55%, always below the 70% gate, blocking recovery.
+- During martingale: only check setup quality + direction match, NOT ML confidence.
+  The setup was good when we entered; a single loss doesn't invalidate it.
 """
 
 import time
@@ -30,7 +30,7 @@ from config import (MIN_CONFIDENCE, MIN_EDGE_THRESHOLD, OVER_BARRIER,
                     MIN_SETUP_SCORE, FORCE_TRADE_MIN_SETUP_SCORE,
                     MARTINGALE_MIN_CONFIDENCE, MARTINGALE_MIN_SETUP_SCORE,
                     TREND_CONFIDENCE_REDUCTION, TREND_SIGNAL_SCORE_REDUCTION,
-                    ML_CONFIRMATION_WEIGHT, ML_DISAGREEMENT_PENALTY,
+                    ML_CONFIRMATION_WEIGHT, ML_DISAGREEMENT_BLOCKS,
                     MIN_DIGIT_FREQUENCY_EDGE)
 from trading.setup_detector import Setup
 from models.online_learner import Prediction
@@ -61,12 +61,17 @@ class SignalGenerator:
     """
     Converts setup + ML confirmation into trade signals.
     
-    v4 Decision Flow:
+    v4.1 Decision Flow:
     1. Check setup (from SetupDetector) — no setup = no trade
     2. Determine direction from setup (trend + digit frequency aligned)
     3. Get ML model prediction as CONFIRMATION
-    4. Adjust confidence based on ML agreement/disagreement
+    4. If ML disagrees with setup → NO TRADE (setup isn't clear enough)
     5. Calculate EV and generate signal if conditions met
+    
+    Martingale Flow:
+    1. Setup must still be valid (score >= 0.65)
+    2. Direction must match the original losing trade
+    3. NO ML confidence gate — trust the setup quality
     """
     
     def __init__(self, dynamic_barriers=True):
@@ -106,7 +111,10 @@ class SignalGenerator:
             return None
         
         # ─── MARTINGALE GATE ───
-        # During martingale, setup must STILL be valid and direction must persist
+        # During martingale, setup must STILL be valid and direction must persist.
+        # v4.1: Removed ML confidence gate — it was blocking ALL recovery trades
+        # because ML confidence was always ~55%, below the 70% gate.
+        # The setup was good when we entered; a single loss doesn't invalidate it.
         if is_martingale:
             # Setup must still meet minimum quality
             if setup.setup_score < MARTINGALE_MIN_SETUP_SCORE:
@@ -126,15 +134,11 @@ class SignalGenerator:
                 )
                 return None
             
-            # Confidence must be reasonable (lowered from 80% since we trust setups)
-            best_conf = max(prediction.prob_over, prediction.prob_under)
-            if best_conf < MARTINGALE_MIN_CONFIDENCE:
-                self._skip("martingale_low_confidence")
-                logger.info(
-                    f"MARTINGALE GATE: ML confidence {best_conf:.0%} "
-                    f"< {MARTINGALE_MIN_CONFIDENCE:.0%} — waiting"
-                )
-                return None
+            # v4.1: NO ML confidence gate during martingale.
+            # The ML model's confidence is unreliable for recovery decisions.
+            # We trust the SETUP quality (trend + frequency edge) instead.
+            # If the setup is still valid (score >= 0.65) and direction matches,
+            # we proceed with the martingale recovery.
         
         # ─── DIRECTION from SETUP ───
         # The setup determines direction (trend + frequency aligned)
@@ -146,11 +150,28 @@ class SignalGenerator:
         
         # ─── ML CONFIRMATION ───
         # The Logistic Regression model confirms or disputes the direction.
-        # Rules are PRIMARY — ML only adjusts confidence.
+        # v4.1: If ML disagrees, BLOCK the trade entirely.
+        # A truly strong setup should have the ML model agreeing.
+        # Disagreement means the setup is questionable — skip it.
         ml_agrees = (
             (direction == CONTRACT_TYPE_OVER and prediction.prob_over > prediction.prob_under) or
             (direction == CONTRACT_TYPE_UNDER and prediction.prob_under > prediction.prob_over)
         )
+        
+        # v4.1: ML disagreement blocks trades
+        if ML_DISAGREEMENT_BLOCKS and not ml_agrees and not is_martingale:
+            # During martingale, we allow ML disagreement because:
+            # 1. The setup was good when we entered
+            # 2. A single loss doesn't mean the direction is wrong
+            # 3. Martingale requires direction persistence
+            self._skip("ml_disagrees_blocked")
+            logger.info(
+                f"ML DISAGREES BLOCKED: Setup says {direction.replace('DIGIT','')} "
+                f"but ML says {'Over' if prediction.prob_over > prediction.prob_under else 'Under'} "
+                f"(Over={prediction.prob_over:.1%} Under={prediction.prob_under:.1%}) "
+                f"— setup not clear enough, skipping"
+            )
+            return None
         
         # Base confidence from the setup quality
         # High setup score = high base confidence
@@ -167,9 +188,10 @@ class SignalGenerator:
             )
             ml_status = "ML_AGREES"
         else:
-            # ML disagrees — reduce confidence
-            confidence = base_confidence - ML_DISAGREEMENT_PENALTY
-            ml_status = "ML_DISAGREES"
+            # ML disagrees during martingale — keep base confidence (no penalty)
+            # We're in recovery mode; the setup quality is our guide, not ML
+            confidence = base_confidence
+            ml_status = "ML_DISAGREES(martingale_allowed)"
         
         # Clamp confidence
         confidence = max(0.40, min(0.95, confidence))
@@ -282,7 +304,7 @@ class SignalGenerator:
         # Base stake from Kelly
         stake = kelly_fraction * bankroll
         
-        # Setup quality boost: score 0.60 = 1.0x, 0.80 = 1.5x, 1.0 = 2.0x
+        # Setup quality boost: score 0.70 = 1.0x, 0.85 = 1.5x, 1.0 = 2.0x
         if setup_score >= MIN_SETUP_SCORE:
             setup_range = min(1.0, (setup_score - MIN_SETUP_SCORE) / (1.0 - MIN_SETUP_SCORE))
             setup_boost = 1.0 + setup_range * 1.0  # 1.0x to 2.0x
