@@ -136,7 +136,7 @@ CONTRACT_TYPE_OVER   = "DIGITOVER"
 CONTRACT_TYPE_UNDER  = "DIGITUNDER"
 OVER_BARRIER = 4
 UNDER_BARRIER = 5
-CONTRACT_DURATION = 1          # Fixed 1-tick duration (same payout, best accuracy)
+CONTRACT_DURATION = 2          # Fixed 2-tick duration (same payout, less timing noise than 1t)
 CONTRACT_DURATION_UNIT = "t"
 
 # ─── Dynamic Duration (REMOVED) ───
