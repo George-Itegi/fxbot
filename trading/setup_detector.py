@@ -23,8 +23,6 @@ from config import (
     DIGIT_FREQ_WINDOW_AGREEMENT,
     MIN_SETUP_SCORE,
     PROFIT_TARGET_PER_MARKET,
-    OBSERVATION_PERIOD_SEC,
-    MIN_OBSERVATION_TICKS,
     CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
     DYNAMIC_BARRIERS,
     BARRIER_OVER_OPTIONS,
@@ -42,6 +40,15 @@ from config import (
     TREND_MISALIGN_PENALTY,
     MIN_DIGIT_FREQUENCY_EDGE_RELATIVE,
     BAYESIAN_SHRINKAGE_PRIOR,
+    # v12: Observation phase
+    OBSERVATION_ENABLED,
+    OBSERVATION_TICKS_TO_COLLECT,
+    OBSERVATION_MAX_WAIT_SEC,
+    OBSERVATION_MIN_STREAK_FOR_SHORT,
+    OBSERVATION_MIN_AUTOCORR_FOR_MEDIUM,
+    OBSERVATION_MAX_ALTERNATING_RATE,
+    MIN_DURATION,
+    MAX_DURATION,
 )
 from utils.logger import setup_logger
 
@@ -83,8 +90,13 @@ class Setup:
     setup_score: float = 0.0           # Composite quality score (0-1)
     reason: str = ""                   # Human-readable explanation
     detected_at: float = 0.0           # When was this setup detected?
-    observation_complete: bool = True   # v10: Always True (no observation phase)
-    observed_duration: int = 5          # v10: Always 5
+    observation_complete: bool = True   # v12: True after observation phase completes
+    observed_duration: int = 5          # v12: Duration determined by observation
+    # ─── v12: Observation analysis results ───
+    obs_streak_length: int = 0         # Current same-category streak length
+    obs_autocorr: float = 0.0          # Autocorrelation of digit categories
+    obs_alternating_rate: float = 0.0  # Rate of alternating categories
+    obs_duration_reason: str = ""      # Why this duration was chosen
     # ─── v10: Dynamic barrier fields ───
     best_barrier_eval: Optional[BarrierEval] = None
     natural_prob: float = 0.5          # Natural probability for chosen barrier
@@ -111,21 +123,34 @@ class MarketSession:
 
 class SetupDetector:
     """
-    Detects and scores market setups — v11 Over 4 / Under 5 Only.
+    Detects and scores market setups — v12 Over 4 / Under 5 + Smart Observation.
 
-    v11 Philosophy:
+    v12 Philosophy:
     - ONLY test Over 4 and Under 5 (50% natural, ~95% payout)
     - Use BAYESIAN SHRINKAGE (less aggressive, prior=50)
     - Require z-score > 2.0 (2-sigma — sufficient for 2 barriers)
     - Require ALL 3 windows to agree
     - Trend is a SOFT BIAS (boost/penalty), not a requirement
+    - SMART OBSERVATION PHASE: after setup detected, observe live digits
+      to determine optimal contract duration (3t, 5t, or 7t)
     """
     
     def __init__(self):
         self._sessions: dict[str, MarketSession] = {}
         self._setup_cache: dict[str, Setup] = {}
         
-        logger.info("SetupDetector v11 initialized: Over 4 / Under 5 only, z=2.0, Bayesian shrinkage prior=50")
+        # v12: Observation state per market
+        self._observing: dict[str, bool] = {}            # Is this market being observed?
+        self._obs_digits: dict[str, list[int]] = {}      # Collected digits during observation
+        self._obs_start_time: dict[str, float] = {}      # When observation started
+        self._obs_direction: dict[str, str] = {}         # What direction we're observing for
+        self._obs_barrier: dict[str, int] = {}           # What barrier we're observing for
+        
+        logger.info(
+            "SetupDetector v12 initialized: Over 4 / Under 5 only, z=2.0, "
+            f"observation={'ENABLED' if OBSERVATION_ENABLED else 'DISABLED'} "
+            f"({OBSERVATION_TICKS_TO_COLLECT} ticks, dur={MIN_DURATION}-{MAX_DURATION}t)"
+        )
     
     def evaluate(self, symbol: str, features: dict) -> Setup:
         """
@@ -508,28 +533,293 @@ class SetupDetector:
         
         return score
     
-    # ─── Observation Phase (v10: DISABLED — fixed 5t duration) ───
-    # These methods are kept for API compatibility but are no-ops.
+    # ─── Observation Phase (v12: SMART — analyze live digits for duration) ───
+    # After a setup is detected, we observe live ticks to determine the
+    # optimal contract duration based on digit patterns.
     
-    def start_observation(self, symbol: str, direction: int, barrier: int = 4):
-        """v10: No-op — observation phase disabled."""
-        pass
+    def start_observation(self, symbol: str, direction: str, barrier: int = 4):
+        """
+        Start the observation phase for a market.
+        
+        After a setup is detected, we begin collecting live digits.
+        Once we have enough (OBSERVATION_TICKS_TO_COLLECT), we analyze
+        the pattern and determine the optimal duration.
+        
+        Args:
+            symbol: Market symbol
+            direction: "DIGITOVER" or "DIGITUNDER"
+            barrier: The digit barrier (4 for Over, 5 for Under)
+        """
+        if not OBSERVATION_ENABLED:
+            return
+        
+        self._observing[symbol] = True
+        self._obs_digits[symbol] = []
+        self._obs_start_time[symbol] = time.time()
+        self._obs_direction[symbol] = direction
+        self._obs_barrier[symbol] = barrier
+        
+        logger.info(
+            f"[{symbol}] OBSERVATION STARTED: {direction.replace('DIGIT','')}{barrier} "
+            f"— collecting {OBSERVATION_TICKS_TO_COLLECT} live ticks to determine duration"
+        )
     
     def observe_tick(self, symbol: str, digit: int) -> bool:
-        """v10: Always returns True — observation phase disabled."""
+        """
+        Feed a live tick digit into the observation phase.
+        
+        Returns True when observation is COMPLETE (enough ticks collected
+        and duration has been determined). Returns False while still collecting.
+        
+        If observation is disabled for this market, returns True immediately.
+        """
+        if not OBSERVATION_ENABLED:
+            return True
+        
+        if not self._observing.get(symbol, False):
+            return True
+        
+        # Collect the digit
+        if symbol not in self._obs_digits:
+            self._obs_digits[symbol] = []
+        self._obs_digits[symbol].append(digit)
+        
+        collected = len(self._obs_digits[symbol])
+        
+        # Check if we have enough ticks
+        if collected < OBSERVATION_TICKS_TO_COLLECT:
+            # Check for timeout
+            elapsed = time.time() - self._obs_start_time.get(symbol, time.time())
+            if elapsed > OBSERVATION_MAX_WAIT_SEC:
+                logger.info(
+                    f"[{symbol}] OBSERVATION TIMEOUT: only {collected}/{OBSERVATION_TICKS_TO_COLLECT} "
+                    f"ticks in {elapsed:.0f}s — using default 5t"
+                )
+                self._finalize_observation(symbol, 5, "timeout_fallback")
+                return True
+            return False  # Still collecting
+        
+        # We have enough ticks — analyze the pattern
+        duration, reason = self._analyze_digit_pattern(
+            symbol, self._obs_digits[symbol],
+            self._obs_direction.get(symbol, ""),
+            self._obs_barrier.get(symbol, 4),
+        )
+        
+        self._finalize_observation(symbol, duration, reason)
         return True
     
+    def _analyze_digit_pattern(self, symbol: str, digits: list[int],
+                                direction: str, barrier: int) -> tuple[int, str]:
+        """
+        Analyze the observed digit pattern to determine optimal duration.
+        
+        This is the CORE of v12's smart observation. We look at:
+        1. STREAK LENGTH: How many consecutive same-category digits?
+           - Long streak (3+): pattern about to break → SHORT duration (3t)
+           - Fresh streak (1-2): pattern just starting → LONG duration (7t)
+        2. AUTOCORRELATION: After a high digit, is the next also high?
+           - High autocorrelation (55%+): pattern persists → MEDIUM duration (5t)
+        3. ALTERNATING RATE: Are digits switching back and forth?
+           - High alternating (70%+): no pattern → SKIP trade
+        
+        For Over 4: "high" = digit > 4, "low" = digit <= 4
+        For Under 5: "high" = digit < 5, "low" = digit >= 5
+        
+        Args:
+            symbol: Market symbol (for logging)
+            digits: List of observed digit values (0-9)
+            direction: "DIGITOVER" or "DIGITUNDER"
+            barrier: The digit barrier
+        
+        Returns:
+            (duration, reason_string)
+        """
+        if len(digits) < 3:
+            return 5, "too_few_ticks_default"
+        
+        # Convert digits to categories: 1 = "our side wins", 0 = "our side loses"
+        if direction == CONTRACT_TYPE_OVER:
+            # Over 4 wins if digit > 4
+            categories = [1 if d > barrier else 0 for d in digits]
+        else:
+            # Under 5 wins if digit < barrier
+            categories = [1 if d < barrier else 0 for d in digits]
+        
+        # ─── 1. Streak Analysis ───
+        # Find the current streak (from the end of the list)
+        current_streak = 0
+        last_cat = categories[-1]
+        for i in range(len(categories) - 1, -1, -1):
+            if categories[i] == last_cat:
+                current_streak += 1
+            else:
+                break
+        
+        # ─── 2. Autocorrelation ───
+        # What fraction of consecutive pairs have the SAME category?
+        same_count = 0
+        for i in range(1, len(categories)):
+            if categories[i] == categories[i-1]:
+                same_count += 1
+        autocorr = same_count / (len(categories) - 1) if len(categories) > 1 else 0.5
+        
+        # ─── 3. Alternating Rate ───
+        # What fraction of consecutive pairs are DIFFERENT?
+        alternating_rate = 1.0 - autocorr
+        
+        # ─── 4. Win Rate in Observed Ticks ───
+        win_rate = sum(categories) / len(categories)
+        
+        # ─── Duration Decision Logic ───
+        
+        # CASE A: Too much alternating — no reliable pattern
+        if alternating_rate > OBSERVATION_MAX_ALTERNATING_RATE:
+            logger.info(
+                f"[{symbol}] OBS PATTERN: ALTERNATING — "
+                f"alt_rate={alternating_rate:.0%} > {OBSERVATION_MAX_ALTERNATING_RATE:.0%} "
+                f"— SKIPPING TRADE (no pattern)"
+            )
+            return 0, f"alternating_{alternating_rate:.0%}_skip"
+        
+        # CASE B: Long streak of our category — strike fast, about to break
+        if last_cat == 1 and current_streak >= OBSERVATION_MIN_STREAK_FOR_SHORT:
+            logger.info(
+                f"[{symbol}] OBS PATTERN: LONG STREAK — "
+                f"streak={current_streak} (our side), autocorr={autocorr:.0%} "
+                f"— SHORT DURATION (3t) — strike before pattern breaks"
+            )
+            return 3, f"long_streak_{current_streak}_fast_strike"
+        
+        # CASE C: Long streak AGAINST us — also short, reversal likely
+        if last_cat == 0 and current_streak >= OBSERVATION_MIN_STREAK_FOR_SHORT:
+            # The streak is AGAINST our direction — but the setup says
+            # our direction has an edge. This means we're in a counter-trend
+            # dip and a reversal is likely. Short duration to catch the flip.
+            logger.info(
+                f"[{symbol}] OBS PATTERN: COUNTER STREAK — "
+                f"streak={current_streak} (against us), autocorr={autocorr:.0%} "
+                f"— SHORT DURATION (3t) — catch the reversal"
+            )
+            return 3, f"counter_streak_{current_streak}_reversal"
+        
+        # CASE D: High autocorrelation — pattern persists
+        if autocorr >= OBSERVATION_MIN_AUTOCORR_FOR_MEDIUM:
+            if last_cat == 1:
+                # Pattern is persisting in our direction — medium duration
+                logger.info(
+                    f"[{symbol}] OBS PATTERN: PERSISTING — "
+                    f"autocorr={autocorr:.0%}, win_rate={win_rate:.0%} "
+                    f"— MEDIUM DURATION (5t) — pattern continues"
+                )
+                return 5, f"persisting_autocorr_{autocorr:.0%}"
+            else:
+                # Pattern persisting AGAINST us but setup says we have edge
+                # Fresh streak might start — go medium
+                logger.info(
+                    f"[{symbol}] OBS PATTERN: PERSISTING AGAINST — "
+                    f"autocorr={autocorr:.0%}, win_rate={win_rate:.0%} "
+                    f"— MEDIUM DURATION (5t) — setup overrides pattern"
+                )
+                return 5, f"persisting_against_autocorr_{autocorr:.0%}"
+        
+        # CASE E: Fresh pattern just starting (1-2 same category at end)
+        if current_streak <= 2 and last_cat == 1:
+            logger.info(
+                f"[{symbol}] OBS PATTERN: FRESH STREAK — "
+                f"streak={current_streak}, autocorr={autocorr:.0%}, "
+                f"win_rate={win_rate:.0%} "
+                f"— LONG DURATION (7t) — let pattern develop"
+            )
+            return 7, f"fresh_streak_{current_streak}_develop"
+        
+        # CASE F: Default — moderate conditions, use standard 5t
+        logger.info(
+            f"[{symbol}] OBS PATTERN: DEFAULT — "
+            f"streak={current_streak}, autocorr={autocorr:.0%}, "
+            f"win_rate={win_rate:.0%}, alt={alternating_rate:.0%} "
+            f"— DEFAULT DURATION (5t)"
+        )
+        return 5, "default_moderate"
+    
+    def _finalize_observation(self, symbol: str, duration: int, reason: str):
+        """Finalize the observation phase and update the cached setup."""
+        self._observing[symbol] = False
+        
+        # Update the cached setup with the observed duration
+        setup = self._setup_cache.get(symbol)
+        if setup is not None:
+            setup.observation_complete = True
+            setup.observed_duration = max(MIN_DURATION, min(MAX_DURATION, duration)) if duration > 0 else 5
+            setup.obs_duration_reason = reason
+            
+            # If duration is 0, it means "skip trade" (alternating pattern)
+            if duration == 0:
+                setup.active = False
+                setup.reason = f"OBS_SKIP: {reason}"
+                logger.info(f"[{symbol}] OBSERVATION RESULT: SKIP — {reason}")
+            else:
+                # Update setup fields from observation analysis
+                if symbol in self._obs_digits and len(self._obs_digits[symbol]) >= 3:
+                    digits = self._obs_digits[symbol]
+                    if setup.direction == CONTRACT_TYPE_OVER:
+                        categories = [1 if d > setup.barrier else 0 for d in digits]
+                    else:
+                        categories = [1 if d < setup.barrier else 0 for d in digits]
+                    
+                    setup.obs_streak_length = self._get_current_streak(categories)
+                    setup.obs_autocorr = self._get_autocorrelation(categories)
+                    setup.obs_alternating_rate = 1.0 - setup.obs_autocorr
+                
+                logger.info(
+                    f"[{symbol}] OBSERVATION RESULT: DURATION={setup.observed_duration}t "
+                    f"({reason})"
+                )
+        
+        # Clean up observation state
+        self._obs_digits.pop(symbol, None)
+        self._obs_start_time.pop(symbol, None)
+    
+    @staticmethod
+    def _get_current_streak(categories: list[int]) -> int:
+        """Get the current streak length from the end of the list."""
+        if not categories:
+            return 0
+        last = categories[-1]
+        streak = 0
+        for i in range(len(categories) - 1, -1, -1):
+            if categories[i] == last:
+                streak += 1
+            else:
+                break
+        return streak
+    
+    @staticmethod
+    def _get_autocorrelation(categories: list[int]) -> float:
+        """Calculate autocorrelation (fraction of consecutive same-category pairs)."""
+        if len(categories) < 2:
+            return 0.5
+        same = sum(1 for i in range(1, len(categories)) if categories[i] == categories[i-1])
+        return same / (len(categories) - 1)
+    
     def get_observed_duration(self, symbol: str) -> int:
-        """v10: Always returns 5 — fixed duration."""
+        """Get the duration determined by observation. Returns 5 if not observed."""
+        setup = self._setup_cache.get(symbol)
+        if setup and setup.observation_complete:
+            return setup.observed_duration
         return 5
     
     def is_observing(self, symbol: str) -> bool:
-        """v10: Always returns False — no observation phase."""
-        return False
+        """Is this market currently in the observation phase?"""
+        return self._observing.get(symbol, False)
     
     def clear_observation(self, symbol: str):
-        """v10: No-op — observation phase disabled."""
-        pass
+        """Clear observation state for a market (e.g., after a trade)."""
+        self._observing.pop(symbol, False)
+        self._obs_digits.pop(symbol, None)
+        self._obs_start_time.pop(symbol, None)
+        self._obs_direction.pop(symbol, None)
+        self._obs_barrier.pop(symbol, None)
     
     # ─── Market Session Management ───
     

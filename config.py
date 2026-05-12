@@ -1,27 +1,22 @@
 """
-Deriv Over/Under Bot — Configuration v11
+Deriv Over/Under Bot — Configuration v12
 ==========================================
-Over 4 / Under 5 ONLY — Simple, Stable, Profitable.
+Over 4 / Under 5 ONLY + Smart Observation Phase for Duration.
 
-v10 FAILED because moderate barriers (Over 5, Over 6, Under 4, Under 6)
-still have too much variance. Over 5 has 40% natural prob, Over 6 has 30%.
-These are still lottery-ish — you need long winning streaks to profit.
+v11 was stable but rigid — always 5-tick duration regardless of pattern.
 
-v11 Strategy: "Over 4 / Under 5 Only"
-1. ONLY trade Over 4 (digit > 4) and Under 5 (digit < 5)
-   - Both have 50% natural probability — FAIR coin flip contracts
-   - ~95% payout rate — breakeven at 52.6% win rate
-   - Lowest variance of all digit contracts
-   - Even small frequency edges are profitable
-2. Adjusted thresholds for 50/50 contracts:
-   - z-score 2.0 minimum (we only test 2 barriers, not 17 — less multiple testing)
-   - 3% minimum EV (thin but positive — 95% payout means small edges work)
-   - 52% minimum confidence (must be above the 50% natural probability)
-   - 3-window agreement still required
-3. LESS Bayesian shrinkage (prior=50 instead of 100)
-   - For 50/50 contracts, the observed frequency is more reliable
-   - Shrinkage toward 50% is less needed since 50% IS the natural probability
-4. FIXED 5-tick duration
+v12 Strategy: "Observe First, Then Decide Duration"
+1. ONLY trade Over 4 (digit > 4) and Under 5 (digit < 5) [unchanged]
+2. Smart Observation Phase — after setup detected:
+   - Collect live ticks from the identified market
+   - Analyze digit streaks, autocorrelation, Markov transitions
+   - Choose duration based on observed pattern:
+     * Fresh streak starting → 7t (pattern will persist)
+     * Moderate autocorrelation → 5t (default)
+     * Long streak (3+ same category) → 3t (strike fast, about to break)
+     * No pattern / alternating → skip trade
+3. Same thresholds as v11 (z=2.0, EV=3%, confidence=52%)
+4. Less Bayesian shrinkage (prior=50)
 5. ML disagreement BLOCKS trades
 6. Market persistence — stay on one market while setup is good
 """
@@ -207,16 +202,17 @@ def estimate_payout_rate(natural_probability: float) -> float:
         return 0.0
     return (1.0 / natural_probability - 1.0) * (1.0 - PAYOUT_HOUSE_MARGIN)
 
-# ─── Duration (v10: FIXED at 5 ticks) ───
-# v9 had dynamic duration (2t-10t) which caused chaos — trades bounced
-# between 2t, 3t, 5t with no clear logic. The observation phase didn't help
-# because digit patterns don't have predictable "flip durations."
-# v10: Fixed at 5 ticks — simple, consistent, no observation phase needed.
-DYNAMIC_DURATION = False              # v10: DISABLED — fixed 5t duration
-CONTRACT_DURATION = 5                 # Fixed 5-tick duration
-MIN_DURATION = 5                      # v10: Always 5
-MAX_DURATION = 5                      # v10: Always 5
-DURATION_EXPLORATION_RATE = 0.0       # v10: No exploration
+# ─── Duration (v12: Smart Observation-Based) ───
+# v9 had dynamic duration (2t-10t) with epsilon-greedy bandit — chaos.
+# v10/v11 fixed at 5t — stable but rigid.
+# v12: OBSERVATION PHASE — after setup detected, collect a few live ticks,
+# analyze digit pattern (streaks, autocorrelation, Markov transitions),
+# then choose the optimal duration for THIS specific moment.
+DYNAMIC_DURATION = False              # Not using the old bandit optimizer
+CONTRACT_DURATION = 5                 # Default/fallback duration
+MIN_DURATION = 3                      # v12: Allow 3-7 ticks based on observation
+MAX_DURATION = 7                      # v12: Max 7 ticks (beyond that, pattern decays)
+DURATION_EXPLORATION_RATE = 0.0       # No random exploration
 
 # ─── Stake & Money ───
 INITIAL_BANKROLL = 100.0
@@ -247,12 +243,23 @@ MIN_SETUP_SCORE = 0.55           # v11: Minimum setup quality (was 0.70)
 # Wait for another good setup to appear.
 PROFIT_TARGET_PER_MARKET = 50.0   # $50 profit target per market session
 
-# ─── Observation Phase (v10: DISABLED — using fixed 5t duration) ───
-# v9's observation phase determined duration dynamically, but this caused
-# chaos (2t/3t/5t switching) and the flip-duration analysis was unreliable.
-# v10: Fixed 5-tick duration. Observation phase is skipped entirely.
-OBSERVATION_PERIOD_SEC = 0        # v10: No observation phase (was 25s)
-MIN_OBSERVATION_TICKS = 0         # v10: Not needed
+# ─── Observation Phase (v12: SMART — analyze live digits for duration) ───
+# After a setup is detected, the bot observes live ticks from the market.
+# It analyzes the digit pattern (streaks, autocorrelation, Markov transitions)
+# to determine the optimal contract duration.
+#
+# Pattern → Duration mapping:
+#   Fresh streak starting (1-2 same category) → 7t (pattern will persist)
+#   Moderate autocorrelation → 5t (default, balanced)
+#   Long streak (3+ same category) → 3t (strike fast, may break soon)
+#   No clear pattern / alternating → skip trade
+#
+OBSERVATION_ENABLED = True            # v12: Enable smart observation phase
+OBSERVATION_TICKS_TO_COLLECT = 8      # Collect 8 live ticks before deciding
+OBSERVATION_MAX_WAIT_SEC = 30         # Max seconds to wait for observation
+OBSERVATION_MIN_STREAK_FOR_SHORT = 3  # 3+ same-category streak → short duration
+OBSERVATION_MIN_AUTOCORR_FOR_MEDIUM = 0.55  # 55% autocorrelation → medium duration
+OBSERVATION_MAX_ALTERNATING_RATE = 0.7  # >70% alternating → skip trade
 
 # ─── Market Session (Persistence) ───
 # Stay on one market during a setup. Don't jump between markets.

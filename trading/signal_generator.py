@@ -1,17 +1,13 @@
 """
-Signal Generator (v6 — Conservative Edge Detection)
-====================================================
-v10: ML disagreement BLOCKS, confidence uses Bayesian-adjusted prob, fixed 5t.
+Signal Generator (v12 — Conservative Edge Detection + Smart Duration)
+======================================================================
+v12: Uses observed duration from smart observation phase (3t, 5t, or 7t).
+v10: ML disagreement BLOCKS, confidence uses Bayesian-adjusted prob.
 
-v6 Changes from v5:
-- Confidence = BAYESIAN-ADJUSTED observed probability (not raw)
-  Raw observed on Over 8 might be 40%, but Bayesian-adjusted is 30%
-  This prevents overconfident trading on noisy observations
-- ML disagreement now BLOCKS trades again (v9's 20% reduction was too weak)
-  On synthetic indices, we need EVERY confirmation we can get
-- EV uses Bayesian-adjusted probability (not raw observed)
-- Fixed 5-tick duration — no more 2t/3t/5t chaos
-- Higher minimums: 35% confidence, 8% EV
+Changes from v10:
+- Duration is now passed from the observation phase (not hardcoded 5)
+- Signal includes obs_duration_reason for debugging
+- All other logic unchanged (ML blocks, Bayesian confidence, Over 4/Under 5)
 """
 
 import time
@@ -219,16 +215,17 @@ class SignalGenerator:
             ev=ev,
         )
         
-        # v10: Fixed 5-tick duration
-        contract_duration = 5
+        # v12: Duration from observation phase (passed from market_worker)
+        contract_duration = duration
         
         dir_label = "Over" if direction == CONTRACT_TYPE_OVER else "Under"
+        obs_reason = setup.obs_duration_reason if setup.obs_duration_reason else "default"
         reason = (
             f"{dir_label}{barrier}: obs={setup.observed_prob:.1%} "
             f"adj={setup.adjusted_prob:.1%} (natural={setup.natural_prob:.0%}) "
             f"conf={confidence:.0%} EV={ev:+.1%} "
             f"payout={payout_rate:.1%} z={setup.z_score:.1f} "
-            f"dur={contract_duration}t "
+            f"dur={contract_duration}t({obs_reason}) "
             f"{ml_status} "
             f"setup={setup.setup_score:.2f} "
             f"stake=${stake:.2f}"

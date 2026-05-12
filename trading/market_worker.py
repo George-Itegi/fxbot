@@ -1,7 +1,8 @@
 """
-Market Worker — Per-Market State Encapsulation (v10)
+Market Worker — Per-Market State Encapsulation (v12)
 =====================================================
-Conservative Edge Detection — fixed 5t duration, no observation phase.
+Smart Observation Phase — observe live digits, determine optimal duration.
+Over 4 / Under 5 only, 3-7 tick duration based on digit pattern analysis.
 """
 
 import time
@@ -11,7 +12,8 @@ from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE,
                     TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
                     DRIFT_RETRAIN_ENABLED, DRIFT_RETRAIN_COOLDOWN,
                     CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
-                    DYNAMIC_BARRIERS)
+                    DYNAMIC_BARRIERS,
+                    OBSERVATION_ENABLED, MIN_DURATION, MAX_DURATION)
 from data.tick_aggregator import TickAggregator
 from data.feature_engine import FeatureEngine
 from models.online_learner import OverUnderModel
@@ -31,8 +33,17 @@ class MarketWorker:
     """
     Encapsulates all per-market components for one trading symbol.
     
-    v10: No observation phase, fixed 5t duration, conservative barriers only.
+    v12: Smart Observation Phase — after setup detected, observe live digits
+    to determine optimal contract duration (3t, 5t, or 7t).
+    
+    Flow:
+    1. Setup detected → Start observation phase
+    2. Collect live ticks → Analyze digit pattern
+    3. Pattern analysis → Determine duration (or skip if no pattern)
+    4. Generate signal with observed duration
+    
     The setup detector determines IF we should trade and in what direction.
+    The observation phase determines HOW LONG the contract should last.
     The ML model (Logistic Regression) is a CONFIRMATION signal.
     """
 
@@ -60,9 +71,10 @@ class MarketWorker:
 
         # Current setup state
         self._current_setup: Optional[Setup] = None
-        # v10: No observation phase — always ready
-        self._observation_started: bool = True
+        # v12: Observation phase state
+        self._observation_started: bool = False
         self._observation_complete: bool = True
+        self._observed_duration: int = 5  # Default, overridden by observation
 
         self.current_payout = 0.85
         self.trade_counter = 0
@@ -90,7 +102,10 @@ class MarketWorker:
         self._consecutive_same_dir_losses: int = 0
         self._loss_streak_cooldown_until: float = 0.0
 
-        logger.info(f"MarketWorker created: {symbol}, model={model_type}")
+        logger.info(
+            f"MarketWorker created: {symbol}, model={model_type}, "
+            f"observation={'ENABLED' if OBSERVATION_ENABLED else 'DISABLED'}"
+        )
 
     async def warmup(self, history: list):
         """Process historical ticks for warmup training."""
@@ -176,24 +191,67 @@ class MarketWorker:
                 label = 1 if tick.digit > OVER_BARRIER else 0
                 self.model.learn_one(features, label)
 
-            # ─── SETUP DETECTION (v10: PRIMARY DECISION) ───
+            # ─── SETUP DETECTION (PRIMARY DECISION) ───
             setup = self.setup_detector.evaluate(self.symbol, features)
             self._current_setup = setup
 
-            # v10: No observation phase — setup is immediately tradeable
-            # The old observation phase (25s watching) didn't help because
-            # digit patterns don't have predictable flip durations.
+            # ─── v12: OBSERVATION PHASE ───
+            # After setup is detected, observe live digits to determine duration
+            if OBSERVATION_ENABLED and setup.active:
+                # If not already observing, start observation
+                if not self.setup_detector.is_observing(self.symbol) and not self._observation_started:
+                    self.setup_detector.start_observation(
+                        self.symbol, setup.direction, setup.barrier
+                    )
+                    self._observation_started = True
+                    self._observation_complete = False
+                    # Feed the current tick to observation
+                    obs_done = self.setup_detector.observe_tick(self.symbol, tick.digit)
+                    if not obs_done:
+                        # Still collecting — no signal yet
+                        return None
+                
+                # If currently observing, feed the tick
+                elif self.setup_detector.is_observing(self.symbol):
+                    obs_done = self.setup_detector.observe_tick(self.symbol, tick.digit)
+                    if not obs_done:
+                        # Still collecting — no signal yet
+                        return None
+                
+                # Observation is complete — get the determined duration
+                if self._observation_started and not self.setup_detector.is_observing(self.symbol):
+                    self._observation_complete = True
+                    self._observed_duration = setup.observed_duration
+                    
+                    # If observation said skip (alternating pattern), don't trade
+                    if setup.obs_duration_reason.startswith("alternating") or not setup.active:
+                        logger.info(
+                            f"[{self.symbol}] OBSERVATION SKIP: {setup.obs_duration_reason} "
+                            f"— waiting for next setup"
+                        )
+                        self._reset_observation()
+                        return None
+            elif not OBSERVATION_ENABLED:
+                # Observation disabled — use default 5t
+                self._observed_duration = 5
+                self._observation_complete = True
 
             # ─── Check market session tradability ───
             if not self.setup_detector.is_market_tradable(self.symbol):
                 self._latest_signal = None
                 return None
 
+            # If setup is no longer active (may have changed during observation), skip
+            if not setup.active:
+                self._reset_observation()
+                self._latest_signal = None
+                return None
+
             # ML prediction (confirmation signal)
             prediction = self.model.predict(features)
 
-            # v10: Fixed 5-tick duration
-            duration = 5
+            # v12: Duration from observation (or default 5t)
+            duration = self._observed_duration
 
             # Periodic logging
             if self.live_tick_count % 100 == 0:
@@ -203,6 +261,13 @@ class MarketWorker:
                 
                 if setup.active:
                     ev_str = f"{setup.best_barrier_eval.ev:+.1%}" if setup.best_barrier_eval else "0"
+                    obs_info = ""
+                    if OBSERVATION_ENABLED and self._observation_complete:
+                        obs_info = (
+                            f" obs_streak={setup.obs_streak_length} "
+                            f"obs_autocorr={setup.obs_autocorr:.0%} "
+                            f"obs_reason={setup.obs_duration_reason}"
+                        )
                     logger.info(
                         f"[{self.symbol} {self.live_tick_count}t] "
                         f"setup={setup_score:.2f}({barrier_str}) "
@@ -210,13 +275,13 @@ class MarketWorker:
                         f"nat={setup.natural_prob:.0%} "
                         f"z={setup.z_score:.1f} EV={ev_str} "
                         f"pay={setup.payout_rate:.1%} "
-                        f"dur=5t"
+                        f"dur={duration}t{obs_info}"
                     )
                 else:
                     logger.info(
                         f"[{self.symbol} {self.live_tick_count}t] "
                         f"setup={setup_score:.2f}(NONE) "
-                        f"dur=5t "
+                        f"dur={duration}t "
                         f"payout={self.current_payout:.2%}"
                     )
 
@@ -229,7 +294,6 @@ class MarketWorker:
                 self._blocked_direction = None
 
             # Generate signal (setup + ML confirmation)
-            # v10: Use dynamic payout from setup (varies by barrier)
             dynamic_payout = setup.payout_rate if setup.active else self.current_payout
             signal = self.signal_gen.generate(
                 setup=setup,
@@ -247,6 +311,8 @@ class MarketWorker:
             if signal is not None:
                 self._latest_signal = signal
                 self._signal_time = time.time()
+                # Reset observation for next trade
+                self._reset_observation()
                 return signal
 
             self._latest_signal = None
@@ -255,6 +321,13 @@ class MarketWorker:
         except Exception as e:
             logger.error(f"{self.symbol} tick error: {e}", exc_info=True)
             return None
+
+    def _reset_observation(self):
+        """Reset observation state after a trade or skipped setup."""
+        self._observation_started = False
+        self._observation_complete = True
+        self._observed_duration = 5
+        self.setup_detector.clear_observation(self.symbol)
 
     def get_fresh_signal(self) -> Optional[Signal]:
         if self._latest_signal is None:
@@ -355,7 +428,7 @@ class MarketWorker:
         if not self.ws or not self.ws.is_connected:
             return
         try:
-            duration = 5  # v10: Fixed duration
+            duration = 5  # Default for initial payout fetch
             proposal = await self.ws.get_proposal(
                 symbol=self.symbol, contract_type="DIGITOVER",
                 barrier=OVER_BARRIER, stake=MIN_STAKE,
@@ -376,7 +449,7 @@ class MarketWorker:
         signal = self.get_fresh_signal()
         if signal is None:
             return 0.0
-        # v10: Use setup_score * EV as quality metric
+        # v12: Use setup_score * EV as quality metric
         # Higher setup_score = more reliable signal, higher EV = more profitable
         return signal.expected_value * signal.setup_score
 
@@ -386,6 +459,13 @@ class MarketWorker:
         drift_summary = self.drift_detector.summary()
         setup = self._current_setup
         session = self.setup_detector.get_session(self.symbol)
+        
+        # v12: Get observed duration from setup
+        observed_dur = 5
+        obs_reason = ""
+        if setup and OBSERVATION_ENABLED:
+            observed_dur = setup.observed_duration
+            obs_reason = setup.obs_duration_reason
         
         return {
             "symbol": self.symbol,
@@ -398,8 +478,10 @@ class MarketWorker:
             "model_accuracy": model_summary.get("accuracy", 0),
             "model_updates": model_summary.get("total_updates", 0),
             "drift_active": drift_summary.get("drift_active", False),
-            "best_duration": 5,  # v10: Always 5
+            "best_duration": observed_dur,  # v12: From observation
             "duration_unit": self._duration_unit,
+            "obs_duration_reason": obs_reason,  # v12: Why this duration
+            "observing": self.setup_detector.is_observing(self.symbol),  # v12: Currently observing?
             "setup_score": setup.setup_score if setup else 0,
             "setup_active": setup.active if setup else False,
             "setup_direction": setup.direction.replace("DIGIT","") if setup and setup.active else "NONE",
