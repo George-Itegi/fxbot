@@ -1,21 +1,14 @@
 """
-Setup Detector — Conservative Edge Detection (v10)
+Setup Detector — Over 4 / Under 5 Only (v11)
 ====================================================
-v9 FAILED: chased extreme barriers, caught noise as "edges."
+v10 FAILED: moderate barriers (Over 5, Over 6) still had too much variance.
 
-v10 fixes:
-1. BAYESIAN SHRINKAGE: observed prob is blended with natural prob
-   - Prevents chasing noise — if n=200, shrink 33% toward natural
-   - A 40% observed on Over 8 (10% natural) becomes 30%, not 40%
-2. MODERATE BARRIERS ONLY: Over 3-6, Under 4-7
-   - These have 30-60% natural prob — manageable variance
-   - Even without an edge, you win 30-60% of trades
-3. ALL 3 WINDOWS MUST AGREE (was 2/3)
-   - Reduces false positives from the multiple testing problem
-4. z-score threshold = 3.0 (was 1.3)
-   - 3-sigma = 99.7% confidence, not 80%
-5. Stricter setup score threshold: 0.70 (was 0.60)
-6. Trend misalignment penalty increased to 15% (was 10%)
+v11 fixes:
+1. ONLY Over 4 and Under 5 — 50% natural probability, ~95% payout
+2. Reduced Bayesian shrinkage (prior=50 instead of 100)
+3. z-score threshold = 2.0 (was 3.0)
+4. ALL 3 WINDOWS MUST AGREE
+5. Setup score threshold = 0.55 (was 0.70)
 """
 
 import math
@@ -118,12 +111,12 @@ class MarketSession:
 
 class SetupDetector:
     """
-    Detects and scores market setups — v10 Conservative Edge Detection.
-    
-    v10 Philosophy:
-    - Only test MODERATE barriers (Over 3-6, Under 4-7)
-    - Use BAYESIAN SHRINKAGE to prevent chasing noise
-    - Require z-score > 3.0 (3-sigma)
+    Detects and scores market setups — v11 Over 4 / Under 5 Only.
+
+    v11 Philosophy:
+    - ONLY test Over 4 and Under 5 (50% natural, ~95% payout)
+    - Use BAYESIAN SHRINKAGE (less aggressive, prior=50)
+    - Require z-score > 2.0 (2-sigma — sufficient for 2 barriers)
     - Require ALL 3 windows to agree
     - Trend is a SOFT BIAS (boost/penalty), not a requirement
     """
@@ -132,7 +125,7 @@ class SetupDetector:
         self._sessions: dict[str, MarketSession] = {}
         self._setup_cache: dict[str, Setup] = {}
         
-        logger.info("SetupDetector v10 initialized: conservative edge detection + Bayesian shrinkage")
+        logger.info("SetupDetector v11 initialized: Over 4 / Under 5 only, z=2.0, Bayesian shrinkage prior=50")
     
     def evaluate(self, symbol: str, features: dict) -> Setup:
         """
@@ -420,21 +413,38 @@ class SetupDetector:
         )
     
     def _evaluate_fixed_barriers(self, features: dict, trend_regime: int) -> Optional[BarrierEval]:
-        """Fallback: evaluate only Over 4 / Under 5 (legacy mode)."""
+        """v11: Evaluate ONLY Over 4 and Under 5 — pick the one with better EV."""
         best_eval = None
         best_ev = -1.0
+        all_evals = []
         
-        # Over 4
+        # Over 4 (50% natural probability, ~95% payout)
         over4 = self._evaluate_single_barrier(CONTRACT_TYPE_OVER, OVER_BARRIER, 0.50, features)
-        if over4 and over4.is_significant and over4.ev > best_ev:
-            best_ev = over4.ev
-            best_eval = over4
+        if over4 is not None:
+            all_evals.append(over4)
+            if over4.is_significant and over4.ev > 0 and over4.ev > best_ev:
+                best_ev = over4.ev
+                best_eval = over4
         
-        # Under 5
+        # Under 5 (50% natural probability, ~95% payout)
         under5 = self._evaluate_single_barrier(CONTRACT_TYPE_UNDER, UNDER_BARRIER, 0.50, features)
-        if under5 and under5.is_significant and under5.ev > best_ev:
-            best_ev = under5.ev
-            best_eval = under5
+        if under5 is not None:
+            all_evals.append(under5)
+            if under5.is_significant and under5.ev > 0 and under5.ev > best_ev:
+                best_ev = under5.ev
+                best_eval = under5
+        
+        # Log what we found
+        if all_evals:
+            for e in all_evals:
+                dir_label = 'O' if e.contract_type == CONTRACT_TYPE_OVER else 'U'
+                sig_label = 'YES' if e.is_significant else 'NO'
+                logger.debug(
+                    f"  {dir_label}{e.barrier}: obs={e.observed_prob:.1%} "
+                    f"adj={e.adjusted_prob:.1%} EV={e.ev:+.1%} "
+                    f"z={e.z_score:.1f} sig={sig_label} "
+                    f"windows={e.window_agreement}/3"
+                )
         
         return best_eval
     

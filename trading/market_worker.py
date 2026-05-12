@@ -72,7 +72,7 @@ class MarketWorker:
 
         self._latest_signal: Optional[Signal] = None
         self._signal_time: float = 0.0
-        self._signal_freshness_sec = 5.0
+        self._signal_freshness_sec = 15.0  # v11: Increased from 5s — signals stay fresh longer for market persistence
 
         # Per-tick live learning
         self._tick_learn_enabled = TICK_LEARN_ENABLED

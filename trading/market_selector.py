@@ -58,7 +58,8 @@ class MarketSelector:
     """
 
     def __init__(self, epsilon: float = None):
-        self.epsilon = epsilon or META_SELECTOR_EXPLORATION_RATE
+        # v11: epsilon set to 0 — no random exploration
+        self.epsilon = 0.0  # NO random market switching
         self._stats: dict[str, MarketStats] = {}
         self._total_selections = 0
         self._exploration_count = 0

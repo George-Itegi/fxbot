@@ -1,30 +1,29 @@
 """
-Deriv Over/Under Bot — Configuration v10
+Deriv Over/Under Bot — Configuration v11
 ==========================================
-Conservative Edge Detection — trade RARELY but RELIABLY.
+Over 4 / Under 5 ONLY — Simple, Stable, Profitable.
 
-v9 FAILED because it chased extreme barriers (Over 7/8). These are lottery tickets:
-  - Over 8 has 20% natural prob — you LOSE 80% of trades
-  - The "observed probability" (30-40%) was just noise, not a real edge
-  - On 200-tick samples, z=1.3 catches ~10% random fluctuations as "significant"
-  - With 17 barriers tested, you ALWAYS find one that looks good by pure chance
+v10 FAILED because moderate barriers (Over 5, Over 6, Under 4, Under 6)
+still have too much variance. Over 5 has 40% natural prob, Over 6 has 30%.
+These are still lottery-ish — you need long winning streaks to profit.
 
-v10 ROOT CAUSE FIX: Multiple testing problem + noise chasing.
-  - Testing 17 barriers at z>1.3 means ~170% chance of finding a false positive
-  - Extreme barriers amplify noise because the EV formula multiplies by the payout
-  - The observed probability is unreliable — it reverts to natural probability immediately
-
-v10 Strategy: "Conservative Edge Detection"
-1. RESTRICT barriers to moderate range (Over 3-6, Under 4-7)
-   These have 30-60% natural prob — even without an edge, you win 30-60% of trades
-2. BAYESIAN SHRINKAGE: blend observed prob with natural prob based on sample size
-   This prevents the bot from chasing noise — if n=200, shrink 50% toward natural
-3. MUCH stricter z-score: 3.0 minimum (was 1.3 — caught 10% of random fluctuations!)
-4. ALL 3 windows must agree (was 2/3)
-5. FIXED 5-tick duration — no more chaos between 2t/3t/5t
-6. ML disagreement BLOCKS trades (was 20% reduction — not strong enough)
-7. Higher minimums: 35% confidence, 8% EV, 70% setup score
-8. Fewer trades, higher quality — aim for 60%+ win rate instead of 13%
+v11 Strategy: "Over 4 / Under 5 Only"
+1. ONLY trade Over 4 (digit > 4) and Under 5 (digit < 5)
+   - Both have 50% natural probability — FAIR coin flip contracts
+   - ~95% payout rate — breakeven at 52.6% win rate
+   - Lowest variance of all digit contracts
+   - Even small frequency edges are profitable
+2. Adjusted thresholds for 50/50 contracts:
+   - z-score 2.0 minimum (we only test 2 barriers, not 17 — less multiple testing)
+   - 3% minimum EV (thin but positive — 95% payout means small edges work)
+   - 52% minimum confidence (must be above the 50% natural probability)
+   - 3-window agreement still required
+3. LESS Bayesian shrinkage (prior=50 instead of 100)
+   - For 50/50 contracts, the observed frequency is more reliable
+   - Shrinkage toward 50% is less needed since 50% IS the natural probability
+4. FIXED 5-tick duration
+5. ML disagreement BLOCKS trades
+6. Market persistence — stay on one market while setup is good
 """
 
 import os
@@ -153,61 +152,36 @@ UNDER_BARRIER = 5             # Default fallback (overridden by dynamic barrier 
 CONTRACT_DURATION = 5          # v10: FIXED at 5 ticks
 CONTRACT_DURATION_UNIT = "t"
 
-# ─── Dynamic Barrier Selection (v10 — CONSERVATIVE RANGE ONLY) ───
-# v9 tested ALL barriers (Over 0-8, Under 1-9) and chased extreme ones.
-# This was WRONG because:
-#   - Testing 17 barriers creates a massive multiple testing problem
-#   - Extreme barriers (Over 7/8) amplify noise via the payout multiplier
-#   - The observed probability on extreme barriers is unreliable
+# ─── Barrier Selection (v11 — OVER 4 / UNDER 5 ONLY) ───
+# v10 tested moderate barriers (Over 3-6, Under 4-7) but even Over 5 (40% natural)
+# and Over 6 (30% natural) have too much variance for consistent profits.
 #
-# v10: Only test MODERATE barriers where:
-#   - Natural probability is 30-60% (you win 30-60% even without an edge)
-#   - Payout is 65-233% (enough to profit, not so high it's a lottery)
-#   - Variance is manageable (you survive long enough to profit from real edges)
+# v11: ONLY Over 4 and Under 5. These are the ONLY contracts where:
+#   - Natural probability is 50% (fair coin flip)
+#   - Payout is ~95% (breakeven at 52.6%)
+#   - Variance is LOW — you win roughly half your trades
+#   - Even a small frequency edge (3-5%) is profitable
 #
-# Over 3 (60% natural, ~59% payout): Moderate prob, low payout
-# Over 4 (50% natural, ~95% payout): Balanced
-# Over 5 (40% natural, ~143% payout): Good balance of prob/payout
-# Over 6 (30% natural, ~233% payout): Lower prob, higher payout
-# Under 4 (40% natural, ~143% payout): Mirror of Over 5
-# Under 5 (50% natural, ~95% payout): Mirror of Over 4
-# Under 6 (60% natural, ~59% payout): Mirror of Over 3
-# Under 7 (70% natural, ~37% payout): High prob, very low payout
-DYNAMIC_BARRIERS = True                # Enable dynamic barrier selection
-BARRIER_OVER_OPTIONS = [3, 4, 5, 6]    # v10: MODERATE only (was 0-8)
-BARRIER_UNDER_OPTIONS = [4, 5, 6, 7]   # v10: MODERATE only (was 1-9)
-MIN_BARRIER_PROBABILITY = 0.25         # v10: Minimum 25% natural prob (was 8%)
-                                        # Over 7 (20%) = excluded, Over 6 (30%) = allowed
-MAX_BARRIER_PROBABILITY = 0.75         # v10: Maximum 75% natural prob (was 70%)
+# Over 4: wins if digit > 4 (digits 5,6,7,8,9) = 50% natural, ~95% payout
+# Under 5: wins if digit < 5 (digits 0,1,2,3,4) = 50% natural, ~95% payout
+DYNAMIC_BARRIERS = False               # v11: DISABLED — only Over 4 / Under 5
+BARRIER_OVER_OPTIONS = [4]             # v11: ONLY Over 4
+BARRIER_UNDER_OPTIONS = [5]            # v11: ONLY Under 5
+MIN_BARRIER_PROBABILITY = 0.45         # v11: Only ~50% natural prob barriers
+MAX_BARRIER_PROBABILITY = 0.55         # v11: Only ~50% natural prob barriers
 PAYOUT_HOUSE_MARGIN = 0.046            # Deriv's house margin (~4.6% based on observed Over 4 payout)
-MIN_EV_FOR_TRADE = 0.08                # v10: Minimum 8% EV (was 5% — too low, caught noise trades)
+MIN_EV_FOR_TRADE = 0.03                # v11: 3% minimum EV (was 8% — too strict for 95% payout contracts)
 
-# ─── Bayesian Shrinkage (v10 — THE KEY FIX) ───
-# Instead of using the raw observed probability (which is noisy), blend it
-# with the natural probability using Bayesian shrinkage:
-#   adjusted_prob = (n * observed + k * natural) / (n + k)
-#
-# Where n = sample size and k = prior strength.
-# With n=200 (medium window) and k=100:
-#   adjusted_prob = (200 * observed + 100 * natural) / 300
-#   = 67% weight on observed, 33% weight on natural
-#
-# This means: even if the observed probability says 40% on Over 8 (10% natural),
-# the adjusted probability would be (200*0.40 + 100*0.10) / 300 = 0.30
-# And the EV would be 0.30 * 9.59 - 1 = +1.88 — wait, that's still positive!
-# BUT: the z-score threshold of 3.0 would prevent this from being selected
-# because a jump from 10% to 40% on 200 ticks has z = (0.40-0.10)/sqrt(0.10*0.90/200) = 14.1
-# which IS very significant... but with ONLY 8 moderate barriers, the
-# multiple testing problem is much reduced, so z=3.0 is more reliable.
-#
-# More importantly: for moderate barriers like Over 5 (40% natural),
-# if we observe 50%, adjusted = (200*0.50 + 100*0.40)/300 = 0.467
-# EV = 0.467 * 2.43 - 1 = +0.135 = 13.5% — reasonable.
-# And Over 5 actually wins 40% of the time, so even if the edge is noise,
-# you still win 40% (not 10% like Over 8).
-BAYESIAN_SHRINKAGE_PRIOR = 100          # v10: Shrinkage prior strength
-                                        # With n=200: 67% observed, 33% natural
-                                        # With n=500: 83% observed, 17% natural
+# ─── Bayesian Shrinkage (v11 — REDUCED for 50/50 contracts) ───
+# For Over 4/Under 5 (50% natural prob), the observed frequency is more
+# reliable because 50% is the CENTER of the distribution — less sampling noise.
+# v11: Reduced prior from 100 to 50 — less aggressive shrinkage.
+# With n=200 and k=50: 80% observed, 20% natural
+# Example: Over 4 with 55% observed -> adjusted = (200*0.55 + 50*0.50)/250 = 0.54
+#   EV = 0.54 * 1.95 - 1 = 0.053 = 5.3% edge
+BAYESIAN_SHRINKAGE_PRIOR = 50           # v11: Less shrinkage for 50/50 contracts
+                                        # With n=200: 80% observed, 20% natural
+                                        # With n=500: 91% observed, 9% natural
 
 # ─── Natural Probabilities for Barriers ───
 # Over B wins if digit > B. Under B wins if digit < B.
@@ -251,30 +225,22 @@ DEFAULT_STAKE = 0.35
 MAX_STAKE = 5.0
 
 # ─── Signal Thresholds ───
-# v10: MUCH stricter than v9. v9 traded at 13% confidence with z=1.3 — pure gambling.
-# z=1.3 catches ~10% of random fluctuations as "significant."
-# z=3.0 catches only 0.3% — much more likely to be a real edge.
-# On synthetic indices, genuine edges are RARE. Trade less, win more.
-MIN_CONFIDENCE = 0.35           # v10: Minimum 35% observed win probability (was 12%!)
-MIN_EDGE_THRESHOLD = 0.08       # v10: Minimum 8% EV (was 5%)
-MIN_FREQ_EDGE_ZSCORE = 3.0      # v10: 3-sigma (99.7% confidence) — was 1.3 (80% = noise!)
-                                 # z=3.0 means the observed edge is VERY unlikely to be random
+# v11: Calibrated for Over 4 / Under 5 ONLY (50% natural, ~95% payout).
+# Since we only test 2 barriers, the multiple testing problem is minimal.
+# z=2.0 (95% confidence) is sufficient — we're not data-mining across 17 options.
+MIN_CONFIDENCE = 0.52           # v11: Must be above 50% natural — need a real edge
+MIN_EDGE_THRESHOLD = 0.03       # v11: Minimum 3% EV
+MIN_FREQ_EDGE_ZSCORE = 2.0      # v11: 2-sigma (95% confidence) — was 3.0
 
 # ─── Digit Frequency Direction (PRIMARY DECISION) ───
-# v10: Only moderate barriers + ALL 3 windows must agree.
-# v9 tested 17 barriers with 2/3 window agreement — massive false positive rate.
-# With 8 moderate barriers and z=3.0, we still need all windows to confirm.
-MIN_DIGIT_FREQUENCY_EDGE = 0.03   # v10: Minimum 3% ABSOLUTE edge (was 1% — too loose)
-MIN_DIGIT_FREQUENCY_EDGE_RELATIVE = 0.15  # v10: Minimum 15% RELATIVE edge (was 10%)
-                                    # For Over 6 (30%): need 4.5% absolute -> obs > 34.5%
-                                    # For Over 4 (50%): need 7.5% absolute -> obs > 57.5%
-                                    # For Over 5 (40%): need 6% absolute -> obs > 46%
-DIGIT_FREQ_WINDOW_AGREEMENT = 3   # v10: ALL 3 windows must agree (was 2 — too many false signals)
+# v11: Only Over 4 / Under 5 + ALL 3 windows must agree.
+MIN_DIGIT_FREQUENCY_EDGE = 0.03   # v11: Minimum 3% ABSOLUTE edge
+MIN_DIGIT_FREQUENCY_EDGE_RELATIVE = 0.06  # v11: Minimum 6% RELATIVE edge (3%/50% = 6%)
+DIGIT_FREQ_WINDOW_AGREEMENT = 3   # v11: ALL 3 windows must agree
 
 # ─── Setup Quality ───
-# v10: Raised to 0.70 — only trade when we have strong evidence.
-# v9's 0.60 threshold allowed too many weak setups through.
-MIN_SETUP_SCORE = 0.70           # v10: Minimum setup quality (was 0.60)
+# v11: Lowered to 0.55 since Over 4/Under 5 have manageable variance.
+MIN_SETUP_SCORE = 0.55           # v11: Minimum setup quality (was 0.70)
 
 # ─── Profit Target Per Market ───
 # After making this much profit on one market, STOP trading it.
@@ -292,8 +258,8 @@ MIN_OBSERVATION_TICKS = 0         # v10: Not needed
 # Stay on one market during a setup. Don't jump between markets.
 # Only switch when: setup breaks, profit target reached, or no trade happening.
 # v8.1: Increased idle timeout — good setups deserve patience.
-MARKET_SESSION_MAX_IDLE_SEC = 180  # After 180s with no trade on current market, allow switch
-MARKET_STICKY_AFTER_TRADE = True   # v8.1: After trading a market, keep trading it while setup is good
+MARKET_SESSION_MAX_IDLE_SEC = 300  # v11: 5 min idle before switching (was 3 min)
+MARKET_STICKY_AFTER_TRADE = True   # Stay on market after trading it
 
 # ─── ML Confirmation Model ───
 # v10: ML disagreement now BLOCKS trades again.
@@ -311,18 +277,18 @@ AGREEMENT_WEIGHT = 1.0                        # Always 1.0 with single model
 # ─── Forced Trade (strong setup) ───
 # A forced trade happens when the setup is VERY strong (setup score >= 0.85).
 # v10: Much harder to force without ML — need 85% setup + 35% confidence + 8% EV.
-FORCE_TRADE_MIN_CONFIDENCE = 0.35   # v10: Aligned with MIN_CONFIDENCE
-FORCE_TRADE_MIN_EV = 0.08           # v10: Aligned with MIN_EV_FOR_TRADE
-FORCE_TRADE_MIN_SETUP_SCORE = 0.85  # v10: Must be VERY strong to force without ML
+FORCE_TRADE_MIN_CONFIDENCE = 0.52   # v11: Must be above 50% natural
+FORCE_TRADE_MIN_EV = 0.03           # v11: Aligned with MIN_EV_FOR_TRADE
+FORCE_TRADE_MIN_SETUP_SCORE = 0.75  # v11: Strong setup to force without ML
 
 # ─── Trend Setting (v10: SOFT BIAS — not required, but helpful) ───
 # On synthetic indices, price trend has NO causal relationship with digit distribution.
 # However, trend alignment with digit frequency is a nice-to-have confirmation.
 # v10: Trend is a SOFT BIAS — it boosts/penalizes but never blocks a strong freq signal.
 TREND_REQUIRED = False               # Trend is NOT required (digit freq is primary)
-TREND_SLOPE_TSTAT_THRESHOLD = 3.0    # 3-sigma for trend detection
-TREND_CONFIDENCE_BOOST = 0.03        # v10: Small boost when trend aligns (was 5%)
-TREND_MISALIGN_PENALTY = 0.15        # v10: Larger penalty when trend opposes (was 10%)
+TREND_SLOPE_TSTAT_THRESHOLD = 2.0    # v11: 2-sigma for trend
+TREND_CONFIDENCE_BOOST = 0.02        # v11: Small boost when trend aligns
+TREND_MISALIGN_PENALTY = 0.10        # v11: Moderate penalty when trend opposes
 TREND_CONFIDENCE_REDUCTION = 0.05    # Legacy
 TREND_SIGNAL_SCORE_REDUCTION = 0.05  # Legacy
 
@@ -330,13 +296,13 @@ TREND_SIGNAL_SCORE_REDUCTION = 0.05  # Legacy
 # During martingale recovery, the bot MUST stay on the SAME market.
 # No switching markets during recovery — the setup was good on THAT market.
 # v10: Much stricter — same as regular thresholds.
-MARTINGALE_MIN_CONFIDENCE = 0.35   # v10: Same as MIN_CONFIDENCE (was 12%!)
-MARTINGALE_MIN_SETUP_SCORE = 0.70  # v10: Same as MIN_SETUP_SCORE (was 0.60)
+MARTINGALE_MIN_CONFIDENCE = 0.50   # v11: Slightly relaxed for recovery (was 35%)
+MARTINGALE_MIN_SETUP_SCORE = 0.50  # v11: Relaxed for martingale recovery (was 0.70)
 MARTINGALE_SAME_MARKET = True      # MUST recover on the same market where loss occurred
-MARTINGALE_MAX_STEPS = 2           # v10: Only 2 recovery steps (3 was too risky)
+MARTINGALE_MAX_STEPS = 2           # Max 2 recovery steps
 MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
-MIN_TRADE_INTERVAL_SEC = 15   # v10: Raised from 10s — even fewer trades, higher quality
+MIN_TRADE_INTERVAL_SEC = 10   # v11: 10s between trades (was 15s)
 
 # ─── Multi-Trade Mode ───
 # When True, multiple markets can trade simultaneously (each still limited to 1 trade).
