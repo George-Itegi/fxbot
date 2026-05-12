@@ -98,7 +98,10 @@ class DerivBot:
         logger.info(f"  Duration:   1-10t (dynamic per market)")
         logger.info("")
         logger.info("  Martingale: 2x on loss (max 5 steps, $50 cap)")
+        logger.info("  Martingale gate: 80%+ confidence AND 100% agreement")
+        logger.info(f"  Min confidence: {config.MIN_CONFIDENCE:.0%} (normal), {max(0.50, config.MIN_CONFIDENCE - config.TREND_CONFIDENCE_REDUCTION):.0%} (trend-aligned)")
         logger.info("  Force trade: YES when 100% agree + conf >= 60% + EV > 0")
+        logger.info(f"  Trend bias: {config.TREND_CONFIDENCE_REDUCTION:.0%} lower threshold for trend-aligned trades (windows: 50, 200)")
         if ALLOW_MULTIPLE_TRADES:
             logger.info(f"  Multi-trade: UP TO {MAX_CONCURRENT_TRADES} markets simultaneously")
         else:

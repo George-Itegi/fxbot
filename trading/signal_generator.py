@@ -18,7 +18,9 @@ from config import (MIN_CONFIDENCE, MIN_EDGE_THRESHOLD, OVER_BARRIER,
                     MIN_TRADE_INTERVAL_SEC, MAX_DAILY_TRADES,
                     DYNAMIC_DURATION, FORCE_TRADE_MIN_CONFIDENCE,
                     FORCE_TRADE_MIN_EV, MIN_SIGNAL_SCORE,
-                    MARTINGALE_MIN_CONFIDENCE, MARTINGALE_MIN_AGREEMENT)
+                    MARTINGALE_MIN_CONFIDENCE, MARTINGALE_MIN_AGREEMENT,
+                    TREND_SLOPE_TSTAT_THRESHOLD, TREND_CONFIDENCE_REDUCTION,
+                    TREND_SIGNAL_SCORE_REDUCTION)
 from models.online_learner import Prediction
 from utils.logger import setup_logger
 
@@ -57,6 +59,12 @@ class SignalGenerator:
     - Dynamic contract duration via DurationOptimizer
     - Model agreement score from ensemble
     - Enhanced signal reason logging
+    
+    v3 additions:
+    - Trend bias: lower confidence threshold for trend-aligned trades
+    - Uptrend → easier to trade Over; Downtrend → easier to trade Under
+    - Ranging markets trade normally (no penalty, no restriction)
+    - This is a BIAS, not a gate — counter-trend trades still happen normally
     """
     
     def __init__(self, duration_optimizer=None, dynamic_barriers=True,
@@ -186,10 +194,13 @@ class SignalGenerator:
                                           agreement=prediction.model_agreement,
                                           ev=ev)
             
+            # Check trend for logging context (not used for gating — forced trades always go through)
+            tr = features.get("trend_regime", 0)
+            trend_ctx = f", TREND={'UPTREND' if tr == 1 else 'DOWNTREND' if tr == -1 else 'ranging'}" if tr != 0 else ""
             reason = (
                 f"FORCED (100% AGREEMENT): {direction.replace('DIGIT', '').title()} "
                 f"prob={confidence:.2%}, EV={ev:+.3f}, payout={payout:.0%}, "
-                f"dur={duration}t, agree=100%, stake=${stake:.2f}"
+                f"dur={duration}t, agree=100%, stake=${stake:.2f}{trend_ctx}"
             )
             
             signal = Signal(
@@ -218,8 +229,42 @@ class SignalGenerator:
             self._skip("model_drift")
             return None
         
-        # Check minimum confidence
-        if prediction.confidence < MIN_CONFIDENCE:
+        # ─── TREND BIAS ───
+        # Linear regression slope detects market trend direction.
+        # When a trend is detected, lower confidence threshold for
+        # trend-aligned trades. This is a BIAS, not a restriction:
+        # - Uptrend → easier to trade Over (lower confidence needed)
+        # - Downtrend → easier to trade Under (lower confidence needed)
+        # - Ranging → no change (trade normally)
+        # Counter-trend trades are NOT blocked — they just use normal thresholds.
+        trend_regime = features.get("trend_regime", 0)   # 1=up, -1=down, 0=ranging
+        tstat_200 = features.get("slope_tstat_200", 0.0)
+        tstat_50 = features.get("slope_tstat_50", 0.0)
+        
+        # Is the prediction trend-aligned?
+        # Uptrend + predicting Over = aligned. Downtrend + predicting Under = aligned.
+        is_trend_aligned = False
+        trend_label = "ranging"
+        if trend_regime == 1 and prediction.prob_over > prediction.prob_under:
+            is_trend_aligned = True
+            trend_label = "UPTREND"
+        elif trend_regime == -1 and prediction.prob_under > prediction.prob_over:
+            is_trend_aligned = True
+            trend_label = "DOWNTREND"
+        elif trend_regime == 1:
+            trend_label = "UPTREND"
+        elif trend_regime == -1:
+            trend_label = "DOWNTREND"
+        
+        # Lower confidence threshold for trend-aligned predictions
+        effective_min_confidence = MIN_CONFIDENCE
+        effective_signal_score = MIN_SIGNAL_SCORE
+        if is_trend_aligned:
+            effective_min_confidence = max(0.50, MIN_CONFIDENCE - TREND_CONFIDENCE_REDUCTION)
+            effective_signal_score = max(0.50, MIN_SIGNAL_SCORE - TREND_SIGNAL_SCORE_REDUCTION)
+        
+        # Check minimum confidence (with trend bias applied)
+        if prediction.confidence < effective_min_confidence:
             self._skip("low_confidence")
             return None
         
@@ -246,8 +291,11 @@ class SignalGenerator:
         # 100% agree at 72% confidence → score = 0.72 → TRADE
         # 100% agree at 61% confidence → score = 0.61 → SKIP (below 0.65)
         # 67% agree at 70% confidence → score = 0.47 → SKIP
+        #
+        # Trend bias lowers the signal_score threshold for trend-aligned trades:
+        # Uptrend + Over at 67% agree × 90% conf = 0.60 → passes 0.60 threshold
         signal_score = prediction.confidence * prediction.model_agreement
-        if signal_score < MIN_SIGNAL_SCORE:
+        if signal_score < effective_signal_score:
             self._skip("low_signal_score")
             return None
         
@@ -258,6 +306,16 @@ class SignalGenerator:
         ev_over = prediction.prob_over * payout - prediction.prob_under * 1.0
         ev_under = prediction.prob_under * payout - prediction.prob_over * 1.0
         
+        # ─── Direction-specific confidence thresholds ───
+        # In an uptrend, Over trades need less confidence. In a downtrend,
+        # Under trades need less confidence. Counter-trend uses normal threshold.
+        over_min_conf = MIN_CONFIDENCE
+        under_min_conf = MIN_CONFIDENCE
+        if trend_regime == 1:   # Uptrend
+            over_min_conf = max(0.50, MIN_CONFIDENCE - TREND_CONFIDENCE_REDUCTION)
+        elif trend_regime == -1:  # Downtrend
+            under_min_conf = max(0.50, MIN_CONFIDENCE - TREND_CONFIDENCE_REDUCTION)
+        
         # ─── Select Contract Duration ───
         if self._duration_optimizer and DYNAMIC_DURATION:
             duration = self._duration_optimizer.select_duration()
@@ -266,17 +324,18 @@ class SignalGenerator:
         
         signal = None
         
-        if ev_over > MIN_EDGE_THRESHOLD and prediction.prob_over >= MIN_CONFIDENCE:
+        if ev_over > MIN_EDGE_THRESHOLD and prediction.prob_over >= over_min_conf:
             kelly = self._kelly_fraction(prediction.prob_over, payout)
             stake = self._calculate_stake(kelly, bankroll,
                                           confidence=prediction.prob_over,
                                           agreement=prediction.model_agreement,
                                           ev=ev_over)
+            trend_info = f", TREND={trend_label}" if trend_regime != 0 else ""
             reason = (
                 f"Over: prob={prediction.prob_over:.2%}, "
                 f"EV={ev_over:+.3f}, payout={payout:.0%}, "
                 f"dur={duration}t, agree={prediction.model_agreement:.0%}, "
-                f"stake=${stake:.2f}"
+                f"stake=${stake:.2f}{trend_info}"
             )
             signal = Signal(
                 direction=CONTRACT_TYPE_OVER,
@@ -292,17 +351,18 @@ class SignalGenerator:
                 model_agreement=prediction.model_agreement,
             )
         
-        elif ev_under > MIN_EDGE_THRESHOLD and prediction.prob_under >= MIN_CONFIDENCE:
+        elif ev_under > MIN_EDGE_THRESHOLD and prediction.prob_under >= under_min_conf:
             kelly = self._kelly_fraction(prediction.prob_under, payout)
             stake = self._calculate_stake(kelly, bankroll,
                                           confidence=prediction.prob_under,
                                           agreement=prediction.model_agreement,
                                           ev=ev_under)
+            trend_info = f", TREND={trend_label}" if trend_regime != 0 else ""
             reason = (
                 f"Under: prob={prediction.prob_under:.2%}, "
                 f"EV={ev_under:+.3f}, payout={payout:.0%}, "
                 f"dur={duration}t, agree={prediction.model_agreement:.0%}, "
-                f"stake=${stake:.2f}"
+                f"stake=${stake:.2f}{trend_info}"
             )
             signal = Signal(
                 direction=CONTRACT_TYPE_UNDER,

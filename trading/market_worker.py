@@ -176,6 +176,13 @@ class MarketWorker:
                 blocked_info = ""
                 if self._blocked_direction and time.time() < self._blocked_until:
                     blocked_info = f" BLOCKED={self._blocked_direction}"
+                # Trend info from features
+                trend_regime = features.get("trend_regime", 0)
+                tstat_200 = features.get("slope_tstat_200", 0.0)
+                trend_info = ""
+                if trend_regime != 0:
+                    trend_dir = "UP" if trend_regime == 1 else "DOWN"
+                    trend_info = f" trend={trend_dir}(t={tstat_200:.1f})"
                 logger.info(
                     f"[{self.symbol} {self.live_tick_count}t] "
                     f"prob_over={prediction.prob_over:.3f} "
@@ -184,6 +191,7 @@ class MarketWorker:
                     f"acc={model_summary['accuracy']:.1f}% "
                     f"dur={dur_rec['recommended_duration']}{self._duration_unit} "
                     f"payout={self.current_payout:.2%}"
+                    f"{trend_info}"
                     f"{blocked_info}"
                 )
 

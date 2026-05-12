@@ -152,7 +152,7 @@ DEFAULT_STAKE = 0.35
 MAX_STAKE = 5.0
 
 # ─── Signal Thresholds ───
-MIN_CONFIDENCE = 0.56
+MIN_CONFIDENCE = 0.60          # Raised from 0.56 — models must be meaningfully confident
 MIN_EDGE_THRESHOLD = 0.01
 
 # ─── Confidence-Weighted Agreement ───
@@ -172,6 +172,17 @@ AGREEMENT_WEIGHT = 1.0                        # Full weight on agreement in scor
 # All models must have confidence >= this threshold to force a trade.
 FORCE_TRADE_MIN_CONFIDENCE = 0.60   # 60% — models must be meaningfully confident
 FORCE_TRADE_MIN_EV = 0.0           # EV must be positive to force a trade
+
+# ─── Trend Bias ───
+# Linear regression slope on price detects market trend direction.
+# When a trend is detected, lower confidence threshold for trend-aligned trades.
+# Uptrend → easier to trade Over (lower confidence needed)
+# Downtrend → easier to trade Under (lower confidence needed)
+# Ranging → no change (trade normally with no penalty)
+# This is a BIAS, not a restriction — counter-trend trades are NOT blocked.
+TREND_SLOPE_TSTAT_THRESHOLD = 2.0    # t-statistic threshold for "significant" trend
+TREND_CONFIDENCE_REDUCTION = 0.05    # Lower confidence by 5% for trend-aligned trades
+TREND_SIGNAL_SCORE_REDUCTION = 0.05  # Lower signal_score threshold for trend-aligned trades
 
 # ─── Martingale Confidence Gate ───
 # During martingale recovery, the model must be MUCH more confident to double down.

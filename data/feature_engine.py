@@ -118,6 +118,9 @@ class FeatureEngine:
         # ─── 9. Digit-Centric Features ───
         features.update(self._digit_centric_features())
         
+        # ─── 10. Trend Slope Features ───
+        features.update(self._trend_features())
+        
         self.last_features = features
         return features
     
@@ -638,6 +641,102 @@ class FeatureEngine:
         
         return features
     
+    def _trend_features(self) -> dict:
+        """
+        Trend Slope Features (v4 — Linear Regression on Price)
+        =========================================================
+        Computes linear regression slope of prices over 50-tick and 200-tick
+        windows to detect market trend direction.
+
+        For Deriv Over/Under contracts, the trend of the PRICE matters because:
+        - Uptrend → higher digits more likely → Over contracts have an edge
+        - Downtrend → lower digits more likely → Under contracts have an edge
+        - Ranging → no directional bias → trade normally
+
+        The slope is expressed as a t-statistic (slope / standard error),
+        which is market-independent and comparable across instruments.
+        A t-statistic > 2.0 means the trend is statistically significant.
+
+        Uses windows of 50 (short, responsive) and 200 (medium, stable)
+        ticks. Window of 10 is too small to show meaningful trends.
+
+        The signal generator uses these to BIAS trade selection (lower
+        confidence threshold for trend-aligned trades), NOT to restrict
+        trades. Ranging markets trade normally with no penalty.
+        """
+        features = {}
+
+        for window_name, n_ticks in [("short", 50), ("medium", 200)]:
+            ticks = self.agg.get_window(window_name)
+            n = len(ticks)
+
+            if n < 20:
+                features[f"slope_{n_ticks}"] = 0.0
+                features[f"slope_tstat_{n_ticks}"] = 0.0
+                features[f"slope_r2_{n_ticks}"] = 0.0
+                continue
+
+            # ─── Linear Regression: y = a + b*x ───
+            # x = tick index (0, 1, ..., n-1), y = price
+            prices = [t.quote for t in ticks]
+            x_mean = (n - 1) / 2.0
+            y_mean = sum(prices) / n
+
+            # Sum of squares: SS_xy and SS_xx
+            ss_xy = sum((i - x_mean) * (prices[i] - y_mean) for i in range(n))
+            ss_xx = sum((i - x_mean) ** 2 for i in range(n))
+
+            if ss_xx == 0 or n < 3:
+                features[f"slope_{n_ticks}"] = 0.0
+                features[f"slope_tstat_{n_ticks}"] = 0.0
+                features[f"slope_r2_{n_ticks}"] = 0.0
+                continue
+
+            slope = ss_xy / ss_xx
+
+            # ─── Standard error of the slope ───
+            # SE(slope) = sqrt(SS_res / (n-2) / SS_xx)
+            # where SS_res = sum of squared residuals
+            y_pred = [y_mean + slope * (i - x_mean) for i in range(n)]
+            ss_res = sum((prices[i] - y_pred[i]) ** 2 for i in range(n))
+
+            if ss_res > 0 and n > 2:
+                se_slope = (ss_res / (n - 2) / ss_xx) ** 0.5
+                t_stat = slope / se_slope
+            else:
+                se_slope = 0.0
+                t_stat = 0.0
+
+            # ─── Normalized slope (% change per tick relative to mean price) ───
+            norm_slope = slope / y_mean if y_mean > 0 else 0.0
+
+            # ─── R-squared (coefficient of determination) ───
+            ss_tot = sum((p - y_mean) ** 2 for p in prices)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+            features[f"slope_{n_ticks}"] = norm_slope
+            features[f"slope_tstat_{n_ticks}"] = t_stat
+            features[f"slope_r2_{n_ticks}"] = max(0.0, r_squared)  # Clamp negative R²
+
+        # ─── Trend Regime Classification ───
+        # Primary: 200-tick slope (more stable, less noise)
+        # Confirmation: 50-tick slope (more responsive, catches turns earlier)
+        # Both must agree for a trend classification.
+        # Ranging = no agreement or neither is significant.
+        tstat_50 = features.get("slope_tstat_50", 0.0)
+        tstat_200 = features.get("slope_tstat_200", 0.0)
+
+        if tstat_200 > 2.0 and tstat_50 > 0:
+            # Both agree: uptrend (200 is significantly positive, 50 is also positive)
+            features["trend_regime"] = 1   # Uptrend
+        elif tstat_200 < -2.0 and tstat_50 < 0:
+            # Both agree: downtrend (200 is significantly negative, 50 is also negative)
+            features["trend_regime"] = -1  # Downtrend
+        else:
+            features["trend_regime"] = 0   # Ranging / no clear trend
+
+        return features
+
     def get_feature_names(self) -> list:
         """
         Get ordered list of all feature names.
