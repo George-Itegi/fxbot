@@ -137,15 +137,33 @@ class DerivWS:
                 f"Account: {auth.get('loginid', 'Unknown')}"
             )
     
-    async def subscribe_ticks(self, symbol: str):
-        """Subscribe to real-time tick stream for a symbol (supports multiple symbols)."""
+    async def subscribe_ticks(self, symbol: str, retries: int = 2):
+        """Subscribe to real-time tick stream for a symbol with retry logic."""
         sub_key = f"ticks_{symbol}"
         self._subscriptions[sub_key] = {"ticks": symbol, "subscribe": 1}
-        response = await self._send({"ticks": symbol, "subscribe": 1})
-        if response.get("error"):
-            logger.error(f"Ticks subscription FAILED for {symbol}: {response['error']}")
-        else:
-            logger.info(f"Subscribed to ticks: {symbol}")
+        
+        for attempt in range(1, retries + 2):  # 1 initial + retries
+            response = await self._send(
+                {"ticks": symbol, "subscribe": 1},
+                timeout=20.0  # Longer timeout for subscriptions
+            )
+            if response.get("error"):
+                if attempt <= retries:
+                    delay = attempt * 3  # 3s, 6s backoff
+                    logger.warning(
+                        f"Ticks subscription FAILED for {symbol} (attempt {attempt}/{retries+1}): "
+                        f"{response['error']}. Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Ticks subscription FAILED for {symbol} after {retries+1} attempts: "
+                        f"{response['error']}"
+                    )
+            else:
+                logger.info(f"Subscribed to ticks: {symbol}")
+                return True
+        return False
     
     async def unsubscribe_ticks(self, symbol: str):
         """Unsubscribe from tick stream for a specific symbol."""
@@ -555,8 +573,9 @@ class DerivWS:
         """Re-subscribe to all active subscriptions after reconnect."""
         for name, sub in self._subscriptions.items():
             try:
-                await self._send(sub)
+                await self._send(sub, timeout=20.0)
                 logger.info(f"Restored subscription: {name}")
+                await asyncio.sleep(1)  # Delay between restores to avoid throttling
             except Exception as e:
                 logger.warning(f"Failed to restore {name}: {e}")
     

@@ -1,14 +1,13 @@
 """
-Deriv Over/Under Bot — Configuration v12.1
+Deriv Over/Under Bot — Configuration v12.2
 ============================================
 Over 4 / Under 5 ONLY + Smart Observation Phase + Fixed Martingale.
 
-v12.1 fixes:
-1. MARTINGALE FLEX: Allow recovery on EITHER Over 4 or Under 5
-   - Direction flips on 50/50 contracts no longer kill martingale recovery
-2. Fixed payout calculation bug (stake * payout was wrong in record_outcome)
-3. MAX_MARTINGALE_STEPS=2 (was 3 — step 3 couldn't recover with $2 cap)
-4. Initial payout=0.95 (was 0.85 — wrong for Over 4/Under 5 contracts)
+v12.2 fixes:
+1. STAGGERED SUBSCRIPTIONS with 2s delay between each (prevents rate limiting)
+2. RETRY LOGIC for failed subscriptions (2 retries with backoff)
+3. LONGER SUBSCRIPTION TIMEOUT (20s instead of 10s)
+4. Failed subscriptions now properly remove dead workers
 
 v12 Strategy: "Observe First, Then Decide Duration"
 1. ONLY trade Over 4 (digit > 4) and Under 5 (digit < 5) [unchanged]

@@ -107,14 +107,14 @@ class DerivBot:
         self.ws.on_error = self._on_error
 
         logger.info(
-            f"DerivBot v12.1 initialized: {len(self.markets)} markets, "
+            f"DerivBot v12.2 initialized: {len(self.markets)} markets, "
             f"LIVE mode, model={self.model_type}"
         )
         logger.info(f"  Markets: {', '.join(self.markets)}")
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v12.1 — FIXED MARTINGALE + SMART OBSERVATION")
+        logger.info("  DERIV OVER/UNDER BOT v12.2 — FIXED SUBSCRIPTIONS + SMART OBSERVATION")
         logger.info(f"  Markets:    {len(self.markets)} markets")
         for i, m in enumerate(self.markets):
             logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
@@ -123,16 +123,13 @@ class DerivBot:
         logger.info(f"  Barriers:   ONLY Over 4 / Under 5 (50% natural, ~95% payout)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info("")
-        logger.info("  v12.1 Key Fixes from v12:")
-        logger.info("    - MARTINGALE FLEX: Allow recovery on EITHER Over 4 or Under 5")
-        logger.info("      (direction flips no longer kill martingale recovery)")
-        logger.info("    - ML SOFT PENALTY: ML disagreement now reduces confidence by 5%")
-        logger.info("      instead of BLOCKING trades entirely. ML has no edge on random digits.")
-        logger.info("    - Fixed payout calculation bug in record_outcome")
-        logger.info("    - MAX_MARTINGALE_STEPS=2 (step 3 couldn't recover with $2 cap)")
-        logger.info("    - MAX_MARTINGALE_STAKE=$5 (allows full recovery at step 2)")
-        logger.info("    - Initial payout=0.95 (was 0.85 — wrong for Over 4/Under 5)")
-        logger.info("    - Smart Observation Phase still active (3t-7t duration)")
+        logger.info("  v12.2 Key Fixes:")
+        logger.info("    - STAGGERED SUBS: 2s delay between each subscription")
+        logger.info("    - RETRY LOGIC: 2 retries with 3s/6s backoff on failure")
+        logger.info("    - LONGER TIMEOUT: 20s for subscription requests")
+        logger.info("    - Failed subscriptions remove dead workers")
+        logger.info("    - ML SOFT PENALTY: 5% reduction (not block)")
+        logger.info("    - MARTINGALE FLEX: Recovery on EITHER Over 4 or Under 5")
         logger.info("")
         logger.info(f"  Confidence:  BAYESIAN-ADJUSTED (52%+ minimum)")
         logger.info(f"  EV minimum:  3% to trade")
@@ -163,7 +160,8 @@ class DerivBot:
         await self._fetch_balance()
         await self.ws.subscribe_to_balance()
 
-        for symbol in self.markets:
+        # Staggered warmup: add small delay between markets to avoid API throttling
+        for i, symbol in enumerate(self.markets):
             worker = MarketWorker(
                 symbol, self.ws, model_type=self.model_type,
                 setup_detector=self.setup_detector,
@@ -171,17 +169,40 @@ class DerivBot:
             worker._bankroll = self.risk_mgr.bankroll
             self.workers[symbol] = worker
 
-            logger.info(f"Warming up {symbol}...")
+            logger.info(f"Warming up {symbol} ({i+1}/{len(self.markets)})...")
             try:
                 history = await self.ws.get_tick_history(symbol, count=1000)
                 await worker.warmup(history)
             except Exception as e:
                 logger.error(f"{symbol} warmup failed: {e}")
 
-        for symbol in self.markets:
-            await self.ws.subscribe_ticks(symbol)
+            # Small delay between warmups to avoid API throttling
+            if i < len(self.markets) - 1:
+                await asyncio.sleep(1)
 
-        logger.info(f"All {len(self.markets)} markets subscribed and ready!")
+        # Staggered subscriptions: 2-second delay between each to prevent rate limiting
+        # Deriv throttles when too many subscribe requests come in rapid succession
+        sub_results = {"success": [], "failed": []}
+        for i, symbol in enumerate(self.markets):
+            logger.info(f"Subscribing to {symbol} ({i+1}/{len(self.markets)})...")
+            success = await self.ws.subscribe_ticks(symbol)
+            if success:
+                sub_results["success"].append(symbol)
+            else:
+                sub_results["failed"].append(symbol)
+            # 2-second delay between subscriptions to prevent API throttling
+            if i < len(self.markets) - 1:
+                await asyncio.sleep(2)
+
+        logger.info(
+            f"Subscriptions complete: {len(sub_results['success'])} succeeded, "
+            f"{len(sub_results['failed'])} failed"
+        )
+        if sub_results["failed"]:
+            logger.warning(f"Failed markets (will NOT trade): {sub_results['failed']}")
+            # Remove workers for failed subscriptions to avoid processing stale data
+            for sym in sub_results["failed"]:
+                self.workers.pop(sym, None)
 
         try:
             while self.running:
