@@ -131,7 +131,7 @@ class DerivBot:
         logger.info("    - ML SOFT PENALTY: 5% reduction (not block)")
         logger.info("    - MARTINGALE FLEX: Recovery on EITHER Over 4 or Under 5")
         logger.info("")
-        logger.info(f"  Confidence:  BAYESIAN-ADJUSTED (52%+ minimum)")
+        logger.info(f"  Confidence:  BAYESIAN-ADJUSTED (60%+ minimum)")
         logger.info(f"  EV minimum:  3% to trade")
         logger.info(f"  Freq edge:   3%+ absolute, 6%+ relative (z > 2.0)")
         # Show duration mode in banner

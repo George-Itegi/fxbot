@@ -12,8 +12,8 @@ from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE,
                     TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
                     DRIFT_RETRAIN_ENABLED, DRIFT_RETRAIN_COOLDOWN,
                     CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
-                    DYNAMIC_BARRIERS,
-                    OBSERVATION_ENABLED, MIN_DURATION, MAX_DURATION)
+                    DYNAMIC_BARRIERS)
+import config as _config  # Dynamic access for CLI-overridable settings (--duration)
 from data.tick_aggregator import TickAggregator
 from data.feature_engine import FeatureEngine
 from models.online_learner import OverUnderModel
@@ -104,7 +104,7 @@ class MarketWorker:
 
         logger.info(
             f"MarketWorker created: {symbol}, model={model_type}, "
-            f"observation={'ENABLED' if OBSERVATION_ENABLED else 'DISABLED'}"
+            f"observation={'ENABLED' if _config.OBSERVATION_ENABLED else 'DISABLED'}"
         )
 
     async def warmup(self, history: list):
@@ -197,7 +197,7 @@ class MarketWorker:
 
             # ─── v12: OBSERVATION PHASE ───
             # After setup is detected, observe live digits to determine duration
-            if OBSERVATION_ENABLED and setup.active:
+            if _config.OBSERVATION_ENABLED and setup.active:
                 # If not already observing, start observation
                 if not self.setup_detector.is_observing(self.symbol) and not self._observation_started:
                     self.setup_detector.start_observation(
@@ -231,9 +231,9 @@ class MarketWorker:
                         )
                         self._reset_observation()
                         return None
-            elif not OBSERVATION_ENABLED:
-                # Observation disabled — use default 5t
-                self._observed_duration = 5
+            elif not _config.OBSERVATION_ENABLED:
+                # Observation disabled — use fixed duration from config
+                self._observed_duration = _config.CONTRACT_DURATION
                 self._observation_complete = True
 
             # ─── Check market session tradability ───
@@ -262,7 +262,7 @@ class MarketWorker:
                 if setup.active:
                     ev_str = f"{setup.best_barrier_eval.ev:+.1%}" if setup.best_barrier_eval else "0"
                     obs_info = ""
-                    if OBSERVATION_ENABLED and self._observation_complete:
+                    if _config.OBSERVATION_ENABLED and self._observation_complete:
                         obs_info = (
                             f" obs_streak={setup.obs_streak_length} "
                             f"obs_autocorr={setup.obs_autocorr:.0%} "
@@ -463,7 +463,7 @@ class MarketWorker:
         # v12: Get observed duration from setup
         observed_dur = 5
         obs_reason = ""
-        if setup and OBSERVATION_ENABLED:
+        if setup and _config.OBSERVATION_ENABLED:
             observed_dur = setup.observed_duration
             obs_reason = setup.obs_duration_reason
         

@@ -39,17 +39,9 @@ from config import (
     TREND_CONFIDENCE_BOOST,
     TREND_MISALIGN_PENALTY,
     MIN_DIGIT_FREQUENCY_EDGE_RELATIVE,
-    BAYESIAN_SHRINKAGE_PRIOR,
-    # v12: Observation phase
-    OBSERVATION_ENABLED,
-    OBSERVATION_TICKS_TO_COLLECT,
-    OBSERVATION_MAX_WAIT_SEC,
-    OBSERVATION_MIN_STREAK_FOR_SHORT,
-    OBSERVATION_MIN_AUTOCORR_FOR_MEDIUM,
-    OBSERVATION_MAX_ALTERNATING_RATE,
-    MIN_DURATION,
-    MAX_DURATION,
+    BAYESIAN_SHRINKAGE_PRIOR
 )
+import config as _config  # Dynamic access for CLI-overridable settings (--duration)
 from utils.logger import setup_logger
 
 logger = setup_logger("trading.setup_detector")
@@ -148,8 +140,8 @@ class SetupDetector:
         
         logger.info(
             "SetupDetector v12 initialized: Over 4 / Under 5 only, z=2.0, "
-            f"observation={'ENABLED' if OBSERVATION_ENABLED else 'DISABLED'} "
-            f"({OBSERVATION_TICKS_TO_COLLECT} ticks, dur={MIN_DURATION}-{MAX_DURATION}t)"
+            f"observation={'ENABLED' if _config.OBSERVATION_ENABLED else 'DISABLED'} "
+            f"({_config.OBSERVATION_TICKS_TO_COLLECT} ticks, dur={_config.MIN_DURATION}-{_config.MAX_DURATION}t)"
         )
     
     def evaluate(self, symbol: str, features: dict) -> Setup:
@@ -550,7 +542,7 @@ class SetupDetector:
             direction: "DIGITOVER" or "DIGITUNDER"
             barrier: The digit barrier (4 for Over, 5 for Under)
         """
-        if not OBSERVATION_ENABLED:
+        if not _config.OBSERVATION_ENABLED:
             return
         
         self._observing[symbol] = True
@@ -561,7 +553,7 @@ class SetupDetector:
         
         logger.info(
             f"[{symbol}] OBSERVATION STARTED: {direction.replace('DIGIT','')}{barrier} "
-            f"— collecting {OBSERVATION_TICKS_TO_COLLECT} live ticks to determine duration"
+            f"— collecting {_config.OBSERVATION_TICKS_TO_COLLECT} live ticks to determine duration"
         )
     
     def observe_tick(self, symbol: str, digit: int) -> bool:
@@ -573,7 +565,7 @@ class SetupDetector:
         
         If observation is disabled for this market, returns True immediately.
         """
-        if not OBSERVATION_ENABLED:
+        if not _config.OBSERVATION_ENABLED:
             return True
         
         if not self._observing.get(symbol, False):
@@ -587,12 +579,12 @@ class SetupDetector:
         collected = len(self._obs_digits[symbol])
         
         # Check if we have enough ticks
-        if collected < OBSERVATION_TICKS_TO_COLLECT:
+        if collected < _config.OBSERVATION_TICKS_TO_COLLECT:
             # Check for timeout
             elapsed = time.time() - self._obs_start_time.get(symbol, time.time())
-            if elapsed > OBSERVATION_MAX_WAIT_SEC:
+            if elapsed > _config.OBSERVATION_MAX_WAIT_SEC:
                 logger.info(
-                    f"[{symbol}] OBSERVATION TIMEOUT: only {collected}/{OBSERVATION_TICKS_TO_COLLECT} "
+                    f"[{symbol}] OBSERVATION TIMEOUT: only {collected}/{_config.OBSERVATION_TICKS_TO_COLLECT} "
                     f"ticks in {elapsed:.0f}s — using default 5t"
                 )
                 self._finalize_observation(symbol, 5, "timeout_fallback")
@@ -674,16 +666,16 @@ class SetupDetector:
         # ─── Duration Decision Logic ───
         
         # CASE A: Too much alternating — no reliable pattern
-        if alternating_rate > OBSERVATION_MAX_ALTERNATING_RATE:
+        if alternating_rate > _config.OBSERVATION_MAX_ALTERNATING_RATE:
             logger.info(
                 f"[{symbol}] OBS PATTERN: ALTERNATING — "
-                f"alt_rate={alternating_rate:.0%} > {OBSERVATION_MAX_ALTERNATING_RATE:.0%} "
+                f"alt_rate={alternating_rate:.0%} > {_config.OBSERVATION_MAX_ALTERNATING_RATE:.0%} "
                 f"— SKIPPING TRADE (no pattern)"
             )
             return 0, f"alternating_{alternating_rate:.0%}_skip"
         
         # CASE B: Long streak of our category — strike fast, about to break
-        if last_cat == 1 and current_streak >= OBSERVATION_MIN_STREAK_FOR_SHORT:
+        if last_cat == 1 and current_streak >= _config.OBSERVATION_MIN_STREAK_FOR_SHORT:
             logger.info(
                 f"[{symbol}] OBS PATTERN: LONG STREAK — "
                 f"streak={current_streak} (our side), autocorr={autocorr:.0%} "
@@ -692,7 +684,7 @@ class SetupDetector:
             return 3, f"long_streak_{current_streak}_fast_strike"
         
         # CASE C: Long streak AGAINST us — also short, reversal likely
-        if last_cat == 0 and current_streak >= OBSERVATION_MIN_STREAK_FOR_SHORT:
+        if last_cat == 0 and current_streak >= _config.OBSERVATION_MIN_STREAK_FOR_SHORT:
             # The streak is AGAINST our direction — but the setup says
             # our direction has an edge. This means we're in a counter-trend
             # dip and a reversal is likely. Short duration to catch the flip.
@@ -704,7 +696,7 @@ class SetupDetector:
             return 3, f"counter_streak_{current_streak}_reversal"
         
         # CASE D: High autocorrelation — pattern persists
-        if autocorr >= OBSERVATION_MIN_AUTOCORR_FOR_MEDIUM:
+        if autocorr >= _config.OBSERVATION_MIN_AUTOCORR_FOR_MEDIUM:
             if last_cat == 1:
                 # Pattern is persisting in our direction — medium duration
                 logger.info(
@@ -750,7 +742,7 @@ class SetupDetector:
         setup = self._setup_cache.get(symbol)
         if setup is not None:
             setup.observation_complete = True
-            setup.observed_duration = max(MIN_DURATION, min(MAX_DURATION, duration)) if duration > 0 else 5
+            setup.observed_duration = max(_config.MIN_DURATION, min(_config.MAX_DURATION, duration)) if duration > 0 else 5
             setup.obs_duration_reason = reason
             
             # If duration is 0, it means "skip trade" (alternating pattern)

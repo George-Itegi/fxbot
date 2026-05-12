@@ -228,7 +228,7 @@ MAX_STAKE = 5.0
 # v11: Calibrated for Over 4 / Under 5 ONLY (50% natural, ~95% payout).
 # Since we only test 2 barriers, the multiple testing problem is minimal.
 # z=2.0 (95% confidence) is sufficient — we're not data-mining across 17 options.
-MIN_CONFIDENCE = 0.52           # v11: Must be above 50% natural — need a real edge
+MIN_CONFIDENCE = 0.60           # v12.2: Must be 60%+ — only trade strong setups
 MIN_EDGE_THRESHOLD = 0.03       # v11: Minimum 3% EV
 MIN_FREQ_EDGE_ZSCORE = 2.0      # v11: 2-sigma (95% confidence) — was 3.0
 
