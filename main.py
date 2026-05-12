@@ -42,7 +42,7 @@ from config import (DEFAULT_SYMBOL, INITIAL_BANKROLL, DEFAULT_MARKETS,
                     PROFIT_TARGET_PER_MARKET, MARTINGALE_MIN_CONFIDENCE,
                     MARTINGALE_MIN_SETUP_SCORE, MARTINGALE_SAME_MARKET,
                     MARKET_STICKY_AFTER_TRADE,
-                    MIN_SETUP_SCORE, OBSERVATION_PERIOD_SEC,
+                    MIN_SETUP_SCORE,
                     ML_DISAGREEMENT_BLOCKS,
                     DYNAMIC_BARRIERS, CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER)
 import config as config
@@ -107,14 +107,14 @@ class DerivBot:
         self.ws.on_error = self._on_error
 
         logger.info(
-            f"DerivBot v8.1 initialized: {len(self.markets)} markets, "
+            f"DerivBot v12.1 initialized: {len(self.markets)} markets, "
             f"LIVE mode, model={self.model_type}"
         )
         logger.info(f"  Markets: {', '.join(self.markets)}")
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v12 — SMART OBSERVATION PHASE")
+        logger.info("  DERIV OVER/UNDER BOT v12.1 — FIXED MARTINGALE + SMART OBSERVATION")
         logger.info(f"  Markets:    {len(self.markets)} markets")
         for i, m in enumerate(self.markets):
             logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
@@ -123,22 +123,21 @@ class DerivBot:
         logger.info(f"  Barriers:   ONLY Over 4 / Under 5 (50% natural, ~95% payout)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info("")
-        logger.info("  v12 Key Changes from v11:")
-        logger.info("    - SMART OBSERVATION PHASE: observe live digits before trading")
-        logger.info("    - Duration determined by digit pattern analysis:")
-        logger.info("      * Fresh streak (1-2 same) -> 7t (let pattern develop)")
-        logger.info("      * Moderate autocorrelation -> 5t (default)")
-        logger.info("      * Long streak (3+ same) -> 3t (strike fast)")
-        logger.info("      * Alternating pattern -> SKIP (no edge)")
-        logger.info("    - Still ONLY Over 4 / Under 5 (50% natural, ~95% payout)")
-        logger.info("    - Same thresholds: z=2.0, EV=3%, confidence=52%")
+        logger.info("  v12.1 Key Fixes from v12:")
+        logger.info("    - MARTINGALE FLEX: Allow recovery on EITHER Over 4 or Under 5")
+        logger.info("      (direction flips no longer kill martingale recovery)")
+        logger.info("    - Fixed payout calculation bug in record_outcome")
+        logger.info("    - MAX_MARTINGALE_STEPS=2 (step 3 couldn't recover with $2 cap)")
+        logger.info("    - MAX_MARTINGALE_STAKE=$5 (allows full recovery at step 2)")
+        logger.info("    - Initial payout=0.95 (was 0.85 — wrong for Over 4/Under 5)")
+        logger.info("    - Smart Observation Phase still active (3t-7t duration)")
         logger.info("")
         logger.info(f"  Confidence:  BAYESIAN-ADJUSTED (52%+ minimum)")
         logger.info(f"  EV minimum:  3% to trade")
         logger.info(f"  Freq edge:   3%+ absolute, 6%+ relative (z > 2.0)")
         logger.info(f"  Duration:    OBSERVED (3t-7t based on live digit pattern)")
         logger.info(f"  Profit target: ${PROFIT_TARGET_PER_MARKET:.0f} per market session")
-        logger.info(f"  Martingale:  2.35x on loss (max 2 steps, SAME market)")
+        logger.info(f"  Martingale:  2.1x on loss (max 2 steps, FLEXIBLE direction, SAME market)")
         logger.info(f"  Trade interval: {MIN_TRADE_INTERVAL_SEC}s minimum")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
         logger.info("=" * 65)
@@ -341,37 +340,52 @@ class DerivBot:
                 self.stake_mgr.state.martingale_barrier = None  # v9
                 return
             
-            # Check if martingale market has a setup that matches our direction AND barrier
-            # v10: Both direction AND barrier must match for martingale recovery
-            # If we lost on Over 5, we should recover on Over 5 (same barrier)
+            # v12: FLEXIBLE MARTINGALE RECOVERY for Over 4 / Under 5
+            # For symmetric 50/50 contracts (same natural prob, same payout),
+            # the direction can flip between Over and Under on every tick.
+            # Requiring exact direction/barrier match was KILLING martingale recovery.
+            #
+            # v12 fix: Allow recovery on EITHER Over 4 OR Under 5 on the same market.
+            # The key is: same market + active setup + sufficient quality.
+            # The direction of the NEW trade can differ from the original loss.
             setup = worker._current_setup
-            barrier_ok = True
-            if martingale_barrier is not None and setup and setup.barrier != martingale_barrier:
-                barrier_ok = False
             
-            if setup and setup.active and setup.direction == martingale_dir and barrier_ok:
-                # Good — we can recover on this market
+            if setup and setup.active:
+                # Good — we have an active setup on the martingale market
+                # v12: Accept EITHER direction (Over 4 or Under 5) for recovery
                 signal = worker.get_fresh_signal()
-                if signal is not None and signal.direction == martingale_dir:
+                if signal is not None:
+                    # v12: If direction changed, update martingale tracking
+                    # so signal_generator doesn't reject it for direction mismatch
+                    if signal.direction != martingale_dir:
+                        logger.info(
+                            f"MARTINGALE FLEX: Direction changed from "
+                            f"{martingale_dir.replace('DIGIT','')}{martingale_barrier} to "
+                            f"{signal.direction.replace('DIGIT','')}{signal.barrier} "
+                            f"on {martingale_market} — recovering on new direction"
+                        )
+                        # Update martingale direction/barrier to match current setup
+                        self.stake_mgr.state.martingale_direction = signal.direction
+                        self.stake_mgr.state.martingale_barrier = signal.barrier
+                        # Push updated state to workers
+                        for w in self.workers.values():
+                            w._martingale_direction = signal.direction
+                            w._martingale_barrier = signal.barrier
                     best_symbol = martingale_market
                 else:
                     # Setup is active but no fresh signal yet — wait
                     return
             else:
-                # Setup on martingale market doesn't match — 
-                # the direction or barrier changed, which means our setup broke.
-                # Reset martingale (take the loss) rather than chase a different setup
-                reason = "direction"
-                if not barrier_ok:
-                    reason = f"barrier (expected {martingale_barrier}, got {setup.barrier if setup else 'NONE'})"
+                # No active setup on martingale market — the edge is gone.
+                # Reset martingale (take the loss) rather than force a bad trade
                 logger.info(
-                    f"MARTINGALE: Setup on {martingale_market} changed {reason} "
+                    f"MARTINGALE: No active setup on {martingale_market} "
                     f"— resetting martingale, taking the loss"
                 )
                 self.stake_mgr.state.martingale_step = 0
                 self.stake_mgr.state.martingale_direction = None
                 self.stake_mgr.state.martingale_market = None
-                self.stake_mgr.state.martingale_barrier = None  # v9
+                self.stake_mgr.state.martingale_barrier = None
                 # Fall through to normal market selection below
                 is_martingale = False
                 martingale_market = None

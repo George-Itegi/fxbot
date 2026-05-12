@@ -1,9 +1,14 @@
 """
-Deriv Over/Under Bot — Configuration v12
-==========================================
-Over 4 / Under 5 ONLY + Smart Observation Phase for Duration.
+Deriv Over/Under Bot — Configuration v12.1
+============================================
+Over 4 / Under 5 ONLY + Smart Observation Phase + Fixed Martingale.
 
-v11 was stable but rigid — always 5-tick duration regardless of pattern.
+v12.1 fixes:
+1. MARTINGALE FLEX: Allow recovery on EITHER Over 4 or Under 5
+   - Direction flips on 50/50 contracts no longer kill martingale recovery
+2. Fixed payout calculation bug (stake * payout was wrong in record_outcome)
+3. MAX_MARTINGALE_STEPS=2 (was 3 — step 3 couldn't recover with $2 cap)
+4. Initial payout=0.95 (was 0.85 — wrong for Over 4/Under 5 contracts)
 
 v12 Strategy: "Observe First, Then Decide Duration"
 1. ONLY trade Over 4 (digit > 4) and Under 5 (digit < 5) [unchanged]
@@ -306,7 +311,8 @@ TREND_SIGNAL_SCORE_REDUCTION = 0.05  # Legacy
 MARTINGALE_MIN_CONFIDENCE = 0.50   # v11: Slightly relaxed for recovery (was 35%)
 MARTINGALE_MIN_SETUP_SCORE = 0.50  # v11: Relaxed for martingale recovery (was 0.70)
 MARTINGALE_SAME_MARKET = True      # MUST recover on the same market where loss occurred
-MARTINGALE_MAX_STEPS = 2           # Max 2 recovery steps
+MARTINGALE_MAX_STEPS = 2           # v12.1: Max 2 recovery steps (was 3 — step 3 couldn't recover)
+MARTINGALE_FLEX_DIRECTION = True   # v12.1: Allow recovery on EITHER Over 4 or Under 5
 MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
 MIN_TRADE_INTERVAL_SEC = 10   # v11: 10s between trades (was 15s)

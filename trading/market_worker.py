@@ -76,7 +76,7 @@ class MarketWorker:
         self._observation_complete: bool = True
         self._observed_duration: int = 5  # Default, overridden by observation
 
-        self.current_payout = 0.85
+        self.current_payout = 0.95  # v12.1: Over 4 / Under 5 have ~95% payout (was 0.85)
         self.trade_counter = 0
         self.live_tick_count = 0
         self._warmup_done = False

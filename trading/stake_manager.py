@@ -1,16 +1,18 @@
 """
-Stake Manager — Dynamic Stake Sizing with Martingale Recovery (v12)
-=====================================================================
-v12: Fixed martingale for Over 4 / Under 5 contracts (~95% payout).
+Stake Manager — Dynamic Stake Sizing with Martingale Recovery (v12.1)
+=========================================================================
+v12.1: Fixed martingale direction flexibility + corrected payout math.
 
 PROBLEM WITH PREVIOUS VERSIONS:
-- Martingale multiplier was 2.35x (designed for 85% payout)
-- But Over 4 / Under 5 have ~95% payout
-- The 10% bankroll cap was too aggressive, killing recovery stakes
-- MAX_MARTINGALE_STEPS=2 but log showed 5 (old code was running)
-- Breakeven calculation was using 85% instead of 95%
+- Martingale required SAME direction/barrier — but Over 4/Under 5 flip constantly
+  → Martingale kept resetting before recovery, always taking the loss
+- Payout calculation bug: record_outcome used (stake * payout) but payout is
+  total return amount, not a rate. This gave wrong net result logging.
+- MAX_MARTINGALE_STEPS=3 with $2.00 cap made step 3 unrecoverable
+  ($2.00 × 0.95 = $1.90 < $2.64 total loss → can't recover even if you win!)
+- Initial payout was 0.85 instead of 0.95 for Over 4 / Under 5
 
-v12 MARTINGALE MATH (for ~95% payout):
+v12.1 MARTINGALE MATH (for ~95% payout):
 - To recover a loss of $L with payout P, you need to win:
   stake × P ≥ L  →  stake ≥ L / P
 - For P = 0.95: stake ≥ L / 0.95 = L × 1.053
@@ -18,14 +20,15 @@ v12 MARTINGALE MATH (for ~95% payout):
   stake × P ≥ L + target_profit
 - Conservative: use 2.1x multiplier (recovers loss + small profit)
 
-ACTUAL RECOVERY EXAMPLES:
+ACTUAL RECOVERY EXAMPLES (2 steps max):
   Lose $0.35 → next = $0.35 × 2.1 = $0.74
   Win $0.74 → profit = $0.74 × 0.95 = $0.70, net = $0.70 - $0.35 = +$0.35 ✅
 
   Lose $0.35 → lose $0.74 → next = $0.74 × 2.1 = $1.55
   Win $1.55 → profit = $1.55 × 0.95 = $1.47, net = $1.47 - $0.35 - $0.74 = +$0.38 ✅
 
-  Max 3 steps: $0.35 + $0.74 + $1.55 = $2.64 total risk
+  Max 2 steps: $0.35 + $0.74 + $1.55 = $2.64 total risk (2.64% of $100)
+  After 2 failed recoveries: RESET (take the loss, don't chase)
 """
 
 import time
@@ -89,13 +92,14 @@ class StakeManager:
     CONFIDENCE_MIN_MULT = 0.5    # At MIN_CONFIDENCE (52%): 0.5x stake
     CONFIDENCE_MAX_MULT = 2.0    # At 80%+ confidence: 2.0x stake (v12: reduced from 3.0)
 
-    # ─── Martingale Settings (v12: Fixed for ~95% payout) ───
+    # ─── Martingale Settings (v12.1: Fixed for ~95% payout + direction flexibility) ───
     # For 95% payout, you need: next_stake × 0.95 > total_loss_so_far
     # 2.1x ensures recovery + small profit at each step
     MARTINGALE_MULTIPLIER = 2.1       # v12: Correct for 95% payout (was 2.35 for 85%)
-    MAX_MARTINGALE_STEPS = 3          # v12: 3 steps max (was 2 — too few for $0.35 base)
-    MAX_MARTINGALE_STAKE = 2.0        # v12: $2 max (was $5 — too aggressive for 50/50 contracts)
-    MARTINGALE_BANKROLL_PCT = 0.15    # v12: Up to 15% of bankroll for recovery (was 10%)
+    MAX_MARTINGALE_STEPS = 2          # v12.1: 2 steps max (was 3 — step 3 couldn't recover with $2 cap)
+    MAX_MARTINGALE_STAKE = 5.0        # v12.1: $5 max (allows full recovery at step 2: $1.55)
+    MARTINGALE_BANKROLL_PCT = 0.10    # v12.1: 10% of bankroll for recovery (conservative)
+    MARTINGALE_FLEX_DIRECTION = True  # v12.1: Allow recovery on EITHER Over 4 or Under 5
 
     # Win streak compounding
     STREAK_BOOST_PER_WIN = 0.10     # +10% per consecutive win
@@ -108,11 +112,11 @@ class StakeManager:
         self.state = StakeState(peak_bankroll=initial_bankroll)
         self._initial_bankroll = initial_bankroll
         logger.info(
-            f"StakeManager v12: bankroll=${initial_bankroll:.2f}, "
+            f"StakeManager v12.1: bankroll=${initial_bankroll:.2f}, "
             f"martingale={self.MARTINGALE_MULTIPLIER}x, max_steps={self.MAX_MARTINGALE_STEPS}, "
             f"max_martingale_stake=${self.MAX_MARTINGALE_STAKE}, "
-            f"breakeven_wr(95%)={self._breakeven_win_rate(0.95):.1%}, "
-            f"breakeven_wr(85%)={self._breakeven_win_rate(0.85):.1%}"
+            f"flex_direction={self.MARTINGALE_FLEX_DIRECTION}, "
+            f"breakeven_wr(95%)={self._breakeven_win_rate(0.95):.1%}"
         )
 
     # ─── Public API ───
@@ -150,7 +154,7 @@ class StakeManager:
             # Use the LARGER of the two (ensures full recovery)
             recovery_stake = max(recovery_stake, min_recovery)
             
-            # v12: Allow up to 15% of bankroll for recovery (was 10% — too tight)
+            # v12.1: Allow up to 10% of bankroll for recovery
             max_martingale = min(self.MAX_MARTINGALE_STAKE, bankroll * self.MARTINGALE_BANKROLL_PCT)
             recovery_stake = min(recovery_stake, max_martingale)
             recovery_stake = max(recovery_stake, MIN_STAKE)
@@ -244,11 +248,16 @@ class StakeManager:
 
             # ─── WIN: Reset martingale ───
             if self.state.martingale_step > 0:
-                # We won during martingale recovery!
-                net_result = (stake * payout) - self.state.total_martingale_loss
+                # v12 FIX: payout is TOTAL RETURN (stake + profit), not a rate.
+                # Old code did (stake * payout) which was wrong — it double-counted.
+                # Correct: net = total_return - current_stake - total_previous_losses
+                #   = (payout - stake) - total_martingale_loss
+                #   = profit - total_martingale_loss
+                profit = payout - stake  # Net profit from THIS trade
+                net_result = profit - self.state.total_martingale_loss
                 logger.info(
                     f"MARTINGALE RECOVERY WIN! "
-                    f"Step {self.state.martingale_step}, won ${stake * payout:.2f}, "
+                    f"Step {self.state.martingale_step}, profit=${profit:.2f}, "
                     f"total_loss_was=${self.state.total_martingale_loss:.2f}, "
                     f"net=${net_result:+.2f}"
                 )
