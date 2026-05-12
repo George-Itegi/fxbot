@@ -1,9 +1,8 @@
 """
-Signal Generator (v3 — Trend Requirement + Fixed Duration)
-============================================================
+Signal Generator (v3 — Trend Requirement + Dynamic Duration)
+==============================================================
 Converts model probabilities into trade decisions.
-Fixed 1-tick duration (all durations have same payout, shorter = more accurate).
-ONLY trades in strong trends — no trend = no trade.
+Dynamic duration via DurationOptimizer. ONLY trades in strong trends.
 
 This is where most bots fail — they trade too often.
 The key: ONLY trade when your edge is CLEAR AND the trend is strong.
@@ -15,7 +14,8 @@ from typing import Optional
 
 from config import (MIN_CONFIDENCE, MIN_EDGE_THRESHOLD, OVER_BARRIER,
                     UNDER_BARRIER, CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
-                    CONTRACT_DURATION, KELLY_FRACTION, COOLDOWN_AFTER_LOSS_TICKS,
+                    CONTRACT_DURATION, DYNAMIC_DURATION, KELLY_FRACTION,
+                    COOLDOWN_AFTER_LOSS_TICKS,
                     MIN_TRADE_INTERVAL_SEC, MAX_DAILY_TRADES,
                     FORCE_TRADE_MIN_CONFIDENCE,
                     FORCE_TRADE_MIN_EV, MIN_SIGNAL_SCORE,
@@ -37,7 +37,7 @@ class Signal:
     expected_value: float   # Expected profit per dollar risked
     kelly_fraction: float   # Kelly-optimal fraction of bankroll
     stake: float            # Actual stake amount in USD
-    contract_duration: int  # Number of ticks (FIXED at 1t)
+    contract_duration: int  # Number of ticks (DYNAMIC — set by DurationOptimizer)
     timestamp: float
     features_snapshot: dict  # Features at signal time (for learning later)
     reason: str             # Human-readable reason for the signal
@@ -68,11 +68,13 @@ class SignalGenerator:
     - Three-window trend confirmation (50, 200, 500 ticks)
     """
     
-    def __init__(self, dynamic_barriers=True, min_model_agreement=0.67):
+    def __init__(self, duration_optimizer=None, dynamic_barriers=True,
+                 min_model_agreement=0.67):
         self._last_signal_time = 0.0
         self._signals_generated = 0
         self._signals_skipped = 0
         self._skip_reasons = {}
+        self._duration_optimizer = duration_optimizer
         self._dynamic_barriers = dynamic_barriers
         self._min_model_agreement = min_model_agreement
     
@@ -229,8 +231,11 @@ class SignalGenerator:
                 self._skip("cooldown")
                 return None
             
-            # Fixed 1-tick duration
-            duration = CONTRACT_DURATION  # 1
+            # Select duration
+            if self._duration_optimizer and DYNAMIC_DURATION:
+                duration = self._duration_optimizer.select_duration()
+            else:
+                duration = CONTRACT_DURATION
             
             # Determine direction — MUST follow the trend
             if trend_regime == 1:
@@ -326,8 +331,11 @@ class SignalGenerator:
         ev_over = prediction.prob_over * payout - prediction.prob_under * 1.0
         ev_under = prediction.prob_under * payout - prediction.prob_over * 1.0
         
-        # Fixed 1-tick duration
-        duration = CONTRACT_DURATION  # 1
+        # Select contract duration
+        if self._duration_optimizer and DYNAMIC_DURATION:
+            duration = self._duration_optimizer.select_duration()
+        else:
+            duration = CONTRACT_DURATION
         
         signal = None
         

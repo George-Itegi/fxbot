@@ -95,7 +95,7 @@ class DerivBot:
         logger.info(f"  Selector:   Market bandit (epsilon=10%)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info(f"  Barrier:    Over {OVER_BARRIER} / Under {UNDER_BARRIER}")
-        logger.info(f"  Duration:   1t (fixed — same payout, best accuracy)")
+        logger.info(f"  Duration:   1-10t (dynamic per market)")
         logger.info("")
         logger.info("  Martingale: 2x on loss (max 2 steps, $20 cap)")
         logger.info("  Martingale gate: 80%+ confidence AND 100% agreement AND same direction")
@@ -474,7 +474,7 @@ class DerivBot:
                 f"  {symbol}: ticks={w_summary['live_ticks']} "
                 f"trades={w_summary['trade_count']} "
                 f"acc={w_summary['model_accuracy']:.1f}% "
-                f"dur=1t "
+                f"dur={w_summary['best_duration']}{w_summary['duration_unit']} "
                 f"payout={w_summary['payout_rate']:.2%} "
                 f"drift={w_summary['drift_active']}"
             )

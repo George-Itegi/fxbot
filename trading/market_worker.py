@@ -13,6 +13,7 @@ from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE,
 from data.tick_aggregator import TickAggregator
 from data.feature_engine import FeatureEngine
 from models.online_learner import OverUnderModel
+from models.duration_optimizer import DurationOptimizer
 from models.drift_detector import DriftDetector
 from models.model_persistence import ModelPersistence
 from trading.signal_generator import SignalGenerator, Signal
@@ -38,9 +39,11 @@ class MarketWorker:
         self.aggregator = TickAggregator(symbol, decimal_places=configured_dp)
         self.feature_engine = FeatureEngine(self.aggregator)
         self.model = OverUnderModel(model_type=model_type)
+        self.duration_optimizer = DurationOptimizer()
         self.drift_detector = DriftDetector()
         self.persistence = ModelPersistence(symbol=symbol)
         self.signal_gen = SignalGenerator(
+            duration_optimizer=self.duration_optimizer,
             dynamic_barriers=True,
             min_model_agreement=0.67,
         )
@@ -93,6 +96,7 @@ class MarketWorker:
         if snapshots:
             loaded = self.persistence.load_state(
                 self.model,
+                duration_optimizer=self.duration_optimizer,
                 feature_engine=self.feature_engine,
                 filepath=snapshots[0]["path"],
             )
@@ -189,7 +193,7 @@ class MarketWorker:
                     f"conf={prediction.confidence:.3f} "
                     f"agree={prediction.model_agreement:.0%} "
                     f"acc={model_summary['accuracy']:.1f}% "
-                    f"dur=1t "
+                    f"dur={self.duration_optimizer.get_recommendation()['recommended_duration']}{self._duration_unit} "
                     f"payout={self.current_payout:.2%}"
                     f"{trend_info}"
                     f"{blocked_info}"
@@ -273,6 +277,10 @@ class MarketWorker:
             self.model.predict(signal.features_snapshot),
         )
 
+        self.duration_optimizer.record_result(
+            duration=signal.contract_duration, won=won, payout=payout, stake=stake,
+        )
+
         # ─── Direction Cooldown Logic ───
         if not won:
             # Track consecutive losses in same direction
@@ -322,6 +330,7 @@ class MarketWorker:
 
         drift_event = self.drift_detector.update(outcome)
         if drift_event:
+            self.duration_optimizer.on_drift_detected()
 
             # ─── Drift-triggered retrain ───
             # On CRITICAL drift, rebuild the model from the replay buffer.
@@ -354,6 +363,7 @@ class MarketWorker:
     async def save_state(self):
         self.persistence.save_state(
             model=self.model,
+            duration_optimizer=self.duration_optimizer,
             feature_engine=self.feature_engine,
             payout_rate=self.current_payout,
             trade_counter=self.trade_counter,
@@ -364,11 +374,11 @@ class MarketWorker:
         if not self.ws or not self.ws.is_connected:
             return
         try:
-            from config import CONTRACT_DURATION
+            duration = self.duration_optimizer.select_duration()
             proposal = await self.ws.get_proposal(
                 symbol=self.symbol, contract_type="DIGITOVER",
                 barrier=OVER_BARRIER, stake=MIN_STAKE,
-                duration=CONTRACT_DURATION, duration_unit=self._duration_unit,
+                duration=duration, duration_unit=self._duration_unit,
             )
             if proposal and proposal.get("payout", 0) > 0:
                 new_payout = proposal["payout"] / proposal["stake"]
@@ -392,6 +402,7 @@ class MarketWorker:
 
     def summary(self) -> dict:
         model_summary = self.model.summary()
+        dur_summary = self.duration_optimizer.summary()
         drift_summary = self.drift_detector.summary()
         return {
             "symbol": self.symbol,
@@ -404,5 +415,6 @@ class MarketWorker:
             "model_accuracy": model_summary.get("accuracy", 0),
             "model_updates": model_summary.get("total_updates", 0),
             "drift_active": drift_summary.get("drift_active", False),
+            "best_duration": dur_summary.get("best_duration", 5),
             "duration_unit": self._duration_unit,
         }

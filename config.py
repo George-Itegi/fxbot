@@ -136,17 +136,14 @@ CONTRACT_TYPE_OVER   = "DIGITOVER"
 CONTRACT_TYPE_UNDER  = "DIGITUNDER"
 OVER_BARRIER = 4
 UNDER_BARRIER = 5
-CONTRACT_DURATION = 2          # Fixed 2-tick duration (same payout, less timing noise than 1t)
+CONTRACT_DURATION = 5
 CONTRACT_DURATION_UNIT = "t"
 
-# ─── Dynamic Duration (REMOVED) ───
-# All durations have the SAME payout on Deriv digit contracts.
-# Shorter duration = more accurate prediction + faster settlement.
-# No reason to ever pick 5t or 10t — always use 1t.
-DYNAMIC_DURATION = False        # Disabled — fixed 1t is optimal
+# ─── Dynamic Duration ───
+DYNAMIC_DURATION = True
 MIN_DURATION = 1
-MAX_DURATION = 1
-DURATION_EXPLORATION_RATE = 0.0
+MAX_DURATION = 10
+DURATION_EXPLORATION_RATE = 0.15
 
 # ─── Stake & Money ───
 INITIAL_BANKROLL = 100.0
