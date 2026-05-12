@@ -1,7 +1,8 @@
 """
-Market Worker — Per-Market State Encapsulation
-================================================
-Each MarketWorker encapsulates all components for ONE trading symbol.
+Market Worker — Per-Market State Encapsulation (v8)
+====================================================
+Integrates SetupDetector for structured quality trading.
+Each worker now tracks its own market session (profit target, setup state).
 """
 
 import time
@@ -9,7 +10,9 @@ from typing import Optional
 
 from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE,
                     TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
-                    DRIFT_RETRAIN_ENABLED, DRIFT_RETRAIN_COOLDOWN)
+                    DRIFT_RETRAIN_ENABLED, DRIFT_RETRAIN_COOLDOWN,
+                    CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
+                    OBSERVATION_PERIOD_SEC)
 from data.tick_aggregator import TickAggregator
 from data.feature_engine import FeatureEngine
 from models.online_learner import OverUnderModel
@@ -17,6 +20,7 @@ from models.duration_optimizer import DurationOptimizer
 from models.drift_detector import DriftDetector
 from models.model_persistence import ModelPersistence
 from trading.signal_generator import SignalGenerator, Signal
+from trading.setup_detector import SetupDetector, Setup
 from trading.execution_engine import ExecutionEngine
 from trading.risk_manager import RiskDecision
 from utils.logger import setup_logger
@@ -27,9 +31,14 @@ logger = setup_logger("trading.market_worker")
 class MarketWorker:
     """
     Encapsulates all per-market components for one trading symbol.
+    
+    v8: Now integrates SetupDetector for trend + digit frequency analysis.
+    The setup detector determines IF we should trade and in what direction.
+    The ML model (Logistic Regression) is a CONFIRMATION signal.
     """
 
-    def __init__(self, symbol: str, deriv_ws, model_type: str = "ensemble"):
+    def __init__(self, symbol: str, deriv_ws, model_type: str = "logistic",
+                 setup_detector: SetupDetector = None):
         self.symbol = symbol
         self.ws = deriv_ws
         self.model_type = model_type
@@ -42,43 +51,42 @@ class MarketWorker:
         self.duration_optimizer = DurationOptimizer()
         self.drift_detector = DriftDetector()
         self.persistence = ModelPersistence(symbol=symbol)
-        self.signal_gen = SignalGenerator(
-            duration_optimizer=self.duration_optimizer,
-            dynamic_barriers=True,
-            min_model_agreement=0.67,
-        )
+        self.signal_gen = SignalGenerator(dynamic_barriers=True)
         self.executor = ExecutionEngine(
             self.ws, symbol=self.symbol, duration_unit=self._duration_unit,
         )
+
+        # Setup detector (shared across workers for session management)
+        self.setup_detector = setup_detector or SetupDetector()
+
+        # Current setup state
+        self._current_setup: Optional[Setup] = None
+        self._observation_started: bool = False
+        self._observation_complete: bool = False
 
         self.current_payout = 0.85
         self.trade_counter = 0
         self.live_tick_count = 0
         self._warmup_done = False
-        self._bankroll = 0.0  # Updated by main.py from RiskManager
+        self._bankroll = 0.0
 
         self._latest_signal: Optional[Signal] = None
         self._signal_time: float = 0.0
         self._signal_freshness_sec = 5.0
 
-        # ─── Per-tick live learning ───
+        # Per-tick live learning
         self._tick_learn_enabled = TICK_LEARN_ENABLED
         self._tick_learn_interval = TICK_LEARN_INTERVAL
         self._last_drift_retrain_time: float = 0.0
 
-        # ─── Martingale state (updated from StakeManager via main.py) ───
+        # Martingale state (updated from StakeManager via main.py)
         self._is_martingale_active: bool = False
-        self._martingale_direction: Optional[str] = None  # Direction of original losing trade
+        self._martingale_direction: Optional[str] = None
 
-        # ─── Direction Cooldown (anti-stuck mechanism) ───
-        # After losing on Over, block Over signals for a while so the bot
-        # doesn't keep hammering the same wrong direction
-        self._blocked_direction: Optional[str] = None  # "DIGITOVER" or "DIGITUNDER"
-        self._blocked_until: float = 0.0  # Timestamp when block expires
-        self._consecutive_same_dir_losses: int = 0  # Losses in same direction
-
-        # ─── Loss streak cooldown ───
-        # After consecutive losses, wait longer before trading again
+        # Direction Cooldown
+        self._blocked_direction: Optional[str] = None
+        self._blocked_until: float = 0.0
+        self._consecutive_same_dir_losses: int = 0
         self._loss_streak_cooldown_until: float = 0.0
 
         logger.info(f"MarketWorker created: {symbol}, model={model_type}")
@@ -91,7 +99,7 @@ class MarketWorker:
 
         dp = self.aggregator.decimal_places or get_symbol_decimals(self.symbol)
 
-        # Load model snapshot first
+        # Load model snapshot
         snapshots = self.persistence.list_snapshots(symbol=self.symbol)
         if snapshots:
             loaded = self.persistence.load_state(
@@ -162,73 +170,81 @@ class MarketWorker:
             if features is None:
                 return None
 
-            # ─── Per-tick live learning ───
-            # Learn from the actual outcome of this tick, not just trade outcomes.
-            # This makes the model adapt MUCH faster to pattern changes.
+            # Per-tick live learning
             if self._tick_learn_enabled and self.live_tick_count % self._tick_learn_interval == 0:
                 label = 1 if tick.digit > OVER_BARRIER else 0
                 self.model.learn_one(features, label)
 
-            prediction = self.model.predict(features)
+            # ─── SETUP DETECTION (v8: PRIMARY DECISION) ───
+            setup = self.setup_detector.evaluate(self.symbol, features)
+            self._current_setup = setup
 
-            if self.live_tick_count % 100 == 0:
-                model_summary = self.model.summary()
-                blocked_info = ""
-                if self._blocked_direction and time.time() < self._blocked_until:
-                    blocked_info = f" BLOCKED={self._blocked_direction}"
-                # Trend info from features
-                trend_regime = features.get("trend_regime", 0)
-                tstat_50 = features.get("slope_tstat_50", 0.0)
-                tstat_200 = features.get("slope_tstat_200", 0.0)
-                tstat_500 = features.get("slope_tstat_500", 0.0)
-                trend_info = ""
-                if trend_regime != 0:
-                    trend_dir = "UP" if trend_regime == 1 else "DOWN"
-                    trend_info = f" trend={trend_dir}(t50={tstat_50:.1f},t200={tstat_200:.1f},t500={tstat_500:.1f})"
-                else:
-                    trend_info = f" RANGE(t50={tstat_50:.1f},t200={tstat_200:.1f},t500={tstat_500:.1f})"
-                logger.info(
-                    f"[{self.symbol} {self.live_tick_count}t] "
-                    f"prob_over={prediction.prob_over:.3f} "
-                    f"conf={prediction.confidence:.3f} "
-                    f"agree={prediction.model_agreement:.0%} "
-                    f"acc={model_summary['accuracy']:.1f}% "
-                    f"dur={self.duration_optimizer.get_recommendation()['recommended_duration']}{self._duration_unit} "
-                    f"payout={self.current_payout:.2%}"
-                    f"{trend_info}"
-                    f"{blocked_info}"
-                )
+            # ─── OBSERVATION PHASE ───
+            # If a new setup is detected and we haven't started observation yet
+            if setup.active and not self._observation_started:
+                self.setup_detector.start_observation(self.symbol, setup.freq_direction)
+                self._observation_started = True
+                self._observation_complete = False
+            
+            # If setup is active and we're observing, feed ticks to observer
+            if setup.active and self._observation_started and not self._observation_complete:
+                complete = self.setup_detector.observe_tick(self.symbol, tick.digit)
+                if complete:
+                    self._observation_complete = True
+            
+            # If setup is no longer active, reset observation
+            if not setup.active:
+                self._observation_started = False
+                self._observation_complete = False
+                self.setup_detector.clear_observation(self.symbol)
 
-            if not prediction.is_tradeable and prediction.model_agreement < 1.0:
-                # Not tradeable AND not 100% agreement → skip
+            # ─── Check market session tradability ───
+            if not self.setup_detector.is_market_tradable(self.symbol):
                 self._latest_signal = None
                 return None
 
-            # ─── Direction block check ───
-            # BUT: 100% model agreement overrides direction blocks
-            if self._blocked_direction and time.time() < self._blocked_until and prediction.model_agreement < 1.0:
-                from config import CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER
-                from config import MIN_EDGE_THRESHOLD, MIN_CONFIDENCE
-                ev_over = prediction.prob_over * self.current_payout - prediction.prob_under * 1.0
-                ev_under = prediction.prob_under * self.current_payout - prediction.prob_over * 1.0
-                if ev_over > MIN_EDGE_THRESHOLD and prediction.prob_over >= MIN_CONFIDENCE:
-                    pending_direction = CONTRACT_TYPE_OVER
-                elif ev_under > MIN_EDGE_THRESHOLD and prediction.prob_under >= MIN_CONFIDENCE:
-                    pending_direction = CONTRACT_TYPE_UNDER
-                else:
-                    pending_direction = None
+            # ML prediction (confirmation signal)
+            prediction = self.model.predict(features)
 
-                if pending_direction == self._blocked_direction:
+            # Determine duration from observation phase
+            if self._observation_complete:
+                duration = self.setup_detector.get_observed_duration(self.symbol)
+            else:
+                duration = 5  # Default while observing
+
+            # Periodic logging
+            if self.live_tick_count % 100 == 0:
+                model_summary = self.model.summary()
+                setup_score = setup.setup_score if setup.active else 0
+                setup_dir = setup.direction.replace("DIGIT", "") if setup.active else "NONE"
+                obs_status = "OBSERVING" if self._observation_started and not self._observation_complete else \
+                            "READY" if self._observation_complete else "NO_SETUP"
+                
+                logger.info(
+                    f"[{self.symbol} {self.live_tick_count}t] "
+                    f"setup={setup_score:.2f}({setup_dir}) "
+                    f"Over={setup.over_freq:.1%} Under={setup.under_freq:.1%} "
+                    f"edge={setup.freq_edge:.1%} "
+                    f"dur={duration}t obs={obs_status} "
+                    f"payout={self.current_payout:.2%}"
+                )
+
+            # Direction block check
+            if self._blocked_direction and time.time() < self._blocked_until:
+                if setup.active and setup.direction == self._blocked_direction:
                     self._latest_signal = None
                     return None
             elif time.time() >= self._blocked_until and self._blocked_direction:
                 self._blocked_direction = None
 
+            # Generate signal (setup + ML confirmation)
             signal = self.signal_gen.generate(
+                setup=setup,
                 prediction=prediction,
                 features=features,
                 payout=self.current_payout,
                 bankroll=self._bankroll,
+                duration=duration,
                 model_in_drift=self.drift_detector.drift_active,
                 is_martingale=self._is_martingale_active,
                 martingale_direction=self._martingale_direction,
@@ -259,8 +275,8 @@ class MarketWorker:
 
     async def execute_trade(self, signal: Signal, stake: float) -> dict:
         risk_decision = RiskDecision(
-            approved=True, reason="Meta-selector approved",
-            adjusted_stake=stake, checks={"meta_selector": True},
+            approved=True, reason="Setup-based trade approved",
+            adjusted_stake=stake, checks={"setup_score": signal.setup_score},
         )
         result = await self.executor.execute(signal, risk_decision)
         return result
@@ -281,19 +297,15 @@ class MarketWorker:
             duration=signal.contract_duration, won=won, payout=payout, stake=stake,
         )
 
-        # ─── Direction Cooldown Logic ───
+        # Direction Cooldown Logic
         if not won:
-            # Track consecutive losses in same direction
             if signal.direction == self._blocked_direction or self._blocked_direction is None:
                 self._consecutive_same_dir_losses += 1
             else:
                 self._consecutive_same_dir_losses = 1
 
-            # After 2 consecutive losses in the same direction, block that direction
             if self._consecutive_same_dir_losses >= 2:
                 self._blocked_direction = signal.direction
-                # Block duration scales with consecutive losses
-                # 2 losses → 30s block, 3 → 60s, 4+ → 120s
                 if self._consecutive_same_dir_losses == 2:
                     block_sec = 30
                 elif self._consecutive_same_dir_losses == 3:
@@ -303,27 +315,14 @@ class MarketWorker:
                 self._blocked_until = time.time() + block_sec
                 logger.warning(
                     f"DIRECTION BLOCK: {signal.direction} blocked for {block_sec}s "
-                    f"({self._consecutive_same_dir_losses} consecutive losses in this direction)"
+                    f"({self._consecutive_same_dir_losses} consecutive losses)"
                 )
 
-            # ─── Loss streak cooldown ───
-            # After consecutive losses, wait before trading again
-            # 2 losses → 15s, 3 → 30s, 4+ → 60s
-            from trading.risk_manager import RiskManager
             if self._consecutive_same_dir_losses >= 2:
                 cooldown = min(60, 15 * (self._consecutive_same_dir_losses - 1))
                 self._loss_streak_cooldown_until = time.time() + cooldown
-                logger.info(
-                    f"LOSS COOLDOWN: {cooldown}s before next trade "
-                    f"({self._consecutive_same_dir_losses} consecutive direction losses)"
-                )
         else:
-            # Win: reset direction block and consecutive losses
-            if self._blocked_direction and signal.direction != self._blocked_direction:
-                # Won on the opposite direction — keep the block on the losing direction
-                pass
-            else:
-                # Won on same direction or no block — reset everything
+            if not (self._blocked_direction and signal.direction != self._blocked_direction):
                 self._consecutive_same_dir_losses = 0
                 self._blocked_direction = None
                 self._blocked_until = 0.0
@@ -332,30 +331,18 @@ class MarketWorker:
         if drift_event:
             self.duration_optimizer.on_drift_detected()
 
-            # ─── Drift-triggered retrain ───
-            # On CRITICAL drift, rebuild the model from the replay buffer.
-            # This wipes stale weights and rebuilds from recent data.
-            # Cooldown prevents thrashing (retraining too often).
             if (DRIFT_RETRAIN_ENABLED
                     and drift_event.severity == "critical"
                     and time.time() - self._last_drift_retrain_time > DRIFT_RETRAIN_COOLDOWN):
                 buffer_size = len(self.model.replay_buffer)
                 if buffer_size >= 100:
                     logger.warning(
-                        f"🚨 CRITICAL DRIFT on {self.symbol}! "
-                        f"Retraining model from {buffer_size} buffer samples..."
+                        f"CRITICAL DRIFT on {self.symbol}! "
+                        f"Retraining from {buffer_size} buffer samples..."
                     )
                     self.model.retrain_from_buffer()
                     self.drift_detector.reset()
                     self._last_drift_retrain_time = time.time()
-                    logger.info(
-                        f"✅ {self.symbol} retrained → v{self.model.stats.model_version}, "
-                        f"accuracy={self.model.stats.accuracy:.1%}"
-                    )
-                else:
-                    logger.warning(
-                        f"Drift retrain skipped: buffer too small ({buffer_size} < 100)"
-                    )
 
             return drift_event
         return None
@@ -391,19 +378,20 @@ class MarketWorker:
             logger.debug(f"{self.symbol} payout fetch failed: {e}")
 
     def get_signal_score(self) -> float:
+        """Used by MarketSelector to rank markets."""
         signal = self.get_fresh_signal()
         if signal is None:
             return 0.0
-        model_acc = self.model.stats.accuracy if self.model.stats.total_updates > 0 else 0.5
-        model_acc_factor = max(0.1, model_acc)
-        agreement_factor = signal.model_agreement
-        score = signal.confidence * signal.expected_value * self.current_payout * model_acc_factor * agreement_factor
-        return score
+        # Setup score is the primary quality metric
+        return signal.confidence * signal.setup_score * signal.expected_value * self.current_payout
 
     def summary(self) -> dict:
         model_summary = self.model.summary()
         dur_summary = self.duration_optimizer.summary()
         drift_summary = self.drift_detector.summary()
+        setup = self._current_setup
+        session = self.setup_detector.get_session(self.symbol)
+        
         return {
             "symbol": self.symbol,
             "model_type": self.model_type,
@@ -417,4 +405,10 @@ class MarketWorker:
             "drift_active": drift_summary.get("drift_active", False),
             "best_duration": dur_summary.get("best_duration", 5),
             "duration_unit": self._duration_unit,
+            "setup_score": setup.setup_score if setup else 0,
+            "setup_active": setup.active if setup else False,
+            "setup_direction": setup.direction.replace("DIGIT","") if setup and setup.active else "NONE",
+            "session_pnl": session.session_pnl if session else 0,
+            "session_trades": session.session_trades if session else 0,
+            "profit_target_reached": session.profit_target_reached if session else False,
         }

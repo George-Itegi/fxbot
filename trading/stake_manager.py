@@ -101,9 +101,12 @@ class StakeManager:
     AGREEMENT_BELOW = 0.0       # Below 67% → SKIP (handled in signal_gen)
 
     # ─── Martingale Settings ───
-    MARTINGALE_MULTIPLIER = 2.0       # Double stake after loss
-    MAX_MARTINGALE_STEPS = 2          # Max 2 consecutive doublings ($5→$10→$20 then RESET)
-    MAX_MARTINGALE_STAKE = 20.0       # Absolute max stake for martingale (was $50 — too dangerous)
+    # v8: Adjusted for 85% payout. 2x doesn't recover — need 2.35x.
+    # Step 1: $0.35 → Step 2: $0.82 → Step 3: $1.93
+    # If win at step 3: $1.93 × 0.85 = $1.64 profit vs $1.17 total loss = +$0.47 net
+    MARTINGALE_MULTIPLIER = 2.35      # Adjusted for 85% payout (2x doesn't recover)
+    MAX_MARTINGALE_STEPS = 3          # Max 3 steps (trusted setups, max 3-4 consecutive losses)
+    MAX_MARTINGALE_STAKE = 10.0       # Absolute max for martingale ($10 — tighter with quality setups)
 
     # Win streak compounding
     STREAK_BOOST_PER_WIN = 0.10     # +10% per consecutive win
@@ -117,8 +120,9 @@ class StakeManager:
         self._initial_bankroll = initial_bankroll
         logger.info(
             f"StakeManager initialized: bankroll=${initial_bankroll:.2f}, "
-            f"martingale=2x, max_steps={self.MAX_MARTINGALE_STEPS}, "
-            f"breakeven_wr={self._breakeven_win_rate(0.89):.1%}"
+            f"martingale={self.MARTINGALE_MULTIPLIER}x, max_steps={self.MAX_MARTINGALE_STEPS}, "
+            f"max_martingale_stake=${self.MAX_MARTINGALE_STAKE}, "
+            f"breakeven_wr={self._breakeven_win_rate(0.85):.1%}"
         )
 
     # ─── Public API ───
@@ -176,8 +180,8 @@ class StakeManager:
         # 2. Confidence Multiplier
         confidence_mult = self._confidence_multiplier(signal.confidence)
 
-        # 3. Agreement Multiplier
-        agreement_mult = self._agreement_multiplier(signal.model_agreement)
+        # 3. Setup Quality Multiplier (replaces agreement — now single model)
+        setup_mult = self._setup_quality_multiplier(signal.setup_score)
 
         # 4. Streak Factor
         streak_factor = self._streak_factor()
@@ -186,7 +190,7 @@ class StakeManager:
         ev_factor = self._ev_factor(signal.expected_value, payout)
 
         # ─── Combine All Factors ───
-        combined_mult = confidence_mult * agreement_mult * streak_factor * ev_factor
+        combined_mult = confidence_mult * setup_mult * streak_factor * ev_factor
 
         stake = base_stake * combined_mult
 
@@ -209,7 +213,7 @@ class StakeManager:
             "mode": "normal",
             "base_stake": round(base_stake, 2),
             "confidence_mult": round(confidence_mult, 2),
-            "agreement_mult": round(agreement_mult, 2),
+            "setup_mult": round(setup_mult, 2),
             "streak_factor": round(streak_factor, 2),
             "ev_factor": round(ev_factor, 2),
             "combined_mult": round(combined_mult, 2),
@@ -317,7 +321,7 @@ class StakeManager:
             "consecutive_losses": self.state.consecutive_losses,
             "martingale_step": self.state.martingale_step,
             "martingale_direction": self.state.martingale_direction,
-            "martingale_next_mult": 2 ** self.state.martingale_step if self.state.martingale_step > 0 else 1,
+            "martingale_next_mult": round(self.MARTINGALE_MULTIPLIER ** self.state.martingale_step, 2) if self.state.martingale_step > 0 else 1,
             "recent_win_rate": round(self.get_recent_win_rate(), 3),
             "recent_trades": len(self.state.recent_results),
             "last_breakdown": self.state.last_stake_breakdown,
@@ -359,15 +363,16 @@ class StakeManager:
         mult = self.CONFIDENCE_MIN_MULT + position * (self.CONFIDENCE_MAX_MULT - self.CONFIDENCE_MIN_MULT)
         return mult
 
-    def _agreement_multiplier(self, agreement: float) -> float:
-        """Scale stake by model agreement."""
-        if agreement >= 1.0:
-            return self.AGREEMENT_ALL_3
-        elif agreement >= 0.67:
-            position = (agreement - 0.67) / (1.0 - 0.67)
-            return self.AGREEMENT_2_OF_3 + position * (self.AGREEMENT_ALL_3 - self.AGREEMENT_2_OF_3)
+    def _setup_quality_multiplier(self, setup_score: float) -> float:
+        """Scale stake by setup quality score."""
+        # Score 0.60 = 1.0x (minimum), 0.75 = 1.5x, 0.90+ = 2.0x
+        if setup_score >= 0.90:
+            return 2.0
+        elif setup_score >= 0.60:
+            position = (setup_score - 0.60) / (0.90 - 0.60)
+            return 1.0 + position * 1.0  # 1.0x to 2.0x
         else:
-            return self.AGREEMENT_BELOW
+            return 0.5  # Below minimum — shouldn't trade but safety net
 
     def _streak_factor(self) -> float:
         """Win streak compounding."""

@@ -1,15 +1,13 @@
 """
-Market Selector — Aggressive Quality Filter
-=============================================
-Picks the BEST market to trade by heavily weighting:
-1. Model agreement (100% = massive boost, <100% = big penalty)
-2. Confidence (higher = much better)
-3. Expected value (must be strongly positive)
-4. Recent profitability (markets that are winning get priority)
-5. Model accuracy (proven models get priority)
+Market Selector — Setup-Based Quality Selection (v8)
+=====================================================
+Picks the BEST market to trade based on SETUP quality, not just model signals.
 
-The key insight: with 13 markets generating signals, we can AFFORD
-to be very picky. Only trade when the signal is STRONG.
+v8 Changes:
+- Setup score is the primary ranking metric
+- Market persistence: stay on one market during a setup
+- Only switch when: setup breaks, profit target reached, or no trade happening
+- Simpler scoring: setup_score * frequency_edge * recent_win_rate
 """
 
 import time
@@ -19,7 +17,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from config import (META_SELECTOR_EXPLORATION_RATE, META_SELECTOR_MIN_TRADES,
-                    META_SELECTOR_SCORE_WINDOW)
+                    META_SELECTOR_SCORE_WINDOW, MARKET_SESSION_MAX_IDLE_SEC,
+                    PROFIT_TARGET_PER_MARKET)
 from trading.signal_generator import Signal
 from utils.logger import setup_logger
 
@@ -46,26 +45,16 @@ class MarketStats:
         wins = sum(1 for r in self.recent_results if r)
         return wins / len(self.recent_results)
 
-    @property
-    def confidence(self) -> float:
-        if self.total_trades < META_SELECTOR_MIN_TRADES:
-            return self.total_trades / META_SELECTOR_MIN_TRADES * 0.5
-        return min(1.0, 0.5 + 0.5 * (META_SELECTOR_MIN_TRADES / max(self.total_trades, 1)))
-
 
 class MarketSelector:
     """
-    Selects the best market to trade using aggressive quality scoring.
-
-    Scoring weights:
-    - AGREEMENT BONUS: 100% agreement = 3.0x, 67% = 1.0x, below = 0.3x
-    - CONFIDENCE: Scales from 0.5x at 60% to 2.0x at 90%+
-    - EV: Scales from 0.5x at 0.01 to 2.0x at 0.50+
-    - RECENT WIN RATE: 80%+ wr = 2.0x, 50% = 1.0x, <40% = 0.3x
-    - MODEL ACCURACY: Scales from 0.5x at 50% to 1.5x at 65%+
-
-    Exploration drops to near-zero quickly — we want EXPLOITATION
-    when we have 13 markets to choose from.
+    Selects the best market to trade based on SETUP quality.
+    
+    v8 Philosophy:
+    - Stay on one market during a good setup (persistence)
+    - Only switch when the setup breaks or profit target is reached
+    - When choosing a new market, pick the one with the best setup score
+    - Quality over quantity — a 0.85 setup on one market beats a 0.60 on another
     """
 
     def __init__(self, epsilon: float = None):
@@ -74,18 +63,42 @@ class MarketSelector:
         self._total_selections = 0
         self._exploration_count = 0
         self._last_selected_market: Optional[str] = None
-
-        logger.info(f"MarketSelector initialized: epsilon={self.epsilon:.0%}")
+        self._last_trade_time: float = 0.0
+        
+        logger.info(f"MarketSelector initialized: setup-based quality selection")
 
     def select_market(self, workers: dict) -> Optional[str]:
+        """
+        Select the best market to trade.
+        
+        Persistence logic:
+        - If we recently traded a market and it still has a good setup, stay on it
+        - Only switch when the current market's setup breaks or profit target is reached
+        """
         candidates = {}
         for symbol, worker in workers.items():
             signal = worker.get_fresh_signal()
             if signal is not None:
-                candidates[symbol] = (worker, signal)
+                # Check if market is tradable (not at profit target, setup not broken)
+                if worker.setup_detector.is_market_tradable(symbol):
+                    candidates[symbol] = (worker, signal)
 
         if not candidates:
             return None
+
+        # ─── PERSISTENCE: Stay on the current market if setup is still good ───
+        if self._last_selected_market in candidates:
+            worker, signal = candidates[self._last_selected_market]
+            
+            # Check if enough time has passed without a trade (idle timeout)
+            idle_time = time.time() - self._last_trade_time
+            session = worker.setup_detector.get_session(self._last_selected_market)
+            
+            # If the session has trades and hasn't hit profit target, stay
+            if session and session.session_trades > 0 and not session.profit_target_reached:
+                if idle_time < MARKET_SESSION_MAX_IDLE_SEC:
+                    # Stay on this market — its setup is still valid
+                    return self._last_selected_market
 
         if len(candidates) == 1:
             sym = list(candidates.keys())[0]
@@ -93,17 +106,22 @@ class MarketSelector:
             self._log_selection(sym, signal, worker, score=0.0, reason="only_candidate")
             return sym
 
+        # ─── SELECT BEST SETUP ───
         self._total_selections += 1
-        # Decay exploration fast — with 13 markets, exploitation pays off
         decayed_epsilon = max(0.02, self.epsilon * (0.995 ** self._total_selections))
 
+        # Exploration: occasionally try a different market
         if random.random() < decayed_epsilon:
             selected = random.choice(list(candidates.keys()))
             self._exploration_count += 1
             worker, signal = candidates[selected]
             self._log_selection(selected, signal, worker, score=0.0, reason="exploring")
+            if selected != self._last_selected_market:
+                logger.info(f"Market SWITCH: {self._last_selected_market} -> {selected} (exploring)")
+            self._last_selected_market = selected
             return selected
 
+        # Exploitation: pick the market with the best setup score
         best_symbol = None
         best_score = -1.0
         best_breakdown = {}
@@ -117,116 +135,100 @@ class MarketSelector:
 
         if best_symbol != self._last_selected_market:
             if self._last_selected_market is not None:
-                logger.info(f"Market SWITCH: {self._last_selected_market} -> {best_symbol} (score={best_score:.2f})")
+                logger.info(
+                    f"Market SWITCH: {self._last_selected_market} -> {best_symbol} "
+                    f"(setup_score={best_score:.2f})"
+                )
             self._last_selected_market = best_symbol
 
-        # Log why this market was picked
         worker, signal = candidates[best_symbol]
         self._log_selection(best_symbol, signal, worker, score=best_score,
-                           reason="best_score", breakdown=best_breakdown)
+                           reason="best_setup", breakdown=best_breakdown)
 
         return best_symbol
 
     def _compute_score(self, symbol: str, worker, signal: Signal) -> tuple:
         """
-        Aggressive quality scoring — heavily rewards strong signals.
-
-        Returns (score, breakdown_dict) for logging.
+        Score a market based on SETUP quality (not model agreement).
+        
+        v8 scoring:
+        1. Setup score (0-1) — the primary quality metric
+        2. Frequency edge — how far from 50/50 digit distribution
+        3. Recent win rate on this market
+        4. ML confirmation (bonus if ML agrees, penalty if it disagrees)
         """
-        # ─── 1. AGREEMENT MULTIPLIER (the BIGGEST factor) ───
-        # 100% agreement = 3.0x (all 3 models agree — STRONGEST signal)
-        # 67% agreement = 1.0x (2 of 3 — acceptable)
-        # Below 67% = 0.3x (weak — probably shouldn't trade)
-        if signal.model_agreement >= 1.0:
-            agreement_mult = 3.0
-        elif signal.model_agreement >= 0.67:
-            # Scale from 1.0 at 67% to 3.0 at 100%
-            agreement_mult = 1.0 + 2.0 * ((signal.model_agreement - 0.67) / 0.33)
+        # 1. Setup score multiplier
+        setup_score = signal.setup_score
+        if setup_score >= 0.85:
+            setup_mult = 2.5
+        elif setup_score >= 0.70:
+            setup_mult = 1.5 + (setup_score - 0.70) / 0.15 * 1.0
+        elif setup_score >= 0.60:
+            setup_mult = 1.0 + (setup_score - 0.60) / 0.10 * 0.5
         else:
-            agreement_mult = 0.3
+            setup_mult = 0.5
 
-        # ─── 2. CONFIDENCE MULTIPLIER ───
-        # 60% confidence = 0.5x (barely above threshold)
-        # 75% confidence = 1.2x (good)
-        # 90%+ confidence = 2.0x (very strong)
-        if signal.confidence >= 0.90:
-            confidence_mult = 2.0
-        elif signal.confidence >= 0.60:
-            confidence_mult = 0.5 + 1.5 * ((signal.confidence - 0.60) / 0.30)
+        # 2. Frequency edge multiplier
+        # Higher edge = more confident in direction
+        over_freq = worker._current_setup.over_freq if worker._current_setup else 0.5
+        under_freq = worker._current_setup.under_freq if worker._current_setup else 0.5
+        freq_edge = abs(over_freq - under_freq)
+        if freq_edge >= 0.10:
+            freq_mult = 2.0
+        elif freq_edge >= 0.05:
+            freq_mult = 1.0 + freq_edge * 10
         else:
-            confidence_mult = 0.5
+            freq_mult = 0.5 + freq_edge * 10
 
-        # ─── 3. EV MULTIPLIER ───
-        # EV > 0.50 = 2.0x (huge edge)
-        # EV ~ 0.20 = 1.2x (decent edge)
-        # EV ~ 0.01 = 0.5x (barely positive)
-        if signal.expected_value >= 0.50:
-            ev_mult = 2.0
-        elif signal.expected_value >= 0.01:
-            ev_mult = 0.5 + 1.5 * ((signal.expected_value - 0.01) / 0.49)
-        else:
-            ev_mult = 0.5
-
-        # ─── 4. RECENT WIN RATE MULTIPLIER ───
-        # Markets that are WINNING get priority, losing ones get penalized
+        # 3. Recent win rate multiplier
         stats = self._stats.get(symbol)
         if stats and stats.total_trades >= 3:
             wr = stats.recent_win_rate
-            if wr >= 0.80:
-                wr_mult = 2.0
-            elif wr >= 0.55:
-                wr_mult = 1.0 + 1.0 * ((wr - 0.55) / 0.25)
-            elif wr >= 0.40:
-                wr_mult = 0.5 + 0.5 * ((wr - 0.40) / 0.15)
+            if wr >= 0.65:
+                wr_mult = 1.5
+            elif wr >= 0.50:
+                wr_mult = 1.0
             else:
-                wr_mult = 0.3  # Losing market — strong penalty
+                wr_mult = 0.5
         else:
-            wr_mult = 1.0  # No data — neutral
+            wr_mult = 1.0
 
-        # ─── 5. MODEL ACCURACY MULTIPLIER ───
-        model_acc = worker.model.stats.accuracy if worker.model.stats.total_updates > 0 else 50.0
-        if model_acc >= 65.0:
-            acc_mult = 1.5
-        elif model_acc >= 55.0:
-            acc_mult = 1.0 + 0.5 * ((model_acc - 55.0) / 10.0)
-        else:
-            acc_mult = max(0.5, model_acc / 55.0)
+        # 4. ML confirmation bonus
+        # If model_agreement is 1.0 (single model agrees), small bonus
+        ml_mult = 1.0 if signal.confidence >= 0.55 else 0.8
 
-        # ─── COMBINED SCORE ───
-        score = agreement_mult * confidence_mult * ev_mult * wr_mult * acc_mult
+        # Combined score
+        score = setup_mult * freq_mult * wr_mult * ml_mult
 
         breakdown = {
-            "agreement": round(agreement_mult, 2),
-            "confidence": round(confidence_mult, 2),
-            "ev": round(ev_mult, 2),
+            "setup": round(setup_mult, 2),
+            "freq_edge": round(freq_mult, 2),
             "win_rate": round(wr_mult, 2),
-            "accuracy": round(acc_mult, 2),
+            "ml": round(ml_mult, 2),
             "total": round(score, 2),
         }
 
         return score, breakdown
 
-    def _log_selection(self, symbol: str, signal: Signal, worker, 
+    def _log_selection(self, symbol: str, signal: Signal, worker,
                        score: float, reason: str, breakdown: dict = None):
         """Log why a market was selected."""
-        stats = self._stats.get(symbol)
-        wr_str = f"wr={stats.recent_win_rate:.0%}" if stats and stats.total_trades >= 3 else "wr=?"
+        setup = worker._current_setup
+        setup_info = f"setup={setup.setup_score:.2f}" if setup else "setup=?"
 
         if breakdown:
             logger.info(
                 f"SELECTED {symbol}: score={score:.2f} "
-                f"[agree={breakdown['agreement']}x conf={breakdown['confidence']}x "
-                f"ev={breakdown['ev']}x {wr_str}x acc={breakdown['accuracy']}x] "
+                f"[setup={breakdown['setup']}x freq={breakdown['freq_edge']}x "
+                f"wr={breakdown['win_rate']}x ml={breakdown['ml']}x] "
                 f"dir={signal.direction.replace('DIGIT','')} "
-                f"prob={signal.confidence:.0%} EV={signal.expected_value:+.3f} "
-                f"agree={signal.model_agreement:.0%} "
+                f"conf={signal.confidence:.0%} {setup_info} "
                 f"({reason})"
             )
         else:
             logger.info(
                 f"SELECTED {symbol}: {signal.direction.replace('DIGIT','')} "
-                f"prob={signal.confidence:.0%} EV={signal.expected_value:+.3f} "
-                f"agree={signal.model_agreement:.0%} ({reason})"
+                f"conf={signal.confidence:.0%} {setup_info} ({reason})"
             )
 
     def record_outcome(self, symbol: str, won: bool, pnl: float):
@@ -237,6 +239,7 @@ class MarketSelector:
         stats.total_trades += 1
         stats.recent_results.append(won)
         stats.total_pnl += pnl
+        self._last_trade_time = time.time()
 
         if won:
             stats.wins += 1
@@ -249,7 +252,6 @@ class MarketSelector:
             market_stats[symbol] = {
                 "win_rate": round(stats.recent_win_rate, 3),
                 "total_trades": stats.total_trades,
-                "confidence": round(stats.confidence, 3),
                 "pnl": round(stats.total_pnl, 2),
             }
 

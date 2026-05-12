@@ -1,12 +1,18 @@
 """
-Deriv Over/Under Bot — Multi-Market Orchestrator v7
+Deriv Over/Under Bot — Multi-Market Orchestrator v8
 =====================================================
-Multiple MarketWorkers -> MarketSelector (bandit) -> shared RiskManager -> Execute -> Learn
+Structured Quality Trading — mirrors the manual trading process:
+1. Trend check (3-window agreement, 3-sigma threshold)
+2. Digit frequency Over/Under analysis (PRIMARY direction signal)
+3. Observation phase (20-30s watching digit movement -> duration)
+4. Execute few high-quality trades, then stop that market
+5. Profit target per market session ($50)
+6. Single Logistic Regression as ML CONFIRMATION
 
 Usage:
   python main.py                                    # Trade all default markets
   python main.py --markets 1HZ100V 1HZ50V R_100    # Specific markets
-  python main.py --symbol 1HZ100V                  # Single market (backward compatible)
+  python main.py --symbol 1HZ100V                  # Single market
 """
 
 import argparse
@@ -23,11 +29,14 @@ from config import (DEFAULT_SYMBOL, INITIAL_BANKROLL, DEFAULT_MARKETS,
                     ALLOW_MULTIPLE_TRADES, MAX_CONCURRENT_TRADES,
                     TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
                     get_symbol_decimals, get_symbol_category,
-                    supports_digit_contracts, SYMBOLS, VALID_MULTI_MARKET_SYMBOLS)
+                    supports_digit_contracts, SYMBOLS, VALID_MULTI_MARKET_SYMBOLS,
+                    PROFIT_TARGET_PER_MARKET, MARTINGALE_MIN_CONFIDENCE,
+                    MIN_SETUP_SCORE, OBSERVATION_PERIOD_SEC)
 import config as config
 from data.deriv_ws import DerivWS
 from trading.market_worker import MarketWorker
 from trading.market_selector import MarketSelector
+from trading.setup_detector import SetupDetector
 from trading.risk_manager import RiskManager
 from trading.stake_manager import StakeManager
 from trading.trade_logger import TradeLogger
@@ -38,7 +47,7 @@ logger = setup_logger("main")
 
 
 class DerivBot:
-    """Multi-market bot orchestrator — LIVE trading on demo account."""
+    """Multi-market bot orchestrator — v8 Structured Quality Trading."""
 
     def __init__(self, markets: list = None, model_type: str = None,
                  bankroll: float = None):
@@ -55,22 +64,22 @@ class DerivBot:
         self.stake_mgr = StakeManager(initial_bankroll=effective_bankroll)
         self.trade_logger = TradeLogger()
         self.perf_tracker = PerformanceTracker()
+        
+        # SHARED setup detector across all workers
+        self.setup_detector = SetupDetector()
         self.selector = MarketSelector()
 
         self.workers: dict[str, MarketWorker] = {}
 
         self.running = False
         self._shutdown_done = False
-        self._active_trades: dict[str, float] = {}   # symbol → open_time (supports multiple concurrent trades)
+        self._active_trades: dict[str, float] = {}
         self._contract_to_symbol: dict[int, str] = {}
         self._real_balance: float = 0.0
         self._global_trade_counter = 0
         self._last_trade_time: float = 0.0
-        self._symbol_cooldowns: dict[str, float] = {}  # symbol → cooldown expiry (per-market loss cooldowns)
+        self._symbol_cooldowns: dict[str, float] = {}
 
-        # Trade timeout — if a trade stays open longer than this, auto-clear it.
-        # A 5-10 tick contract should settle in under 30 seconds.
-        # If we haven't received the result in 60s, something went wrong.
         self._trade_timeout_sec = 60.0
 
         self.ws.on_tick = self._on_tick
@@ -79,40 +88,36 @@ class DerivBot:
         self.ws.on_error = self._on_error
 
         logger.info(
-            f"DerivBot v6 initialized: {len(self.markets)} markets, "
+            f"DerivBot v8 initialized: {len(self.markets)} markets, "
             f"LIVE mode, model={self.model_type}"
         )
         logger.info(f"  Markets: {', '.join(self.markets)}")
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v6 — MULTI-MARKET LIVE TRADING")
-        logger.info(f"  Markets:    {len(self.markets)} markets (each with own model)")
+        logger.info("  DERIV OVER/UNDER BOT v8 — STRUCTURED QUALITY TRADING")
+        logger.info(f"  Markets:    {len(self.markets)} markets")
         for i, m in enumerate(self.markets):
             logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
         logger.info(f"  Mode:       LIVE (demo account)")
-        logger.info(f"  Model:      {self.model_type} (per market)")
-        logger.info(f"  Selector:   Market bandit (epsilon=10%)")
+        logger.info(f"  Model:      {self.model_type} (ML CONFIRMATION only — rules are primary)")
+        logger.info(f"  Selector:   Setup-based quality selection with market persistence")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info(f"  Barrier:    Over {OVER_BARRIER} / Under {UNDER_BARRIER}")
-        logger.info(f"  Duration:   1-10t (dynamic per market)")
         logger.info("")
-        logger.info("  Martingale: 2x on loss (max 2 steps, $20 cap)")
-        logger.info("  Martingale gate: 80%+ confidence AND 100% agreement AND same direction")
-        logger.info(f"  Min confidence: {config.MIN_CONFIDENCE:.0%} (trend-aligned: {max(0.50, config.MIN_CONFIDENCE - config.TREND_CONFIDENCE_REDUCTION):.0%})")
-        logger.info("  Force trade: YES when 100% agree + conf >= 60% + EV > 0 + TREND")
-        logger.info(f"  Trend gate: REQUIRED (3-sigma, windows: 50, 200, 500) — no trend = no trade")
-        if ALLOW_MULTIPLE_TRADES:
-            logger.info(f"  Multi-trade: UP TO {MAX_CONCURRENT_TRADES} markets simultaneously")
-        else:
-            logger.info("  Multi-trade: OFF (one trade at a time)")
-        logger.info("  Circuit breaker: 10 losses -> 30s cooldown")
-        logger.info("  No daily trade limit (demo training mode)")
-        if config.TICK_LEARN_ENABLED:
-            logger.info(f"  Per-tick learning: ON (every {config.TICK_LEARN_INTERVAL}th tick)")
-        else:
-            logger.info("  Per-tick learning: OFF (models only learn from trade outcomes)")
-        logger.info("  Drift retrain: ON (rebuild model from buffer on critical drift)")
+        logger.info("  Decision Flow:")
+        logger.info("    1. Trend check (3-window, 3-sigma) → no trend = no trade")
+        logger.info("    2. Digit frequency Over/Under → PRIMARY direction signal")
+        logger.info("    3. Observation phase (25s) → determines tick duration")
+        logger.info("    4. ML Logistic Regression → CONFIRMS or adjusts confidence")
+        logger.info("    5. Setup quality score → drives trade decision")
+        logger.info("")
+        logger.info(f"  Profit target: ${PROFIT_TARGET_PER_MARKET:.0f} per market session")
+        logger.info(f"  Observation:   {OBSERVATION_PERIOD_SEC}s before determining duration")
+        logger.info(f"  Setup min:     {MIN_SETUP_SCORE:.2f} quality score to trade")
+        logger.info(f"  Martingale:    2.35x on loss (max 3 steps, $10 cap, 85% payout adjusted)")
+        logger.info(f"  Martingale gate: {MARTINGALE_MIN_CONFIDENCE:.0%}+ confidence AND valid setup")
+        logger.info("  Market persistence: STAY on one market during setup")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
         logger.info("=" * 65)
 
@@ -136,7 +141,10 @@ class DerivBot:
         await self.ws.subscribe_to_balance()
 
         for symbol in self.markets:
-            worker = MarketWorker(symbol, self.ws, model_type=self.model_type)
+            worker = MarketWorker(
+                symbol, self.ws, model_type=self.model_type,
+                setup_detector=self.setup_detector,
+            )
             worker._bankroll = self.risk_mgr.bankroll
             self.workers[symbol] = worker
 
@@ -156,25 +164,18 @@ class DerivBot:
             while self.running:
                 await asyncio.sleep(1)
 
-                # ─── STUCK TRADE DETECTION ───
-                # If a trade has been open for too long, the Deriv result callback
-                # was probably missed (network glitch, WS reconnection, etc.).
-                # Auto-clear it so the bot can resume trading.
+                # Stuck trade detection
                 for sym, open_time in list(self._active_trades.items()):
                     elapsed = time.time() - open_time
                     if elapsed > self._trade_timeout_sec:
                         logger.warning(
-                            f"STUCK TRADE DETECTED: {sym} has been open "
-                            f"for {elapsed:.0f}s (timeout={self._trade_timeout_sec:.0f}s). "
-                            f"Auto-clearing to resume trading."
+                            f"STUCK TRADE DETECTED: {sym} open for {elapsed:.0f}s. Auto-clearing."
                         )
-                        # Clean up any pending contracts for this symbol
                         worker = self.workers.get(sym)
                         if worker:
                             for cid in list(worker.executor.pending_contracts.keys()):
                                 self._contract_to_symbol.pop(cid, None)
                             worker.executor.pending_contracts.clear()
-                        # Reset the stuck state for this symbol
                         self._active_trades.pop(sym, None)
                         self.risk_mgr.open_positions = len(self._active_trades)
                         self._last_trade_time = time.time()
@@ -225,9 +226,7 @@ class DerivBot:
         if balance > 0:
             self._real_balance = balance
             self.risk_mgr.update_bankroll(balance)
-            # Update stake manager's drawdown tracking
             self.stake_mgr._update_drawdown(balance)
-            # Push bankroll to all workers so they can calculate dynamic stakes
             for worker in self.workers.values():
                 worker._bankroll = balance
 
@@ -241,15 +240,10 @@ class DerivBot:
 
             max_positions = MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1
             if signal is not None and len(self._active_trades) < max_positions:
-                # Check global minimum interval
                 if time.time() - self._last_trade_time < MIN_TRADE_INTERVAL_SEC:
                     return
-                # Check per-symbol cooldown (from recent losses on this market)
                 if symbol in self._symbol_cooldowns and time.time() < self._symbol_cooldowns[symbol]:
                     return
-                # CRITICAL: Fire as separate task to avoid async deadlock.
-                # If we await here, the recv loop is blocked and can't read
-                # the proposal response → 10s timeout.
                 asyncio.create_task(self._evaluate_and_trade())
 
         except Exception as e:
@@ -260,10 +254,7 @@ class DerivBot:
         if len(self._active_trades) >= max_positions:
             return
 
-        # ─── Push martingale state to ALL workers ───
-        # This is critical: the signal generator needs to know if we're in
-        # martingale recovery so it can apply the higher confidence gate
-        # AND direction persistence (must recover in same direction).
+        # Push martingale state to all workers
         is_martingale = self.stake_mgr.state.martingale_step > 0
         martingale_dir = self.stake_mgr.state.martingale_direction
         for worker in self.workers.values():
@@ -274,7 +265,6 @@ class DerivBot:
         if best_symbol is None:
             return
 
-        # Can't open a second trade on the same market (one trade per market always)
         if best_symbol in self._active_trades:
             return
 
@@ -283,8 +273,6 @@ class DerivBot:
         if signal is None:
             return
 
-        # Dynamic stake sizing via StakeManager
-        # Uses confidence, agreement, drawdown recovery, and win streaks
         dynamic_stake = self.stake_mgr.calculate_stake(
             signal=signal,
             bankroll=self.risk_mgr.bankroll,
@@ -292,22 +280,18 @@ class DerivBot:
         )
         signal.stake = dynamic_stake
 
-        # Mark if this is a martingale recovery trade (risk manager won't reduce it)
         breakdown = self.stake_mgr.state.last_stake_breakdown
         signal.is_martingale = breakdown.get("mode") == "martingale_recovery" if breakdown else False
 
-        # Log stake breakdown for transparency
         if breakdown and len(breakdown) > 2:
-            recovery_tag = " [MARTINGALE RECOVERY — loss reduction BYPASSED]" if signal.is_martingale else ""
-            martingale_info = f" martingale={breakdown.get('martingale_step', 0)}x2" if breakdown.get('martingale_step', 0) > 0 else ""
+            recovery_tag = " [MARTINGALE RECOVERY]" if signal.is_martingale else ""
             logger.info(
                 f"STAKE: ${dynamic_stake:.2f} = "
-                f"base=${breakdown.get('base_stake', 0):.2f} × "
-                f"conf={breakdown.get('confidence_mult', 1):.1f} × "
-                f"agree={breakdown.get('agreement_mult', 1):.1f} × "
-                f"streak={breakdown.get('streak_factor', 1):.1f} × "
+                f"base=${breakdown.get('base_stake', 0):.2f} x "
+                f"conf={breakdown.get('confidence_mult', 1):.1f} x "
+                f"setup={breakdown.get('setup_mult', 1):.1f} x "
+                f"streak={breakdown.get('streak_factor', 1):.1f} x "
                 f"ev={breakdown.get('ev_factor', 1):.1f}"
-                f"{martingale_info}"
                 f"{recovery_tag}"
             )
 
@@ -318,7 +302,7 @@ class DerivBot:
             worker.clear_signal()
             return
 
-        self._active_trades[best_symbol] = time.time()  # Lock this market
+        self._active_trades[best_symbol] = time.time()
         self.risk_mgr.open_positions = len(self._active_trades)
         self.trade_logger.log_signal(signal)
 
@@ -339,6 +323,7 @@ class DerivBot:
                     f"TRADE OPEN: {best_symbol} {signal.direction} "
                     f"barrier={signal.barrier} stake=${result.stake:.2f} "
                     f"payout=${result.payout:.2f} dur={signal.contract_duration}t "
+                    f"setup={signal.setup_score:.2f} "
                     f"contract={result.contract_id}"
                 )
             else:
@@ -381,28 +366,26 @@ class DerivBot:
         self._global_trade_counter += 1
         worker.trade_counter += 1
 
-        # ─── Loss cooldown ───
-        # After a loss, wait before the next trade to let models adapt
+        # Loss cooldown
         if not won:
-            # Scale cooldown with consecutive losses
             consec = self.risk_mgr.consecutive_losses
             if consec >= 3:
-                cooldown_time = 30  # 30s after 3+ losses
+                cooldown_time = 30
             elif consec >= 2:
-                cooldown_time = 15  # 15s after 2 losses
+                cooldown_time = 15
             else:
-                cooldown_time = 5   # 5s after 1 loss
+                cooldown_time = 5
 
             if ALLOW_MULTIPLE_TRADES:
-                # Per-symbol cooldown: only the losing market waits,
-                # other markets can still trade freely
                 self._symbol_cooldowns[symbol] = time.time() + cooldown_time
             else:
-                # Global cooldown: all markets wait (old behavior)
                 self._last_trade_time = time.time() + cooldown_time
 
         pnl = payout - stake if won else -stake
         self.selector.record_outcome(symbol, won, pnl)
+
+        # Record in market session
+        self.setup_detector.record_session_trade(symbol, won, pnl)
 
         trade = TradeRecord(
             trade_id=self._global_trade_counter,
@@ -417,7 +400,7 @@ class DerivBot:
             won=won,
             balance_after=self.risk_mgr.bankroll,
             duration=signal.contract_duration,
-            notes=f"contract={contract_id}",
+            notes=f"setup_score={signal.setup_score:.2f} contract={contract_id}",
         )
         self.perf_tracker.record_trade(trade)
         self.trade_logger.log_outcome(signal, won, payout, self.risk_mgr.bankroll)
@@ -432,19 +415,17 @@ class DerivBot:
         self._active_trades.pop(symbol, None)
         self._last_trade_time = time.time()
 
+        # Log session info
+        session = self.setup_detector.get_session(symbol)
+        if session:
+            logger.info(
+                f"[{symbol}] Session: PnL=${session.session_pnl:.2f} "
+                f"trades={session.session_trades} wins={session.session_wins} "
+                f"{'TARGET REACHED' if session.profit_target_reached else ''}"
+            )
+
         if self._global_trade_counter % 10 == 0:
             self._log_status()
-
-        # Log profitability check periodically
-        if self._global_trade_counter % 20 == 0:
-            profit_check = self.stake_mgr.is_profitable_at_current_win_rate(worker.current_payout)
-            logger.info(
-                f"PROFIT CHECK: wr={profit_check['win_rate']:.1%} "
-                f"breakeven={profit_check['breakeven_wr']:.1%} "
-                f"{'PROFITABLE' if profit_check['is_profitable'] else 'LOSING'} "
-                f"gap={profit_check['gap']:+.1%} "
-                f"ev=${profit_check['ev_per_dollar']:+.4f}/$1"
-            )
 
     def _log_status(self):
         selector_summary = self.selector.summary()
@@ -458,31 +439,25 @@ class DerivBot:
                      f"Balance: ${risk_summary['bankroll']:.2f} | "
                      f"P&L: ${risk_summary['total_pnl']:.2f} | "
                      f"Consec.L: {risk_summary['consecutive_losses']} | "
-                     f"Active: {active_count}/{MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1} [{active_syms}]")
+                     f"Active: {active_count} [{active_syms}]")
         logger.info(
             f"  Stake Mgr: wr={stake_summary['recent_win_rate']:.1%} "
             f"dd={stake_summary['current_drawdown_pct']}% "
-            f"streak=W{stake_summary['consecutive_wins']}/L{stake_summary['consecutive_losses']} "
-            f"martingale_step={stake_summary['martingale_step']} "
-            f"martingale_next={stake_summary['martingale_next_mult']}x"
+            f"martingale_step={stake_summary['martingale_step']}"
         )
         logger.info(f"  Market Selector: last={selector_summary['last_selected']}")
 
         for symbol, worker in self.workers.items():
             w_summary = worker.summary()
+            session = self.setup_detector.get_session(symbol)
+            session_pnl = f"session=${session.session_pnl:.2f}" if session else ""
+            target = " TARGET!" if w_summary.get('profit_target_reached') else ""
             logger.info(
                 f"  {symbol}: ticks={w_summary['live_ticks']} "
                 f"trades={w_summary['trade_count']} "
-                f"acc={w_summary['model_accuracy']:.1f}% "
+                f"setup={w_summary['setup_score']:.2f}({w_summary['setup_direction']}) "
                 f"dur={w_summary['best_duration']}{w_summary['duration_unit']} "
-                f"payout={w_summary['payout_rate']:.2%} "
-                f"drift={w_summary['drift_active']}"
-            )
-
-        for symbol, mstats in selector_summary.get("markets", {}).items():
-            logger.info(
-                f"  Selector {symbol}: wr={mstats['win_rate']:.1%} "
-                f"trades={mstats['total_trades']} pnl=${mstats['pnl']:.2f}"
+                f"{session_pnl}{target}"
             )
         logger.info("=" * 65)
 
@@ -507,7 +482,6 @@ class DerivBot:
         await self._save_all_states()
 
         risk_summary = self.risk_mgr.summary()
-        selector_summary = self.selector.summary()
         stake_summary = self.stake_mgr.summary()
 
         logger.info("=" * 65)
@@ -516,28 +490,16 @@ class DerivBot:
         logger.info(f"  Total P&L:      ${risk_summary['total_pnl']:.2f}")
         logger.info(f"  ROI:            {risk_summary['roi']:.1f}%")
         logger.info(f"  Total Trades:   {risk_summary['total_trades']}")
-        logger.info(f"  Consec. Losses: {risk_summary['consecutive_losses']}")
-        logger.info(
-            f"  Stake Mgr:      wr={stake_summary['recent_win_rate']:.1%} "
-            f"dd={stake_summary['current_drawdown_pct']}% "
-            f"peak=${stake_summary['peak_bankroll']:.2f} "
-            f"martingale_step={stake_summary['martingale_step']}"
-        )
         logger.info("")
-        logger.info("  Per-Market:")
 
         for symbol, worker in self.workers.items():
             model_summary = worker.model.summary()
-            logger.info(f"    {symbol}:")
-            logger.info(f"      Accuracy: {model_summary['accuracy']:.1f}%")
-            logger.info(f"      Updates:  {model_summary['total_updates']}")
-            logger.info(f"      Trades:   {worker.trade_counter}")
+            session = self.setup_detector.get_session(symbol)
+            session_info = ""
+            if session:
+                session_info = f"session_pnl=${session.session_pnl:.2f} trades={session.session_trades}"
+            logger.info(f"    {symbol}: accuracy={model_summary['accuracy']:.1f}% {session_info}")
 
-        logger.info("")
-        logger.info("  Market Selector:")
-        for symbol, mstats in selector_summary.get("markets", {}).items():
-            logger.info(f"    {symbol}: wr={mstats['win_rate']:.1%}, "
-                         f"trades={mstats['total_trades']}, pnl=${mstats['pnl']:.2f}")
         logger.info("=" * 65)
 
         await self.ws.disconnect()
@@ -546,7 +508,7 @@ class DerivBot:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Deriv Over/Under Bot v6 — Multi-Market Live Demo Trading"
+        description="Deriv Over/Under Bot v8 — Structured Quality Trading"
     )
     parser.add_argument(
         "--markets", nargs="+", default=DEFAULT_MARKETS,
@@ -561,9 +523,9 @@ def main():
         help="Starting bankroll override"
     )
     parser.add_argument(
-        "--model", choices=["ensemble", "logistic", "hoeffding", "srp"],
+        "--model", choices=["logistic", "ensemble"],
         default=MODEL_TYPE,
-        help=f"Model type (default: {MODEL_TYPE})"
+        help=f"Model type (default: {MODEL_TYPE} — logistic is recommended for v8)"
     )
     parser.add_argument(
         "--multi-trade", action="store_true", default=False,
@@ -571,15 +533,15 @@ def main():
     )
     parser.add_argument(
         "--max-concurrent", type=int, default=None,
-        help="Max simultaneous open trades (default: 5 with --multi-trade, 1 without)"
+        help="Max simultaneous open trades"
     )
     parser.add_argument(
         "--tick-learn", action="store_true", default=False,
-        help="Enable per-tick model learning during live trading (models learn from every Nth tick, not just trade outcomes)"
+        help="Enable per-tick model learning during live trading"
     )
     parser.add_argument(
         "--tick-learn-interval", type=int, default=None,
-        help="Learn every Nth tick when --tick-learn is on (default: 5, use 1 for every tick)"
+        help="Learn every Nth tick when --tick-learn is on"
     )
 
     args = parser.parse_args()
@@ -599,7 +561,6 @@ def main():
         model_type=args.model,
     )
 
-    # ─── Apply CLI overrides for multi-trade mode ───
     if args.multi_trade:
         config.ALLOW_MULTIPLE_TRADES = True
     if args.max_concurrent is not None:
@@ -609,19 +570,10 @@ def main():
         config.MAX_CONCURRENT_TRADES = 5
         config.MAX_OPEN_POSITIONS = 5
 
-    # ─── Apply CLI overrides for per-tick learning ───
     if args.tick_learn:
         config.TICK_LEARN_ENABLED = True
     if args.tick_learn_interval is not None:
         config.TICK_LEARN_INTERVAL = args.tick_learn_interval
-
-    # Re-read the effective settings for logging
-    multi = config.ALLOW_MULTIPLE_TRADES
-    max_c = config.MAX_CONCURRENT_TRADES
-    tick_learn = config.TICK_LEARN_ENABLED
-    tick_interval = config.TICK_LEARN_INTERVAL
-    logger.info(f"Multi-trade mode: {'ON' if multi else 'OFF'} (max concurrent: {max_c})")
-    logger.info(f"Per-tick learning: {'ON' if tick_learn else 'OFF'} (every {tick_interval}th tick)")
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

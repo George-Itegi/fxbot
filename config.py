@@ -1,15 +1,23 @@
 """
-Deriv Over/Under Bot — Configuration v7
+Deriv Over/Under Bot — Configuration v8
 =========================================
-Multi-market architecture — ALL volatility markets with independent models.
-Each market gets its OWN ensemble model (logistic + HAT + SRP).
-LIVE trading on demo account — limits removed for overnight training.
+Structured Quality Trading — mirrors manual trading philosophy:
+1. Trend check (3-window agreement, 3-sigma threshold)
+2. Digit frequency Over/Under analysis (the PRIMARY direction signal)
+3. Observation phase (20-30s watching digit movement -> determines duration)
+4. Execute few high-quality trades, then stop that market
+5. Profit target per market session ($50)
+6. Single Logistic Regression as ML CONFIRMATION (not primary decision-maker)
 
-v7 Changes:
-- Added ALLOW_MULTIPLE_TRADES flag for concurrent trades across markets
-- MAX_CONCURRENT_TRADES caps simultaneous open positions
-- Per-symbol loss cooldown when multi-trade is on (only losing market waits)
-- Set ALLOW_MULTIPLE_TRADES=False for old one-at-a-time behavior
+v8 Changes from v7:
+- Digit frequency Over/Under split as PRIMARY direction decision
+- Single Logistic Regression model replaces 3-model ensemble (transparent, verifiable)
+- Observation phase for duration (watch digits for 20-30s before trading)
+- Profit target per market ($50) -> stop trading that market until new setup
+- Market persistence: stay on one market during a setup, don't jump around
+- Setup quality scoring: trend + digit frequency edge must be strong
+- Increased martingale steps to 3 (trusted setups, 85% payout adjusted)
+- Setup detector: encapsulates trend + digit frequency analysis
 """
 
 import os
@@ -94,7 +102,7 @@ SYMBOLS = {
     "WLDEUR": {"name": "EUR Basket",  "decimal_places": 3, "category": "basket"},
     "WLDGBP": {"name": "GBP Basket",  "decimal_places": 3, "category": "basket"},
     "WLDUSD": {"name": "USD Basket",  "decimal_places": 3, "category": "basket"},
-    "WLDXAU": {"name": "Gold Basket", "decimal_places": 3, "category": "basket"},
+    "WLDXAU": {"name": "Gold Basket",  "decimal_places": 3, "category": "basket"},
 }
 
 # ─── Symbol Categories ───
@@ -116,7 +124,6 @@ def supports_digit_contracts(symbol: str) -> bool:
     return get_symbol_category(symbol) in DIGIT_CONTRACT_CATEGORIES
 
 # ─── Multi-Market Configuration ───
-# ALL volatility + 1s markets — each gets its own independent ensemble model
 DEFAULT_MARKETS = [
     # 1-second indices (fastest tick rate)
     "1HZ10V", "1HZ15V", "1HZ25V", "1HZ30V", "1HZ50V",
@@ -136,12 +143,12 @@ CONTRACT_TYPE_OVER   = "DIGITOVER"
 CONTRACT_TYPE_UNDER  = "DIGITUNDER"
 OVER_BARRIER = 4
 UNDER_BARRIER = 5
-CONTRACT_DURATION = 5
+CONTRACT_DURATION = 5          # Default (overridden by observation phase)
 CONTRACT_DURATION_UNIT = "t"
 
 # ─── Dynamic Duration ───
 DYNAMIC_DURATION = True
-MIN_DURATION = 1
+MIN_DURATION = 2               # Minimum 2 ticks (1t is too noisy)
 MAX_DURATION = 10
 DURATION_EXPLORATION_RATE = 0.15
 
@@ -152,49 +159,79 @@ DEFAULT_STAKE = 0.35
 MAX_STAKE = 5.0
 
 # ─── Signal Thresholds ───
-MIN_CONFIDENCE = 0.60          # Raised from 0.56 — models must be meaningfully confident
+MIN_CONFIDENCE = 0.55           # Lowered — rule-based primary + ML confirmation
 MIN_EDGE_THRESHOLD = 0.01
 
-# ─── Confidence-Weighted Agreement ───
-# The combined score = confidence * agreement_weight
-# A signal must meet MIN_SIGNAL_SCORE to be traded.
-# This prevents low-confidence "agreement" from triggering bad trades.
-# Example: 100% agreement at 61% confidence = 0.61 score (below 0.65 → SKIP)
-# Example: 67% agreement at 70% confidence = 0.47 score (below 0.65 → SKIP)
-# Example: 100% agreement at 72% confidence = 0.72 score (above 0.65 → TRADE)
-SIGNAL_SCORE_METHOD = "confidence_weighted"   # How to combine confidence + agreement
-MIN_SIGNAL_SCORE = 0.65                       # Minimum confidence*agreement score to trade
-AGREEMENT_WEIGHT = 1.0                        # Full weight on agreement in score calc
+# ─── Digit Frequency Direction (PRIMARY DECISION) ───
+# The digit frequency Over/Under split is the PRIMARY direction signal.
+# If Over-frequency > 50% + MIN_DIGIT_FREQUENCY_EDGE across multiple windows,
+# the direction is Over. Vice versa for Under.
+# This replaces the ML model as the primary decision-maker.
+MIN_DIGIT_FREQUENCY_EDGE = 0.02   # Minimum 2% edge from 50/50 (e.g., 52% Over)
+DIGIT_FREQ_WINDOW_AGREEMENT = 2   # At least N of 3 windows must agree on direction
 
-# ─── Forced Trade (100% agreement) ───
-# All 3 models must not only VOTE the same way but also have REAL confidence.
-# A 54% probability with 3 binary votes = fake agreement.
-# All models must have confidence >= this threshold to force a trade.
-FORCE_TRADE_MIN_CONFIDENCE = 0.60   # 60% — models must be meaningfully confident
-FORCE_TRADE_MIN_EV = 0.0           # EV must be positive to force a trade
+# ─── Setup Quality ───
+# A "setup" = strong trend + clear digit frequency edge.
+# Setup score determines trade quality. Higher = better.
+MIN_SETUP_SCORE = 0.60           # Minimum setup quality to trade (0-1 scale)
+
+# ─── Profit Target Per Market ───
+# After making this much profit on one market, STOP trading it.
+# Wait for another good setup to appear.
+PROFIT_TARGET_PER_MARKET = 50.0   # $50 profit target per market session
+
+# ─── Observation Phase (Duration Determination) ───
+# When a setup is detected, WATCH the market for this many seconds
+# before determining the optimal tick duration.
+# During observation, track how quickly digits move to the dominant side.
+OBSERVATION_PERIOD_SEC = 25       # Watch for 25 seconds before determining duration
+MIN_OBSERVATION_TICKS = 10       # Need at least this many ticks during observation
+
+# ─── Market Session (Persistence) ───
+# Stay on one market during a setup. Don't jump between markets.
+# Only switch when: setup breaks, profit target reached, or no trade happening.
+MARKET_SESSION_MAX_IDLE_SEC = 120  # After 120s with no trade on current market, allow switch
+
+# ─── ML Confirmation Model ───
+# The Logistic Regression model is a CONFIRMATION signal, not the driver.
+# When rules say Over and ML also says Over -> HIGH confidence -> trade
+# When rules say Over but ML says Under -> LOWER confidence -> trade with caution
+ML_CONFIRMATION_WEIGHT = 0.30     # How much ML confirmation affects confidence (0-1)
+ML_DISAGREEMENT_PENALTY = 0.15    # Confidence penalty when ML disagrees with rules
+
+# ─── Confidence-Weighted Agreement ───
+SIGNAL_SCORE_METHOD = "setup_weighted"        # NEW: setup quality drives the score
+MIN_SIGNAL_SCORE = 0.55                       # Lowered — rule-based primary is more reliable
+AGREEMENT_WEIGHT = 1.0                        # Always 1.0 with single model
+
+# ─── Forced Trade (strong setup) ───
+# A forced trade happens when the setup is VERY strong (setup score >= 0.75).
+# This replaces the old "100% model agreement" forced trade.
+FORCE_TRADE_MIN_CONFIDENCE = 0.55
+FORCE_TRADE_MIN_EV = 0.0
+FORCE_TRADE_MIN_SETUP_SCORE = 0.75  # Setup must be VERY strong to force trade
 
 # ─── Trend Requirement (NOT bias — TRADES ONLY IN STRONG TRENDS) ───
 # Linear regression slope on price detects market trend direction.
 # Trades ONLY happen when a VERY STRONG trend is confirmed across all windows.
-# Uptrend → ONLY Over trades allowed
-# Downtrend → ONLY Under trades allowed
-# Ranging (no trend) → NO TRADES AT ALL — wait for a strong trend
+# Uptrend -> ONLY Over trades allowed
+# Downtrend -> ONLY Under trades allowed
+# Ranging (no trend) -> NO TRADES AT ALL — wait for a strong trend
 #
 # This is a REQUIREMENT, not a bias — no trend = no trade.
 # Uses 50, 200, and 500 tick windows. All must agree on direction.
 # 200-tick and 500-tick must BOTH have t-stat > threshold (very significant).
 # 50-tick must at least agree in direction (catches recent turns).
-TREND_SLOPE_TSTAT_THRESHOLD = 3.0    # 3-sigma = 99.7% confidence (was 2.0 = 95%)
+TREND_SLOPE_TSTAT_THRESHOLD = 3.0    # 3-sigma = 99.7% confidence
 TREND_CONFIDENCE_REDUCTION = 0.05    # Lower confidence by 5% for trend-aligned trades
 TREND_SIGNAL_SCORE_REDUCTION = 0.05  # Lower signal_score threshold for trend-aligned trades
 
 # ─── Martingale Confidence Gate ───
-# During martingale recovery, the model must be MUCH more confident to double down.
-# No more 68% confidence martingale trades — that's reckless.
-# Requires BOTH: confidence >= 80% AND 100% model agreement.
-# If these aren't met, the martingale step is SKIPPED (no trade until conditions improve).
-MARTINGALE_MIN_CONFIDENCE = 0.80   # Must be 80%+ confident during martingale recovery
-MARTINGALE_MIN_AGREEMENT = 1.0     # Must have 100% model agreement during martingale
+# During martingale recovery, confidence bar is higher.
+# But with trusted setups (trend + frequency edge), we allow recovery.
+# Since setups are high quality, max 3 consecutive losses expected -> 3 martingale steps.
+MARTINGALE_MIN_CONFIDENCE = 0.70   # 70%+ confident during martingale (lowered from 80% — trusted setups)
+MARTINGALE_MIN_SETUP_SCORE = 0.60  # Setup must still be valid during recovery
 MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
 MIN_TRADE_INTERVAL_SEC = 2    # Minimum seconds between trades
@@ -203,15 +240,14 @@ MIN_TRADE_INTERVAL_SEC = 2    # Minimum seconds between trades
 # When True, multiple markets can trade simultaneously (each still limited to 1 trade).
 # When False, only ONE trade across ALL markets at a time (old behavior).
 ALLOW_MULTIPLE_TRADES = False    # Default OFF — use --multi-trade CLI flag to enable
-MAX_CONCURRENT_TRADES = 5        # Max simultaneous open trades across all markets (when ALLOW_MULTIPLE_TRADES=True)
-                                   # Each market still limited to 1 trade at a time regardless
+MAX_CONCURRENT_TRADES = 5        # Max simultaneous open trades across all markets
 
 # ─── Risk Management (RELAXED for demo overnight training) ───
-MAX_BANKROLL_PER_TRADE = 0.05    # 5% max per trade (dynamic: min stake at low conf, up to 5% at high conf)
+MAX_BANKROLL_PER_TRADE = 0.05    # 5% max per trade
 MAX_DAILY_LOSS = 1.0             # 100% — don't stop on losses (demo training)
 MAX_CONSECUTIVE_LOSSES = 10      # Circuit breaker after 10 consecutive losses
 CIRCUIT_BREAKER_COOLDOWN_SEC = 30  # Short 30s cooldown (demo training)
-MAX_OPEN_POSITIONS = MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1  # Dynamic based on multi-trade mode
+MAX_OPEN_POSITIONS = MAX_CONCURRENT_TRADES if ALLOW_MULTIPLE_TRADES else 1
 SESSION_TIME_LIMIT_MINUTES = 0   # 0 = unlimited (demo training mode)
 
 # ─── Kelly Criterion ───
@@ -227,25 +263,23 @@ TICK_WINDOWS = {
 }
 
 # ─── Online Learner ───
-MODEL_TYPE = "ensemble"
+# CHANGED: "ensemble" -> "logistic" — single transparent model
+# The 3-model ensemble (Logistic + HAT + SRP) was a black box.
+# Now: Logistic Regression is a CONFIRMATION signal, not the primary decision-maker.
+# You can inspect its weights anytime and see what features it values.
+MODEL_TYPE = "logistic"
 LEARNING_RATE = 0.01
 L2_REGULARIZATION = 0.01
 REPLAY_BUFFER_SIZE = 5000
 DRIFT_DETECTION_SENSITIVITY = 0.001
 
 # ─── Per-Tick Live Learning ───
-# When enabled, models learn from EVERY tick during live trading (not just trade outcomes).
-# This makes models adapt MUCH faster to changing patterns.
-# The interval controls how often: 1 = every tick, 5 = every 5th tick, etc.
-# Default OFF — use --tick-learn CLI flag to enable.
 TICK_LEARN_ENABLED = False
-TICK_LEARN_INTERVAL = 5    # Learn every Nth tick (1=all, 5=every 5th, 10=every 10th)
+TICK_LEARN_INTERVAL = 5
 
 # ─── Drift Retrain ───
-# When drift is detected, automatically retrain the model from the replay buffer.
-# This wipes the current model and rebuilds it from recent data.
-DRIFT_RETRAIN_ENABLED = True   # Retrain from buffer on critical drift
-DRIFT_RETRAIN_COOLDOWN = 120   # Minimum seconds between drift retrains (avoid thrashing)
+DRIFT_RETRAIN_ENABLED = True
+DRIFT_RETRAIN_COOLDOWN = 120
 
 # ─── Model Persistence ───
 MODEL_SNAPSHOT_INTERVAL = 50
