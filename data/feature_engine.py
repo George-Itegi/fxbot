@@ -643,34 +643,42 @@ class FeatureEngine:
     
     def _trend_features(self) -> dict:
         """
-        Trend Slope Features (v4 — Linear Regression on Price)
-        =========================================================
-        Computes linear regression slope of prices over 50-tick and 200-tick
-        windows to detect market trend direction.
+        Trend Slope Features (v5 — 3-Window Strong Trend Requirement)
+        ================================================================
+        Computes linear regression slope of prices over 50-tick, 200-tick,
+        and 500-tick windows to detect market trend direction.
 
         For Deriv Over/Under contracts, the trend of the PRICE matters because:
         - Uptrend → higher digits more likely → Over contracts have an edge
         - Downtrend → lower digits more likely → Under contracts have an edge
-        - Ranging → no directional bias → trade normally
+        - Ranging → NO TRADE — wait for a strong trend
 
         The slope is expressed as a t-statistic (slope / standard error),
         which is market-independent and comparable across instruments.
-        A t-statistic > 2.0 means the trend is statistically significant.
+        A t-statistic > 3.0 means the trend is VERY significant (3-sigma).
 
-        Uses windows of 50 (short, responsive) and 200 (medium, stable)
-        ticks. Window of 10 is too small to show meaningful trends.
+        Uses windows of 50 (short, responsive), 200 (medium, stable),
+        and 500 (long, confirming). ALL THREE must agree on direction
+        for a trend classification. This is a REQUIREMENT, not a bias:
+        no trend = no trade.
 
-        The signal generator uses these to BIAS trade selection (lower
-        confidence threshold for trend-aligned trades), NOT to restrict
-        trades. Ranging markets trade normally with no penalty.
+        Trend regime rules:
+        - Uptrend:   tstat_200 > 3.0 AND tstat_500 > 3.0 AND tstat_50 > 0
+        - Downtrend: tstat_200 < -3.0 AND tstat_500 < -3.0 AND tstat_50 < 0
+        - Ranging:   everything else (NO TRADE in signal generator)
         """
         features = {}
 
-        for window_name, n_ticks in [("short", 50), ("medium", 200)]:
+        for window_name, n_ticks in [("short", 50), ("medium", 200), ("trend_long", 500)]:
             ticks = self.agg.get_window(window_name)
             n = len(ticks)
 
-            if n < 20:
+            # Need minimum data points for meaningful regression
+            # 50-tick window: at least 20 ticks
+            # 200-tick window: at least 50 ticks
+            # 500-tick window: at least 100 ticks
+            min_data = max(20, n_ticks // 5)
+            if n < min_data:
                 features[f"slope_{n_ticks}"] = 0.0
                 features[f"slope_tstat_{n_ticks}"] = 0.0
                 features[f"slope_r2_{n_ticks}"] = 0.0
@@ -718,22 +726,27 @@ class FeatureEngine:
             features[f"slope_tstat_{n_ticks}"] = t_stat
             features[f"slope_r2_{n_ticks}"] = max(0.0, r_squared)  # Clamp negative R²
 
-        # ─── Trend Regime Classification ───
-        # Primary: 200-tick slope (more stable, less noise)
-        # Confirmation: 50-tick slope (more responsive, catches turns earlier)
-        # Both must agree for a trend classification.
-        # Ranging = no agreement or neither is significant.
+        # ─── Trend Regime Classification (VERY STRICT) ───
+        # ALL three windows must agree for a trend to be declared.
+        # 200-tick and 500-tick must BOTH have t-stat > 3.0 (3-sigma).
+        # 50-tick must at least agree in DIRECTION (positive or negative).
+        # This ensures we ONLY trade in VERY STRONG, confirmed trends.
+        # No trend = ranging = NO TRADE in the signal generator.
+        from config import TREND_SLOPE_TSTAT_THRESHOLD
+
         tstat_50 = features.get("slope_tstat_50", 0.0)
         tstat_200 = features.get("slope_tstat_200", 0.0)
+        tstat_500 = features.get("slope_tstat_500", 0.0)
+        threshold = TREND_SLOPE_TSTAT_THRESHOLD  # 3.0
 
-        if tstat_200 > 2.0 and tstat_50 > 0:
-            # Both agree: uptrend (200 is significantly positive, 50 is also positive)
+        if tstat_200 > threshold and tstat_500 > threshold and tstat_50 > 0:
+            # All 3 agree: uptrend (200 and 500 highly significant, 50 also positive)
             features["trend_regime"] = 1   # Uptrend
-        elif tstat_200 < -2.0 and tstat_50 < 0:
-            # Both agree: downtrend (200 is significantly negative, 50 is also negative)
+        elif tstat_200 < -threshold and tstat_500 < -threshold and tstat_50 < 0:
+            # All 3 agree: downtrend (200 and 500 highly significant, 50 also negative)
             features["trend_regime"] = -1  # Downtrend
         else:
-            features["trend_regime"] = 0   # Ranging / no clear trend
+            features["trend_regime"] = 0   # Ranging / no strong trend → NO TRADE
 
         return features
 

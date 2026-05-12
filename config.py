@@ -136,14 +136,17 @@ CONTRACT_TYPE_OVER   = "DIGITOVER"
 CONTRACT_TYPE_UNDER  = "DIGITUNDER"
 OVER_BARRIER = 4
 UNDER_BARRIER = 5
-CONTRACT_DURATION = 5
+CONTRACT_DURATION = 1          # Fixed 1-tick duration (same payout, best accuracy)
 CONTRACT_DURATION_UNIT = "t"
 
-# ─── Dynamic Duration ───
-DYNAMIC_DURATION = True
+# ─── Dynamic Duration (REMOVED) ───
+# All durations have the SAME payout on Deriv digit contracts.
+# Shorter duration = more accurate prediction + faster settlement.
+# No reason to ever pick 5t or 10t — always use 1t.
+DYNAMIC_DURATION = False        # Disabled — fixed 1t is optimal
 MIN_DURATION = 1
-MAX_DURATION = 10
-DURATION_EXPLORATION_RATE = 0.15
+MAX_DURATION = 1
+DURATION_EXPLORATION_RATE = 0.0
 
 # ─── Stake & Money ───
 INITIAL_BANKROLL = 100.0
@@ -173,14 +176,18 @@ AGREEMENT_WEIGHT = 1.0                        # Full weight on agreement in scor
 FORCE_TRADE_MIN_CONFIDENCE = 0.60   # 60% — models must be meaningfully confident
 FORCE_TRADE_MIN_EV = 0.0           # EV must be positive to force a trade
 
-# ─── Trend Bias ───
+# ─── Trend Requirement (NOT bias — TRADES ONLY IN STRONG TRENDS) ───
 # Linear regression slope on price detects market trend direction.
-# When a trend is detected, lower confidence threshold for trend-aligned trades.
-# Uptrend → easier to trade Over (lower confidence needed)
-# Downtrend → easier to trade Under (lower confidence needed)
-# Ranging → no change (trade normally with no penalty)
-# This is a BIAS, not a restriction — counter-trend trades are NOT blocked.
-TREND_SLOPE_TSTAT_THRESHOLD = 2.0    # t-statistic threshold for "significant" trend
+# Trades ONLY happen when a VERY STRONG trend is confirmed across all windows.
+# Uptrend → ONLY Over trades allowed
+# Downtrend → ONLY Under trades allowed
+# Ranging (no trend) → NO TRADES AT ALL — wait for a strong trend
+#
+# This is a REQUIREMENT, not a bias — no trend = no trade.
+# Uses 50, 200, and 500 tick windows. All must agree on direction.
+# 200-tick and 500-tick must BOTH have t-stat > threshold (very significant).
+# 50-tick must at least agree in direction (catches recent turns).
+TREND_SLOPE_TSTAT_THRESHOLD = 3.0    # 3-sigma = 99.7% confidence (was 2.0 = 95%)
 TREND_CONFIDENCE_REDUCTION = 0.05    # Lower confidence by 5% for trend-aligned trades
 TREND_SIGNAL_SCORE_REDUCTION = 0.05  # Lower signal_score threshold for trend-aligned trades
 
@@ -215,10 +222,11 @@ KELLY_FRACTION = 0.25
 
 # ─── Feature Engine ───
 TICK_WINDOWS = {
-    "micro":  10,
-    "short":  50,
-    "medium": 200,
-    "long":   1000,
+    "micro":       10,
+    "short":       50,
+    "medium":      200,
+    "trend_long":  500,    # Added for 500-tick trend slope (strong trend confirmation)
+    "long":        1000,
 }
 
 # ─── Online Learner ───

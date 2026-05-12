@@ -95,13 +95,13 @@ class DerivBot:
         logger.info(f"  Selector:   Market bandit (epsilon=10%)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info(f"  Barrier:    Over {OVER_BARRIER} / Under {UNDER_BARRIER}")
-        logger.info(f"  Duration:   1-10t (dynamic per market)")
+        logger.info(f"  Duration:   1t (fixed — same payout, best accuracy)")
         logger.info("")
         logger.info("  Martingale: 2x on loss (max 2 steps, $20 cap)")
         logger.info("  Martingale gate: 80%+ confidence AND 100% agreement AND same direction")
-        logger.info(f"  Min confidence: {config.MIN_CONFIDENCE:.0%} (normal), {max(0.50, config.MIN_CONFIDENCE - config.TREND_CONFIDENCE_REDUCTION):.0%} (trend-aligned)")
-        logger.info("  Force trade: YES when 100% agree + conf >= 60% + EV > 0")
-        logger.info(f"  Trend bias: {config.TREND_CONFIDENCE_REDUCTION:.0%} lower threshold for trend-aligned trades (windows: 50, 200)")
+        logger.info(f"  Min confidence: {config.MIN_CONFIDENCE:.0%} (trend-aligned: {max(0.50, config.MIN_CONFIDENCE - config.TREND_CONFIDENCE_REDUCTION):.0%})")
+        logger.info("  Force trade: YES when 100% agree + conf >= 60% + EV > 0 + TREND")
+        logger.info(f"  Trend gate: REQUIRED (3-sigma, windows: 50, 200, 500) — no trend = no trade")
         if ALLOW_MULTIPLE_TRADES:
             logger.info(f"  Multi-trade: UP TO {MAX_CONCURRENT_TRADES} markets simultaneously")
         else:
@@ -474,7 +474,7 @@ class DerivBot:
                 f"  {symbol}: ticks={w_summary['live_ticks']} "
                 f"trades={w_summary['trade_count']} "
                 f"acc={w_summary['model_accuracy']:.1f}% "
-                f"dur={w_summary['best_duration']}{w_summary['duration_unit']} "
+                f"dur=1t "
                 f"payout={w_summary['payout_rate']:.2%} "
                 f"drift={w_summary['drift_active']}"
             )
