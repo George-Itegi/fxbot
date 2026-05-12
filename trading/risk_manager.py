@@ -18,7 +18,8 @@ from typing import Optional
 from config import (MAX_BANKROLL_PER_TRADE, MAX_DAILY_LOSS,
                     MAX_CONSECUTIVE_LOSSES, MAX_OPEN_POSITIONS,
                     SESSION_TIME_LIMIT_MINUTES, MIN_STAKE,
-                    CIRCUIT_BREAKER_COOLDOWN_SEC)
+                    CIRCUIT_BREAKER_COOLDOWN_SEC,
+                    MARTINGALE_BANKROLL_PCT)
 from trading.signal_generator import Signal
 from utils.logger import setup_logger
 
@@ -215,15 +216,35 @@ class RiskManager:
         Gentler reduction during losing streaks: 15% per consecutive loss
         (not the previous 50% per loss which was too aggressive).
 
-        MARTINGALE BYPASS: During martingale recovery, the stake is 2x the
+        MARTINGALE BYPASS: During martingale recovery, the stake is 2.1x the
         last lost stake by design — reducing it defeats the recovery strategy.
-        So we skip the loss-based reduction and only enforce the hard cap.
+        So we skip the loss-based reduction AND use a higher bankroll cap
+        (MARTINGALE_BANKROLL_PCT = 20% instead of normal 5%).
+
+        v12.3 FIX: Previously, the hard cap used MAX_BANKROLL_PER_TRADE (5%)
+        for ALL trades, including martingale. This meant:
+          - Normal stake = $5.00 (5% of $100)
+          - Martingale recovery stake = $10.50 (2.1x $5)
+          - But risk manager caps to 5% of bankroll = $5.00
+          - Recovery IMPOSSIBLE — stake stays at $5 after every loss!
+
+        Now: Martingale uses MARTINGALE_BANKROLL_PCT (20%) as the cap,
+        allowing $10.50 or even $20 recovery stakes.
         """
         stake = requested_stake
 
-        # ─── Martingale recovery: only apply hard cap, no loss reduction ───
-        if not is_martingale:
-            # Gradual reduction: 15% less per consecutive loss
+        # ─── Martingale recovery: higher cap, no loss reduction ───
+        if is_martingale:
+            # v12.3: Use MARTINGALE_BANKROLL_PCT (20%) instead of
+            # MAX_BANKROLL_PER_TRADE (5%) — recovery needs room to work
+            max_allowed = self.bankroll * MARTINGALE_BANKROLL_PCT
+            stake = min(stake, max_allowed)
+            logger.info(
+                f"MARTINGALE RISK CAP: ${stake:.2f} "
+                f"(max {MARTINGALE_BANKROLL_PCT:.0%} of ${self.bankroll:.2f} = ${max_allowed:.2f})"
+            )
+        else:
+            # Normal mode: gradual reduction for consecutive losses
             if self.consecutive_losses >= 2:
                 reduction = max(0.25, 1.0 - (self.STAKE_REDUCTION_PER_LOSS * self.consecutive_losses))
                 stake *= reduction
@@ -232,9 +253,9 @@ class RiskManager:
                     f"consecutive losses"
                 )
 
-        # Cap at max allowed per trade (2% bankroll) — ALWAYS enforced, even martingale
-        max_allowed = self.bankroll * MAX_BANKROLL_PER_TRADE
-        stake = min(stake, max_allowed)
+            # Cap at max allowed per trade (5% bankroll) — normal trades only
+            max_allowed = self.bankroll * MAX_BANKROLL_PER_TRADE
+            stake = min(stake, max_allowed)
 
         # Floor at minimum
         stake = max(stake, MIN_STAKE)

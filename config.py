@@ -1,9 +1,16 @@
 """
-Deriv Over/Under Bot — Configuration v12.2
+Deriv Over/Under Bot — Configuration v12.3
 ============================================
 Over 4 / Under 5 ONLY + Smart Observation Phase + Fixed Martingale.
 
-v12.2 fixes:
+v12.3 fixes:
+1. MARTINGALE RISK CAP: risk_manager now uses MARTINGALE_BANKROLL_PCT (20%)
+   instead of MAX_BANKROLL_PER_TRADE (5%) for martingale recovery stakes.
+   Previously: $10.50 recovery → capped to 5% of bankroll = $5 → NO RECOVERY!
+2. MARTINGALE FALLBACK: When original market setup breaks, recovery continues
+   on ANY market with a good signal (not just the loss market).
+
+v12.2 fixes (still active):
 1. STAGGERED SUBSCRIPTIONS with 2s delay between each (prevents rate limiting)
 2. RETRY LOGIC for failed subscriptions (2 retries with backoff)
 3. LONGER SUBSCRIPTION TIMEOUT (20s instead of 10s)

@@ -1,14 +1,16 @@
 """
-Stake Manager — Dynamic Stake Sizing with Martingale Recovery (v12.2)
+Stake Manager — Dynamic Stake Sizing with Martingale Recovery (v12.3)
 =========================================================================
-v12.2: Fixed martingale stake caps so recovery actually works.
+v12.3: Fixed the LAST martingale bug — risk_manager was capping recovery stakes.
 
-THE BUG: MAX_MARTINGALE_STAKE was $5 — same as MAX_STAKE for normal trades.
-When base stake already hit $5, martingale's 2.1x multiplier (= $10.50) got
-capped right back to $5. Recovery was IMPOSSIBLE.
-
-v12.2 FIX: MAX_MARTINGALE_STAKE = $20, MARTINGALE_BANKROLL_PCT = 20%.
-Now: $5 loss → $10.50 recovery stake → win = $9.98 profit, net +$4.98 ✅
+THE BUG CHAIN (across versions):
+  v12.1: MAX_MARTINGALE_STAKE was $5 (same as MAX_STAKE) → recovery impossible
+  v12.2: Fixed MAX_MARTINGALE_STAKE = $20, MARTINGALE_BANKROLL_PCT = 20%
+         BUT risk_manager._adjust_stake() still used MAX_BANKROLL_PER_TRADE (5%)
+         as the hard cap for ALL trades including martingale!
+         $10.50 recovery → capped to 5% of bankroll = $5 → STILL IMPOSSIBLE!
+  v12.3: risk_manager now uses MARTINGALE_BANKROLL_PCT (20%) for martingale trades.
+         Also: martingale falls through to ANY market if original market setup breaks.
 
 ACTUAL RECOVERY EXAMPLES (2 steps max, base stake = $5.00):
   Lose $5.00 → next = $5.00 × 2.1 = $10.50
@@ -109,7 +111,7 @@ class StakeManager:
         self.state = StakeState(peak_bankroll=initial_bankroll)
         self._initial_bankroll = initial_bankroll
         logger.info(
-            f"StakeManager v12.2: bankroll=${initial_bankroll:.2f}, "
+            f"StakeManager v12.3: bankroll=${initial_bankroll:.2f}, "
             f"martingale={self.MARTINGALE_MULTIPLIER}x, max_steps={self.MAX_MARTINGALE_STEPS}, "
             f"max_martingale_stake=${self.MAX_MARTINGALE_STAKE}, "
             f"martingale_bankroll_pct={self.MARTINGALE_BANKROLL_PCT:.0%}, "

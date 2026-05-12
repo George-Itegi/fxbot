@@ -97,6 +97,9 @@ class SignalGenerator:
             return None
         
         # ─── MARTINGALE GATE ───
+        # v12.3: When martingale_direction/martingale_barrier is None, it means
+        # we're in "fallback mode" — the original market's setup broke, so we're
+        # recovering on whichever market has a good signal. Accept any direction.
         if is_martingale:
             if setup.setup_score < MARTINGALE_MIN_SETUP_SCORE:
                 self._skip("martingale_weak_setup")
@@ -105,8 +108,9 @@ class SignalGenerator:
                     f"< {MARTINGALE_MIN_SETUP_SCORE} — not recovering on weak setup"
                 )
                 return None
-            
-            # Direction must match the original losing trade
+
+            # Direction check: only enforce if martingale_direction is set
+            # (None = fallback mode, accept any direction)
             if martingale_direction and setup.direction != martingale_direction:
                 self._skip("martingale_direction_mismatch")
                 logger.info(
@@ -114,9 +118,9 @@ class SignalGenerator:
                     f"but martingale requires {martingale_direction} — skipping"
                 )
                 return None
-            
-            # v10: Barrier must also match for martingale
-            # If we lost on Over 5, we should recover on Over 5 (same barrier)
+
+            # Barrier check: only enforce if martingale_barrier is set
+            # (None = fallback mode, accept any barrier)
             if martingale_barrier is not None and setup.barrier != martingale_barrier:
                 self._skip("martingale_barrier_mismatch")
                 logger.info(

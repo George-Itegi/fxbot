@@ -107,14 +107,14 @@ class DerivBot:
         self.ws.on_error = self._on_error
 
         logger.info(
-            f"DerivBot v12.2 initialized: {len(self.markets)} markets, "
+            f"DerivBot v12.3 initialized: {len(self.markets)} markets, "
             f"LIVE mode, model={self.model_type}"
         )
         logger.info(f"  Markets: {', '.join(self.markets)}")
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v12.2 — FIXED SUBSCRIPTIONS + SMART OBSERVATION")
+        logger.info("  DERIV OVER/UNDER BOT v12.3 — FIXED MARTINGALE + SMART OBSERVATION")
         logger.info(f"  Markets:    {len(self.markets)} markets")
         for i, m in enumerate(self.markets):
             logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
@@ -123,13 +123,12 @@ class DerivBot:
         logger.info(f"  Barriers:   ONLY Over 4 / Under 5 (50% natural, ~95% payout)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info("")
-        logger.info("  v12.2 Key Fixes:")
-        logger.info("    - STAGGERED SUBS: 2s delay between each subscription")
-        logger.info("    - RETRY LOGIC: 2 retries with 3s/6s backoff on failure")
-        logger.info("    - LONGER TIMEOUT: 20s for subscription requests")
-        logger.info("    - Failed subscriptions remove dead workers")
-        logger.info("    - ML SOFT PENALTY: 5% reduction (not block)")
+        logger.info("  v12.3 Key Fixes:")
+        logger.info("    - MARTINGALE RISK CAP: 20% bankroll for recovery (was 5% — capped $10.50 back to $5!)")
+        logger.info("    - MARTINGALE FALLBACK: Recover on ANY market if original market setup breaks")
         logger.info("    - MARTINGALE FLEX: Recovery on EITHER Over 4 or Under 5")
+        logger.info("    - ML SOFT PENALTY: 5% reduction (not block)")
+        logger.info("    - STAGGERED SUBS: 2s delay between each subscription")
         logger.info("")
         logger.info(f"  Confidence:  BAYESIAN-ADJUSTED (60%+ minimum)")
         logger.info(f"  EV minimum:  3% to trade")
@@ -343,49 +342,32 @@ class DerivBot:
             worker._martingale_direction = martingale_dir
             worker._martingale_barrier = martingale_barrier  # v9
 
-        # ─── v8.1: MANDATORY MARTINGALE SAME MARKET ───
-        # If martingale is active, we MUST recover on the SAME market.
-        # No switching markets during recovery — the setup was good on THAT market.
-        if is_martingale and MARTINGALE_SAME_MARKET and martingale_market:
-            # Check if the martingale market is available (not at profit target, has setup)
+        # ─── v12.3: MARTINGALE RECOVERY — PREFER SAME MARKET, FALLBACK TO ANY ───
+        # v12.3 FIX: Previously, if the martingale market's setup broke,
+        # the martingale RESET — we gave up recovery entirely. This meant:
+        #   Lose $5 on 1HZ15V → setup breaks → martingale resets → next trade $5 normal
+        #   Net result: -$5 with NO attempt to recover.
+        #
+        # Now: First try the original market. If setup is broken, fall through
+        # to normal market selection but KEEP martingale state. Recovery will
+        # happen on whichever market has a good signal next.
+        # Over 4 / Under 5 are symmetric 50/50 contracts — direction and market
+        # don't matter for recovery, only the stake multiplier matters.
+        if is_martingale and martingale_market:
+            # Try the original martingale market first (preferred)
             worker = self.workers.get(martingale_market)
-            if worker is None:
-                logger.warning(f"MARTINGALE MARKET {martingale_market} not found — resetting martingale")
-                self.stake_mgr.state.martingale_step = 0
-                self.stake_mgr.state.martingale_direction = None
-                self.stake_mgr.state.martingale_market = None
-                self.stake_mgr.state.martingale_barrier = None  # v9
-                return
-            
-            # Check if the martingale market is tradable
-            if not self.setup_detector.is_market_tradable(martingale_market):
-                logger.info(
-                    f"MARTINGALE MARKET {martingale_market} not tradable "
-                    f"(profit target reached or setup broken) — resetting martingale"
-                )
-                self.stake_mgr.state.martingale_step = 0
-                self.stake_mgr.state.martingale_direction = None
-                self.stake_mgr.state.martingale_market = None
-                self.stake_mgr.state.martingale_barrier = None  # v9
-                return
-            
-            # v12: FLEXIBLE MARTINGALE RECOVERY for Over 4 / Under 5
-            # For symmetric 50/50 contracts (same natural prob, same payout),
-            # the direction can flip between Over and Under on every tick.
-            # Requiring exact direction/barrier match was KILLING martingale recovery.
-            #
-            # v12 fix: Allow recovery on EITHER Over 4 OR Under 5 on the same market.
-            # The key is: same market + active setup + sufficient quality.
-            # The direction of the NEW trade can differ from the original loss.
-            setup = worker._current_setup
-            
-            if setup and setup.active:
+            market_ok = (
+                worker is not None and
+                self.setup_detector.is_market_tradable(martingale_market) and
+                worker._current_setup is not None and
+                worker._current_setup.active
+            )
+
+            if market_ok:
                 # Good — we have an active setup on the martingale market
-                # v12: Accept EITHER direction (Over 4 or Under 5) for recovery
                 signal = worker.get_fresh_signal()
                 if signal is not None:
-                    # v12: If direction changed, update martingale tracking
-                    # so signal_generator doesn't reject it for direction mismatch
+                    # v12: Accept EITHER direction (Over 4 or Under 5) for recovery
                     if signal.direction != martingale_dir:
                         logger.info(
                             f"MARTINGALE FLEX: Direction changed from "
@@ -393,10 +375,8 @@ class DerivBot:
                             f"{signal.direction.replace('DIGIT','')}{signal.barrier} "
                             f"on {martingale_market} — recovering on new direction"
                         )
-                        # Update martingale direction/barrier to match current setup
                         self.stake_mgr.state.martingale_direction = signal.direction
                         self.stake_mgr.state.martingale_barrier = signal.barrier
-                        # Push updated state to workers
                         for w in self.workers.values():
                             w._martingale_direction = signal.direction
                             w._martingale_barrier = signal.barrier
@@ -405,26 +385,27 @@ class DerivBot:
                     # Setup is active but no fresh signal yet — wait
                     return
             else:
-                # No active setup on martingale market — the edge is gone.
-                # Reset martingale (take the loss) rather than force a bad trade
+                # v12.3: Setup broken on original market — DON'T reset!
+                # Fall through to normal market selection with martingale STILL ACTIVE.
+                # The next good signal on ANY market will use the recovery stake.
                 logger.info(
-                    f"MARTINGALE: No active setup on {martingale_market} "
-                    f"— resetting martingale, taking the loss"
+                    f"MARTINGALE: Setup broken on {martingale_market} "
+                    f"— falling through to recover on any market with good signal"
                 )
-                self.stake_mgr.state.martingale_step = 0
-                self.stake_mgr.state.martingale_direction = None
+                # Clear the martingale market constraint but keep step/loss tracking
                 self.stake_mgr.state.martingale_market = None
-                self.stake_mgr.state.martingale_barrier = None
-                # Fall through to normal market selection below
-                is_martingale = False
-                martingale_market = None
+                for w in self.workers.values():
+                    w._martingale_direction = None  # Accept any direction
+                    w._martingale_barrier = None    # Accept any barrier
+                # Fall through — is_martingale stays True, best_symbol stays None
 
         # ─── v8.1: MARKET PERSISTENCE ───
         # If we have an active market (recently traded), stay on it if:
         # 1. Setup is still valid
         # 2. Profit target not reached
         # 3. Not too long since last trade
-        if not is_martingale and self._active_market and MARKET_STICKY_AFTER_TRADE:
+        # v12.3: Also check during martingale fallback (setup broke on original market)
+        if best_symbol is None and self._active_market and MARKET_STICKY_AFTER_TRADE:
             if self._should_stay_on_market(self._active_market):
                 # Stay on the active market — check for a fresh signal
                 worker = self.workers.get(self._active_market)
@@ -450,7 +431,9 @@ class DerivBot:
         # If we didn't pick a market from persistence or martingale, use the selector
         # v10: Fixed bug where hasattr checked self.best_symbol (local var, not attribute)
         # This was causing the bot to always go to the selector and hop between markets
-        if not is_martingale and best_symbol is None:
+        # v12.3: Also allow selector when in martingale fallback mode (best_symbol=None
+        # because original market setup broke — need to find ANY market with good signal)
+        if best_symbol is None:
             best_symbol = self.selector.select_market(self.workers)
             
             if best_symbol is None:
