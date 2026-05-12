@@ -166,8 +166,9 @@ class SignalGenerator:
             confidence = confidence * (1 - ML_CONFIRMATION_WEIGHT) + ml_prob * ML_CONFIRMATION_WEIGHT
             ml_status = "ML_AGREES"
         else:
-            # v12.1: Soft penalty — reduce confidence by ML_DISAGREEMENT_PENALTY (default 10%)
+            # v12.1: Soft penalty — reduce confidence by ML_DISAGREEMENT_PENALTY (default 5%)
             # This still allows strong setups to trade, just with slightly less confidence
+            # 5% penalty: 55% adj prob → 52.25% (still above 52% minimum)
             confidence = confidence * (1.0 - ML_DISAGREEMENT_PENALTY)
             ml_dir = 'Over' if prediction.prob_over > prediction.prob_under else 'Under'
             ml_status = f"ML_DISAGREES(-{ML_DISAGREEMENT_PENALTY:.0%})"

@@ -280,7 +280,7 @@ MARKET_STICKY_AFTER_TRADE = True   # Stay on market after trading it
 # On synthetic indices, we need EVERY confirmation we can get.
 ML_CONFIRMATION_WEIGHT = 0.15     # Weight of ML opinion when it agrees
 ML_DISAGREEMENT_BLOCKS = False    # v12.1: SOFT PENALTY (not block) — ML has no edge on random digits
-ML_DISAGREEMENT_PENALTY = 0.10    # v12.1: 10% confidence reduction when ML disagrees (was 100% block)
+ML_DISAGREEMENT_PENALTY = 0.05    # v12.1: 5% confidence reduction when ML disagrees (was 100% block)
 
 # ─── Confidence-Weighted Agreement ───
 SIGNAL_SCORE_METHOD = "setup_weighted"        # setup quality drives the score
