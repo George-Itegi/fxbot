@@ -21,6 +21,7 @@ from config import (MIN_CONFIDENCE, MIN_EDGE_THRESHOLD, OVER_BARRIER,
                     MIN_SETUP_SCORE, FORCE_TRADE_MIN_SETUP_SCORE,
                     MARTINGALE_MIN_CONFIDENCE, MARTINGALE_MIN_SETUP_SCORE,
                     ML_CONFIRMATION_WEIGHT, ML_DISAGREEMENT_BLOCKS,
+                    ML_DISAGREEMENT_PENALTY,
                     MIN_DIGIT_FREQUENCY_EDGE, MIN_EV_FOR_TRADE,
                     DYNAMIC_BARRIERS)
 from trading.setup_detector import Setup
@@ -136,16 +137,21 @@ class SignalGenerator:
         confidence = setup.adjusted_prob
         
         # ─── ML CONFIRMATION ───
-        # v10: ML disagreement now BLOCKS trades (restored from v8).
-        # v9's 20% reduction was too weak — it allowed trades that the ML model
-        # disagreed with, and those trades lost at a very high rate.
+        # v12.1: ML SOFT PENALTY instead of hard block.
+        # The ML model (Logistic Regression) tries to predict individual ticks
+        # on synthetic random indices — it has NO real edge (~50% accuracy).
+        # The Setup Detector uses aggregate frequency analysis (200+ ticks)
+        # which is the ACTUAL signal. ML disagreement should NOT veto trades.
+        #
+        # Instead: ML agreement → small confidence boost
+        #          ML disagreement → small confidence penalty (10%)
         ml_agrees = (
             (direction == CONTRACT_TYPE_OVER and prediction.prob_over > prediction.prob_under) or
             (direction == CONTRACT_TYPE_UNDER and prediction.prob_under > prediction.prob_over)
         )
         
         if ML_DISAGREEMENT_BLOCKS and not ml_agrees and not is_martingale:
-            # v10: Block on ML disagreement (except during martingale recovery)
+            # Hard block mode (disabled by default in v12.1)
             self._skip("ml_disagrees_blocked")
             logger.info(
                 f"ML DISAGREES BLOCKED: Setup says {direction.replace('DIGIT','')} "
@@ -160,9 +166,11 @@ class SignalGenerator:
             confidence = confidence * (1 - ML_CONFIRMATION_WEIGHT) + ml_prob * ML_CONFIRMATION_WEIGHT
             ml_status = "ML_AGREES"
         else:
-            # v10: During martingale, ML disagreement still reduces confidence
-            confidence = confidence * 0.80
-            ml_status = "ML_DISAGREES(-20%[martingale])"
+            # v12.1: Soft penalty — reduce confidence by ML_DISAGREEMENT_PENALTY (default 10%)
+            # This still allows strong setups to trade, just with slightly less confidence
+            confidence = confidence * (1.0 - ML_DISAGREEMENT_PENALTY)
+            ml_dir = 'Over' if prediction.prob_over > prediction.prob_under else 'Under'
+            ml_status = f"ML_DISAGREES(-{ML_DISAGREEMENT_PENALTY:.0%})"
         
         # Clamp confidence
         confidence = max(0.05, min(0.99, confidence))
