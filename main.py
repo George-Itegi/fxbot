@@ -134,7 +134,13 @@ class DerivBot:
         logger.info(f"  Confidence:  BAYESIAN-ADJUSTED (52%+ minimum)")
         logger.info(f"  EV minimum:  3% to trade")
         logger.info(f"  Freq edge:   3%+ absolute, 6%+ relative (z > 2.0)")
-        logger.info(f"  Duration:    OBSERVED (3t-7t based on live digit pattern)")
+        # Show duration mode in banner
+        duration_mode = (
+            f"FIXED {config.CONTRACT_DURATION}t (--duration override)"
+            if not config.OBSERVATION_ENABLED
+            else "OBSERVED (3t-7t based on live digit pattern)"
+        )
+        logger.info(f"  Duration:    {duration_mode}")
         logger.info(f"  Profit target: ${PROFIT_TARGET_PER_MARKET:.0f} per market session")
         logger.info(f"  Martingale:  2.1x on loss (max 2 steps, FLEXIBLE direction, SAME market)")
         logger.info(f"  Trade interval: {MIN_TRADE_INTERVAL_SEC}s minimum")
@@ -794,6 +800,12 @@ def main():
         "--tick-learn-interval", type=int, default=None,
         help="Learn every Nth tick when --tick-learn is on"
     )
+    parser.add_argument(
+        "--duration", type=int, default=None,
+        help="Fixed contract duration in ticks (e.g., 3, 5, 7, 10). "
+             "Overrides the smart observation phase — no tick collection needed. "
+             "Use this to test specific durations and compare outcomes."
+    )
 
     args = parser.parse_args()
 
@@ -825,6 +837,20 @@ def main():
         config.TICK_LEARN_ENABLED = True
     if args.tick_learn_interval is not None:
         config.TICK_LEARN_INTERVAL = args.tick_learn_interval
+
+    # --duration: Fixed duration override (bypasses smart observation phase)
+    if args.duration is not None:
+        if args.duration < 1 or args.duration > 100:
+            logger.error(f"Invalid duration: {args.duration}. Must be 1-100 ticks.")
+            sys.exit(1)
+        config.OBSERVATION_ENABLED = False
+        config.CONTRACT_DURATION = args.duration
+        config.MIN_DURATION = args.duration
+        config.MAX_DURATION = args.duration
+        logger.info(
+            f"FIXED DURATION: {args.duration}t — "
+            f"smart observation phase DISABLED, all trades will use {args.duration}t"
+        )
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
