@@ -155,12 +155,31 @@ MAX_STAKE = 5.0
 MIN_CONFIDENCE = 0.56
 MIN_EDGE_THRESHOLD = 0.01
 
+# ─── Confidence-Weighted Agreement ───
+# The combined score = confidence * agreement_weight
+# A signal must meet MIN_SIGNAL_SCORE to be traded.
+# This prevents low-confidence "agreement" from triggering bad trades.
+# Example: 100% agreement at 61% confidence = 0.61 score (below 0.65 → SKIP)
+# Example: 67% agreement at 70% confidence = 0.47 score (below 0.65 → SKIP)
+# Example: 100% agreement at 72% confidence = 0.72 score (above 0.65 → TRADE)
+SIGNAL_SCORE_METHOD = "confidence_weighted"   # How to combine confidence + agreement
+MIN_SIGNAL_SCORE = 0.65                       # Minimum confidence*agreement score to trade
+AGREEMENT_WEIGHT = 1.0                        # Full weight on agreement in score calc
+
 # ─── Forced Trade (100% agreement) ───
 # All 3 models must not only VOTE the same way but also have REAL confidence.
 # A 54% probability with 3 binary votes = fake agreement.
 # All models must have confidence >= this threshold to force a trade.
 FORCE_TRADE_MIN_CONFIDENCE = 0.60   # 60% — models must be meaningfully confident
 FORCE_TRADE_MIN_EV = 0.0           # EV must be positive to force a trade
+
+# ─── Martingale Confidence Gate ───
+# During martingale recovery, the model must be MUCH more confident to double down.
+# No more 68% confidence martingale trades — that's reckless.
+# Requires BOTH: confidence >= 80% AND 100% model agreement.
+# If these aren't met, the martingale step is SKIPPED (no trade until conditions improve).
+MARTINGALE_MIN_CONFIDENCE = 0.80   # Must be 80%+ confident during martingale recovery
+MARTINGALE_MIN_AGREEMENT = 1.0     # Must have 100% model agreement during martingale
 MAX_DAILY_TRADES = 0          # 0 = unlimited (demo training mode)
 COOLDOWN_AFTER_LOSS_TICKS = 1
 MIN_TRADE_INTERVAL_SEC = 2    # Minimum seconds between trades

@@ -17,7 +17,8 @@ from config import (MIN_CONFIDENCE, MIN_EDGE_THRESHOLD, OVER_BARRIER,
                     CONTRACT_DURATION, KELLY_FRACTION, COOLDOWN_AFTER_LOSS_TICKS,
                     MIN_TRADE_INTERVAL_SEC, MAX_DAILY_TRADES,
                     DYNAMIC_DURATION, FORCE_TRADE_MIN_CONFIDENCE,
-                    FORCE_TRADE_MIN_EV)
+                    FORCE_TRADE_MIN_EV, MIN_SIGNAL_SCORE,
+                    MARTINGALE_MIN_CONFIDENCE, MARTINGALE_MIN_AGREEMENT)
 from models.online_learner import Prediction
 from utils.logger import setup_logger
 
@@ -70,13 +71,22 @@ class SignalGenerator:
     
     def generate(self, prediction: Prediction, features: dict,
                  payout: float, bankroll: float,
-                 model_in_drift: bool = False) -> Optional[Signal]:
+                 model_in_drift: bool = False,
+                 is_martingale: bool = False) -> Optional[Signal]:
         """
         Generate a trade signal from model prediction + current payout.
         
-        RULE: When ALL ensemble models agree 100%, a trade MUST occur.
-        This overrides confidence thresholds and EV thresholds.
-        The models agreeing 100% is the strongest possible signal.
+        CONFIDENCE-WEIGHTED AGREEMENT:
+        Signals are scored by confidence * agreement. A trade must meet
+        MIN_SIGNAL_SCORE to be taken. This prevents:
+        - 100% agreement at 61% confidence (weak — models barely agree)
+        - 67% agreement at 58% confidence (weak — 2/3 models barely leaning)
+        Only trade when models are BOTH confident AND in agreement.
+        
+        MARTINGALE CONFIDENCE GATE:
+        During martingale recovery, the bar is MUCH higher:
+        - Must have 80%+ confidence AND 100% agreement
+        - No more doubling down on weak 68% confidence signals
         
         Args:
             prediction: Model's output (probabilities, confidence)
@@ -84,10 +94,34 @@ class SignalGenerator:
             payout: Current payout ratio for the contract (e.g., 0.85 = 85%)
             bankroll: Current account balance
             model_in_drift: Whether the model is in drift state
+            is_martingale: Whether this is a martingale recovery trade
         
         Returns:
             Signal if conditions met, None otherwise.
         """
+        # ─── MARTINGALE CONFIDENCE GATE ───
+        # During martingale recovery, the model must be MUCH more confident.
+        # No more 68% confidence martingale trades — that's reckless.
+        # Requires BOTH: 80%+ confidence AND 100% model agreement.
+        if is_martingale:
+            best_conf = max(prediction.prob_over, prediction.prob_under)
+            if best_conf < MARTINGALE_MIN_CONFIDENCE:
+                self._skip("martingale_low_confidence")
+                logger.info(
+                    f"MARTINGALE GATE: Rejected — confidence {best_conf:.0%} "
+                    f"< {MARTINGALE_MIN_CONFIDENCE:.0%} minimum. "
+                    f"Waiting for stronger signal before doubling down."
+                )
+                return None
+            if prediction.model_agreement < MARTINGALE_MIN_AGREEMENT:
+                self._skip("martingale_low_agreement")
+                logger.info(
+                    f"MARTINGALE GATE: Rejected — agreement {prediction.model_agreement:.0%} "
+                    f"< {MARTINGALE_MIN_AGREEMENT:.0%} minimum. "
+                    f"All models must agree to double down."
+                )
+                return None
+        
         # ─── FORCE TRADE: All 3 models agree 100% WITH REAL confidence ───
         # PROBLEM: With 3 binary votes, models at 54%/46% ALL vote the same way
         # → fake 100% "agreement" on every tick.
@@ -203,6 +237,18 @@ class SignalGenerator:
         # Check model agreement (ensemble must agree enough)
         if prediction.model_agreement < self._min_model_agreement:
             self._skip("low_agreement")
+            return None
+        
+        # ─── Confidence-Weighted Agreement Score ───
+        # Agreement alone isn't enough. 100% agreement at 61% confidence is WEAK.
+        # The signal score = confidence * agreement.
+        # Both must be high — confident models that agree → strong signal.
+        # 100% agree at 72% confidence → score = 0.72 → TRADE
+        # 100% agree at 61% confidence → score = 0.61 → SKIP (below 0.65)
+        # 67% agree at 70% confidence → score = 0.47 → SKIP
+        signal_score = prediction.confidence * prediction.model_agreement
+        if signal_score < MIN_SIGNAL_SCORE:
+            self._skip("low_signal_score")
             return None
         
         # ─── Calculate Expected Value ───

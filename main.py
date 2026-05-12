@@ -257,6 +257,13 @@ class DerivBot:
         if len(self._active_trades) >= max_positions:
             return
 
+        # ─── Push martingale state to ALL workers ───
+        # This is critical: the signal generator needs to know if we're in
+        # martingale recovery so it can apply the higher confidence gate.
+        is_martingale = self.stake_mgr.state.martingale_step > 0
+        for worker in self.workers.values():
+            worker._is_martingale_active = is_martingale
+
         best_symbol = self.selector.select_market(self.workers)
         if best_symbol is None:
             return
