@@ -97,8 +97,8 @@ class DerivBot:
         logger.info(f"  Barrier:    Over {OVER_BARRIER} / Under {UNDER_BARRIER}")
         logger.info(f"  Duration:   1-10t (dynamic per market)")
         logger.info("")
-        logger.info("  Martingale: 2x on loss (max 5 steps, $50 cap)")
-        logger.info("  Martingale gate: 80%+ confidence AND 100% agreement")
+        logger.info("  Martingale: 2x on loss (max 2 steps, $20 cap)")
+        logger.info("  Martingale gate: 80%+ confidence AND 100% agreement AND same direction")
         logger.info(f"  Min confidence: {config.MIN_CONFIDENCE:.0%} (normal), {max(0.50, config.MIN_CONFIDENCE - config.TREND_CONFIDENCE_REDUCTION):.0%} (trend-aligned)")
         logger.info("  Force trade: YES when 100% agree + conf >= 60% + EV > 0")
         logger.info(f"  Trend bias: {config.TREND_CONFIDENCE_REDUCTION:.0%} lower threshold for trend-aligned trades (windows: 50, 200)")
@@ -262,10 +262,13 @@ class DerivBot:
 
         # ─── Push martingale state to ALL workers ───
         # This is critical: the signal generator needs to know if we're in
-        # martingale recovery so it can apply the higher confidence gate.
+        # martingale recovery so it can apply the higher confidence gate
+        # AND direction persistence (must recover in same direction).
         is_martingale = self.stake_mgr.state.martingale_step > 0
+        martingale_dir = self.stake_mgr.state.martingale_direction
         for worker in self.workers.values():
             worker._is_martingale_active = is_martingale
+            worker._martingale_direction = martingale_dir
 
         best_symbol = self.selector.select_market(self.workers)
         if best_symbol is None:
@@ -373,7 +376,8 @@ class DerivBot:
         stake = signal.stake
 
         self.risk_mgr.record_outcome(won, stake, payout)
-        self.stake_mgr.record_outcome(won, stake, payout, self.risk_mgr.bankroll)
+        self.stake_mgr.record_outcome(won, stake, payout, self.risk_mgr.bankroll,
+                                       direction=signal.direction)
         self._global_trade_counter += 1
         worker.trade_counter += 1
 

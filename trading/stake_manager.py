@@ -15,13 +15,14 @@ This module implements THREE strategies working together:
    - Less than 2/3 agree       → skip trade entirely
    This means we trade MORE when our edge is strongest.
 
-2. MARTINGALE 2x ON LOSS:
+2. MARTINGALE 2x ON LOSS (CONSERVATIVE):
    - After a loss: NEXT stake = 2x the lost stake
    - After a win:  Reset stake back to normal base
-   - Max consecutive martingale steps: 5 (2^5 = 32x base → hard cap)
-   - Hard cap: never exceed MAX_STAKE or MAX_MARTINGALE_STAKE
-   - If max martingale steps reached, reset to base stake
-   - This recovers losses when the next trade wins
+   - Max consecutive martingale steps: 2 (2^2 = 4x base → hard cap)
+   - Hard cap: never exceed $20 (MAX_MARTINGALE_STAKE)
+   - Direction MUST persist: if you lost on Over, you double down on Over
+   - If max martingale steps reached, reset to base stake (take the loss)
+   - Worst case: $5 + $10 + $20 = $35 total exposure
 
 3. WIN STREAK COMPOUNDING:
    - Consecutive wins → slight boost (1.1x per win, capped at 2.0x)
@@ -31,9 +32,9 @@ The combined formula:
   final_stake = base_stake × confidence_multiplier × martingale_factor × streak_factor
 
 All factors are capped so the final stake NEVER exceeds:
-  - MAX_STAKE ($5.00) absolute limit
-  - MAX_MARTINGALE_STAKE absolute limit
-  - MAX_MARTINGALE_STEPS (5) consecutive doublings max
+  - MAX_STAKE ($5.00) absolute limit (normal mode)
+  - MAX_MARTINGALE_STAKE ($20.00) absolute limit (recovery mode)
+  - MAX_MARTINGALE_STEPS (2) consecutive doublings max
 """
 
 import time
@@ -63,6 +64,7 @@ class StakeState:
     martingale_step: int = 0            # Current martingale step (0 = no martingale active)
     last_lost_stake: float = 0.0        # The stake that was lost (to double from)
     martingale_base_stake: float = 0.0  # The base stake before martingale started
+    martingale_direction: Optional[str] = None  # Direction of FIRST loss — must persist!
 
     # Recent trade history (for win rate calculation)
     recent_results: list = field(default_factory=list)
@@ -74,18 +76,17 @@ class StakeState:
 
 class StakeManager:
     """
-    Dynamic stake sizing with Martingale 2x on loss.
+    Dynamic stake sizing with Martingale 2x on loss (CONSERVATIVE).
 
     The strategy:
     - After a LOSS: double the next stake (Martingale 2x)
     - After a WIN: reset stake to normal base
-    - Max 5 consecutive martingale steps (2^5 = 32x)
+    - Max 2 consecutive martingale steps ($5→$10→$20 then RESET)
+    - Direction MUST persist during recovery (no switching)
     - Hard caps prevent runaway stakes
 
-    Combined with confidence scaling:
-    - Higher model agreement → bigger base stake
-    - Martingale multiplies on top of that
-    - But never exceeds MAX_STAKE
+    Worst case per chain: $5 + $10 + $20 = $35 total exposure
+    (Previously: $5 + $10 + $20 + $40 + $50 + $50 = $175 — way too dangerous)
     """
 
     # ─── Configuration ───
@@ -101,8 +102,8 @@ class StakeManager:
 
     # ─── Martingale Settings ───
     MARTINGALE_MULTIPLIER = 2.0       # Double stake after loss
-    MAX_MARTINGALE_STEPS = 5          # Max 5 consecutive doublings
-    MAX_MARTINGALE_STAKE = 50.0       # Absolute max stake for martingale
+    MAX_MARTINGALE_STEPS = 2          # Max 2 consecutive doublings ($5→$10→$20 then RESET)
+    MAX_MARTINGALE_STAKE = 20.0       # Absolute max stake for martingale (was $50 — too dangerous)
 
     # Win streak compounding
     STREAK_BOOST_PER_WIN = 0.10     # +10% per consecutive win
@@ -221,11 +222,15 @@ class StakeManager:
         return stake
 
     def record_outcome(self, won: bool, stake: float, payout: float,
-                       bankroll: float):
+                       bankroll: float, direction: str = None):
         """
         Record a trade outcome to update martingale and streak tracking.
 
         Call this AFTER every trade settlement.
+        
+        Args:
+            direction: The direction of the trade (e.g., "DIGITOVER" or "DIGITUNDER").
+                       Required for martingale direction persistence.
         """
         if won:
             self.state.consecutive_wins += 1
@@ -235,6 +240,7 @@ class StakeManager:
             self.state.martingale_step = 0
             self.state.last_lost_stake = 0.0
             self.state.martingale_base_stake = 0.0
+            self.state.martingale_direction = None
         else:
             self.state.consecutive_losses += 1
             self.state.consecutive_wins = 0
@@ -242,8 +248,12 @@ class StakeManager:
             # ─── LOSS: Activate martingale ───
             # Next stake = 2x the lost stake
             if self.state.martingale_step == 0:
-                # First loss — record the base stake
+                # First loss — record the base stake AND direction
                 self.state.martingale_base_stake = stake
+                self.state.martingale_direction = direction
+                logger.info(
+                    f"MARTINGALE STARTED: direction={direction}, lost ${stake:.2f}"
+                )
 
             self.state.last_lost_stake = stake
             self.state.martingale_step += 1
@@ -252,16 +262,19 @@ class StakeManager:
             if self.state.martingale_step > self.MAX_MARTINGALE_STEPS:
                 logger.warning(
                     f"MARTINGALE MAX REACHED ({self.MAX_MARTINGALE_STEPS} steps). "
-                    f"Resetting to base stake."
+                    f"Lost ${stake:.2f} on {self.state.martingale_direction}. "
+                    f"Resetting to base stake — taking the loss."
                 )
                 self.state.martingale_step = 0
                 self.state.last_lost_stake = 0.0
                 self.state.martingale_base_stake = 0.0
+                self.state.martingale_direction = None
             else:
+                next_stake = min(stake * self.MARTINGALE_MULTIPLIER, self.MAX_MARTINGALE_STAKE)
                 logger.info(
-                    f"MARTINGALE STEP {self.state.martingale_step}: "
-                    f"Lost ${stake:.2f}, next stake will be ${stake * self.MARTINGALE_MULTIPLIER:.2f} "
-                    f"(2x recovery)"
+                    f"MARTINGALE STEP {self.state.martingale_step}/{self.MAX_MARTINGALE_STEPS}: "
+                    f"Lost ${stake:.2f} on {direction}, next stake=${next_stake:.2f} "
+                    f"(must stay {self.state.martingale_direction})"
                 )
 
         # Track recent results for win rate
@@ -303,6 +316,7 @@ class StakeManager:
             "consecutive_wins": self.state.consecutive_wins,
             "consecutive_losses": self.state.consecutive_losses,
             "martingale_step": self.state.martingale_step,
+            "martingale_direction": self.state.martingale_direction,
             "martingale_next_mult": 2 ** self.state.martingale_step if self.state.martingale_step > 0 else 1,
             "recent_win_rate": round(self.get_recent_win_rate(), 3),
             "recent_trades": len(self.state.recent_results),

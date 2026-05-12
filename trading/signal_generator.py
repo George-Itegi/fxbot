@@ -80,7 +80,8 @@ class SignalGenerator:
     def generate(self, prediction: Prediction, features: dict,
                  payout: float, bankroll: float,
                  model_in_drift: bool = False,
-                 is_martingale: bool = False) -> Optional[Signal]:
+                 is_martingale: bool = False,
+                 martingale_direction: str = None) -> Optional[Signal]:
         """
         Generate a trade signal from model prediction + current payout.
         
@@ -94,7 +95,8 @@ class SignalGenerator:
         MARTINGALE CONFIDENCE GATE:
         During martingale recovery, the bar is MUCH higher:
         - Must have 80%+ confidence AND 100% agreement
-        - No more doubling down on weak 68% confidence signals
+        - Must maintain SAME direction as the original losing trade
+        - No more doubling down on weak signals or switching directions
         
         Args:
             prediction: Model's output (probabilities, confidence)
@@ -111,6 +113,7 @@ class SignalGenerator:
         # During martingale recovery, the model must be MUCH more confident.
         # No more 68% confidence martingale trades — that's reckless.
         # Requires BOTH: 80%+ confidence AND 100% model agreement.
+        # ALSO: Must maintain SAME direction as original losing trade.
         if is_martingale:
             best_conf = max(prediction.prob_over, prediction.prob_under)
             if best_conf < MARTINGALE_MIN_CONFIDENCE:
@@ -129,6 +132,27 @@ class SignalGenerator:
                     f"All models must agree to double down."
                 )
                 return None
+            
+            # ─── MARTINGALE DIRECTION PERSISTENCE ───
+            # CRITICAL FIX: During martingale, the direction MUST match the
+            # original losing trade. Switching from Over→Under→Over during
+            # recovery is GAMBLING, not recovering. If you lost on Over,
+            # you double down on Over. Period.
+            if martingale_direction:
+                # Determine which direction the model wants now
+                if prediction.prob_over >= prediction.prob_under:
+                    model_direction = CONTRACT_TYPE_OVER
+                else:
+                    model_direction = CONTRACT_TYPE_UNDER
+                
+                if model_direction != martingale_direction:
+                    self._skip("martingale_direction_mismatch")
+                    logger.info(
+                        f"MARTINGALE DIRECTION GATE: Rejected — model wants {model_direction} "
+                        f"but martingale requires {martingale_direction}. "
+                        f"Must recover in the SAME direction as the original loss."
+                    )
+                    return None
         
         # ─── FORCE TRADE: All 3 models agree 100% WITH REAL confidence ───
         # PROBLEM: With 3 binary votes, models at 54%/46% ALL vote the same way

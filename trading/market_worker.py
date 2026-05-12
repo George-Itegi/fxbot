@@ -68,6 +68,7 @@ class MarketWorker:
 
         # ─── Martingale state (updated from StakeManager via main.py) ───
         self._is_martingale_active: bool = False
+        self._martingale_direction: Optional[str] = None  # Direction of original losing trade
 
         # ─── Direction Cooldown (anti-stuck mechanism) ───
         # After losing on Over, block Over signals for a while so the bot
@@ -227,6 +228,7 @@ class MarketWorker:
                 bankroll=self._bankroll,
                 model_in_drift=self.drift_detector.drift_active,
                 is_martingale=self._is_martingale_active,
+                martingale_direction=self._martingale_direction,
             )
 
             if signal is not None:
