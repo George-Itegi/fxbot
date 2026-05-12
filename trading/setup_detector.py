@@ -1,24 +1,21 @@
 """
-Setup Detector — Dynamic Barrier Selection (v9)
-=================================================
-Evaluates ALL Over/Under barriers and picks the BEST one.
+Setup Detector — Conservative Edge Detection (v10)
+====================================================
+v9 FAILED: chased extreme barriers, caught noise as "edges."
 
-Key Insight: Over 4 / Under 5 are 50/50 contracts. A 5% frequency edge on
-Over 4 gives only ~5% EV. But the same 5% edge on Over 8 (10% natural,
-~895% payout) gives ~50% EV — 10x more profitable!
-
-The setup detector now:
-1. Computes per-digit frequencies across windows
-2. For each barrier, calculates observed win probability and EV
-3. Picks the barrier with the best risk-adjusted EV
-4. Verifies statistical significance (z-score > 2)
-5. Trend is a BIAS (boost/penalty), not a strict requirement
-
-Setup Score (v9):
-- Frequency edge significance (z-score) — is the deviation real?
-- Window agreement — do multiple windows confirm the edge?
-- Payout-adjusted EV — how much do we expect to profit?
-- Trend alignment — bonus if trend agrees, penalty if it opposes
+v10 fixes:
+1. BAYESIAN SHRINKAGE: observed prob is blended with natural prob
+   - Prevents chasing noise — if n=200, shrink 33% toward natural
+   - A 40% observed on Over 8 (10% natural) becomes 30%, not 40%
+2. MODERATE BARRIERS ONLY: Over 3-6, Under 4-7
+   - These have 30-60% natural prob — manageable variance
+   - Even without an edge, you win 30-60% of trades
+3. ALL 3 WINDOWS MUST AGREE (was 2/3)
+   - Reduces false positives from the multiple testing problem
+4. z-score threshold = 3.0 (was 1.3)
+   - 3-sigma = 99.7% confidence, not 80%
+5. Stricter setup score threshold: 0.70 (was 0.60)
+6. Trend misalignment penalty increased to 15% (was 10%)
 """
 
 import math
@@ -51,6 +48,7 @@ from config import (
     TREND_CONFIDENCE_BOOST,
     TREND_MISALIGN_PENALTY,
     MIN_DIGIT_FREQUENCY_EDGE_RELATIVE,
+    BAYESIAN_SHRINKAGE_PRIOR,
 )
 from utils.logger import setup_logger
 
@@ -61,16 +59,18 @@ logger = setup_logger("trading.setup_detector")
 class BarrierEval:
     """Evaluation of a single barrier option."""
     contract_type: str          # "DIGITOVER" or "DIGITUNDER"
-    barrier: int                # The digit barrier (e.g., 7 for Over 7)
-    natural_prob: float         # Natural/uniform probability (e.g., 0.20 for Over 7)
-    observed_prob: float        # Observed win probability from digit frequencies
-    freq_edge: float            # observed_prob - natural_prob (absolute edge)
-    freq_edge_pct: float        # Edge as percentage (e.g., 5.0 for 5%)
+    barrier: int                # The digit barrier (e.g., 5 for Over 5)
+    natural_prob: float         # Natural/uniform probability (e.g., 0.40 for Over 5)
+    observed_prob: float        # Raw observed win probability from digit frequencies
+    adjusted_prob: float        # v10: Bayesian-shrunk probability (observed blended with natural)
+    freq_edge: float            # adjusted_prob - natural_prob (using shrunk prob)
+    freq_edge_pct: float        # Edge as percentage
     z_score: float              # Statistical significance of the deviation
     payout_rate: float          # Estimated payout (profit/stake ratio)
-    ev: float                   # Expected value per $1 staked
+    ev: float                   # Expected value per $1 staked (using adjusted_prob)
     window_agreement: int       # How many windows confirm this edge (0-3)
     is_significant: bool        # Is the z-score above threshold?
+    sample_size: int            # Effective sample size used for shrinkage
 
 
 @dataclass
@@ -78,24 +78,25 @@ class Setup:
     """Detected market setup — the basis for a trade decision."""
     active: bool = False               # Is there a valid setup right now?
     direction: str = ""                # "DIGITOVER" or "DIGITUNDER"
-    barrier: int = 4                   # The BEST barrier to trade (v9: dynamic!)
+    barrier: int = 4                   # The BEST barrier to trade
     trend_regime: int = 0              # 1=uptrend, -1=downtrend, 0=ranging
     trend_strength: float = 0.0        # Min t-stat across 200/500 windows
     over_freq: float = 0.5             # Average Over-frequency across windows (for Over 4)
     under_freq: float = 0.5            # Average Under-frequency across windows (for Under 5)
-    freq_edge: float = 0.0             # |over_freq - under_freq| for the CHOSEN barrier
+    freq_edge: float = 0.0             # |adjusted_prob - natural_prob| for chosen barrier
     freq_direction: int = 0            # 1=Over dominant, -1=Under dominant
     window_agreement: int = 0          # How many windows agree on freq direction (0-3)
     trend_freq_aligned: bool = False   # Does trend direction match frequency direction?
     setup_score: float = 0.0           # Composite quality score (0-1)
     reason: str = ""                   # Human-readable explanation
     detected_at: float = 0.0           # When was this setup detected?
-    observation_complete: bool = False  # Has the observation phase finished?
-    observed_duration: int = 5         # Duration determined by observation (ticks)
-    # ─── v9: Dynamic barrier fields ───
-    best_barrier_eval: Optional[BarrierEval] = None  # The best barrier evaluation
+    observation_complete: bool = True   # v10: Always True (no observation phase)
+    observed_duration: int = 5          # v10: Always 5
+    # ─── v10: Dynamic barrier fields ───
+    best_barrier_eval: Optional[BarrierEval] = None
     natural_prob: float = 0.5          # Natural probability for chosen barrier
-    observed_prob: float = 0.5         # Observed probability for chosen barrier
+    observed_prob: float = 0.5         # Raw observed probability for chosen barrier
+    adjusted_prob: float = 0.5         # v10: Bayesian-adjusted probability
     payout_rate: float = 0.95          # Payout rate for chosen barrier
     z_score: float = 0.0              # Statistical significance
     all_barrier_evals: list = None     # All evaluated barriers (for debugging)
@@ -115,128 +116,34 @@ class MarketSession:
     current_setup: Optional[Setup] = None
 
 
-class ObservationTracker:
-    """
-    Tracks digit movement during the observation phase.
-    
-    When a setup is detected, we WATCH the market for 20-30 seconds.
-    During this time, we track:
-    - When a non-dominant digit appears, how many ticks until a dominant digit appears?
-    - This tells us the OPTIMAL tick duration for the contract.
-    """
-    
-    def __init__(self, observation_sec: float = OBSERVATION_PERIOD_SEC,
-                 min_ticks: int = MIN_OBSERVATION_TICKS):
-        self._observation_sec = observation_sec
-        self._min_ticks = min_ticks
-        self._start_time: float = 0.0
-        self._tick_count: int = 0
-        self._direction: int = 0  # 1=Over dominant, -1=Under dominant
-        self._barrier: int = 4    # Which barrier we're observing for
-        self._flip_durations: list = []
-        self._last_non_dominant_tick: int = 0
-        self._in_non_dominant: bool = False
-        self._complete: bool = False
-    
-    def start(self, direction: int, barrier: int = 4):
-        """Start observation phase. direction: 1=Over, -1=Under."""
-        self._start_time = time.time()
-        self._tick_count = 0
-        self._direction = direction
-        self._barrier = barrier
-        self._flip_durations = []
-        self._last_non_dominant_tick = 0
-        self._in_non_dominant = False
-        self._complete = False
-    
-    def observe_tick(self, digit: int):
-        """Process a tick during observation. Returns True if complete."""
-        if self._complete:
-            return True
-        
-        self._tick_count += 1
-        # Check if this digit is dominant for our chosen barrier
-        if self._direction == 1:  # Over
-            is_dominant = digit > self._barrier
-        else:  # Under
-            is_dominant = digit < self._barrier
-        
-        if not is_dominant:
-            if not self._in_non_dominant:
-                self._in_non_dominant = True
-                self._last_non_dominant_tick = self._tick_count
-        else:
-            if self._in_non_dominant:
-                flip_duration = self._tick_count - self._last_non_dominant_tick
-                if flip_duration > 0:
-                    self._flip_durations.append(flip_duration)
-                self._in_non_dominant = False
-        
-        elapsed = time.time() - self._start_time
-        if elapsed >= self._observation_sec and self._tick_count >= self._min_ticks:
-            self._complete = True
-        
-        return self._complete
-    
-    def get_recommended_duration(self) -> int:
-        """Determine optimal tick duration from observation data."""
-        if not self._flip_durations:
-            return 5
-        
-        from collections import Counter
-        counts = Counter(self._flip_durations)
-        mode_duration = counts.most_common(1)[0][0]
-        avg_duration = sum(self._flip_durations) / len(self._flip_durations)
-        
-        if len(self._flip_durations) >= 5:
-            recommended = mode_duration
-        else:
-            recommended = round(avg_duration)
-        
-        recommended = max(2, min(10, recommended))
-        return recommended
-    
-    def summary(self) -> dict:
-        return {
-            "ticks_observed": self._tick_count,
-            "flip_count": len(self._flip_durations),
-            "flip_durations": self._flip_durations[-10:],
-            "recommended_duration": self.get_recommended_duration() if self._flip_durations else None,
-            "complete": self._complete,
-            "elapsed_sec": round(time.time() - self._start_time, 1) if self._start_time > 0 else 0,
-        }
-
-
 class SetupDetector:
     """
-    Detects and scores market setups using DYNAMIC BARRIER SELECTION.
+    Detects and scores market setups — v10 Conservative Edge Detection.
     
-    v9 Philosophy:
-    - Evaluate ALL Over/Under barriers (not just Over 4 / Under 5)
-    - Find the barrier with the best risk-adjusted EV
-    - Lower-probability barriers have higher payouts, so small frequency
-      deviations are much more valuable
-    - Trend is a BIAS (boost/penalty), not a strict requirement
-    - Statistical significance is REQUIRED (z-score > 2)
+    v10 Philosophy:
+    - Only test MODERATE barriers (Over 3-6, Under 4-7)
+    - Use BAYESIAN SHRINKAGE to prevent chasing noise
+    - Require z-score > 3.0 (3-sigma)
+    - Require ALL 3 windows to agree
+    - Trend is a SOFT BIAS (boost/penalty), not a requirement
     """
     
     def __init__(self):
-        self._observation_trackers: dict[str, ObservationTracker] = {}
         self._sessions: dict[str, MarketSession] = {}
         self._setup_cache: dict[str, Setup] = {}
         
-        logger.info("SetupDetector v9 initialized: dynamic barrier selection + EV-based trading")
+        logger.info("SetupDetector v10 initialized: conservative edge detection + Bayesian shrinkage")
     
     def evaluate(self, symbol: str, features: dict) -> Setup:
         """
-        Evaluate the current market setup with dynamic barrier selection.
+        Evaluate the current market setup with conservative barrier selection.
         
         This is the MAIN method — called on every tick for each market.
         Returns a Setup object describing the best available trade.
         """
         setup = Setup()
         
-        # ─── Step 1: Trend Check (v9: BIAS, not requirement) ───
+        # ─── Step 1: Trend Check (v10: SOFT BIAS, not requirement) ───
         trend_regime = features.get("trend_regime", 0)
         tstat_50 = features.get("slope_tstat_50", 0.0)
         tstat_200 = features.get("slope_tstat_200", 0.0)
@@ -251,11 +158,10 @@ class SetupDetector:
         else:
             setup.trend_strength = 0.0
         
-        # ─── Step 2: Evaluate ALL barriers ───
+        # ─── Step 2: Evaluate barriers (MODERATE only) ───
         if DYNAMIC_BARRIERS:
             best_eval = self._evaluate_all_barriers(features, trend_regime)
         else:
-            # Fallback: only evaluate Over 4 / Under 5
             best_eval = self._evaluate_fixed_barriers(features, trend_regime)
         
         if best_eval is None:
@@ -270,20 +176,19 @@ class SetupDetector:
         setup.barrier = best_eval.barrier
         setup.natural_prob = best_eval.natural_prob
         setup.observed_prob = best_eval.observed_prob
+        setup.adjusted_prob = best_eval.adjusted_prob  # v10: Bayesian-adjusted
         setup.payout_rate = best_eval.payout_rate
         setup.z_score = best_eval.z_score
         setup.freq_edge = best_eval.freq_edge
         setup.best_barrier_eval = best_eval
         
-        # Legacy fields (for Over 4 / Under 5 compatibility)
+        # Legacy fields
         setup.over_freq = features.get("over_freq_medium", 0.5)
         setup.under_freq = features.get("under_freq_medium", 0.5)
         setup.freq_direction = 1 if best_eval.contract_type == CONTRACT_TYPE_OVER else -1
         setup.window_agreement = best_eval.window_agreement
         
         # ─── Step 4: Trend alignment check ───
-        # v9: Trend is a BIAS, not a requirement
-        # Over + uptrend = aligned, Under + downtrend = aligned
         if trend_regime != 0:
             if (trend_regime == 1 and best_eval.contract_type == CONTRACT_TYPE_OVER) or \
                (trend_regime == -1 and best_eval.contract_type == CONTRACT_TYPE_UNDER):
@@ -291,14 +196,18 @@ class SetupDetector:
             else:
                 setup.trend_freq_aligned = False
         else:
-            # No trend — neutral, no alignment bonus or penalty
             setup.trend_freq_aligned = True  # Neutral = OK
         
-        # ─── Step 5: Setup Quality Score (v9: EV-based) ───
+        # ─── Step 5: Setup Quality Score (v10: EV-based with Bayesian adjustment) ───
         setup.setup_score = self._compute_setup_score(best_eval, setup.trend_freq_aligned, trend_regime)
         
         # ─── Step 6: Is the setup active? ───
-        setup.active = setup.setup_score >= MIN_SETUP_SCORE and best_eval.is_significant
+        # v10: Much stricter — need high z-score, all windows agree, and high setup score
+        setup.active = (
+            setup.setup_score >= MIN_SETUP_SCORE and 
+            best_eval.is_significant and
+            best_eval.window_agreement >= DIGIT_FREQ_WINDOW_AGREEMENT  # v10: ALL windows
+        )
         
         # Build reason string
         dir_label = "Over" if best_eval.contract_type == CONTRACT_TYPE_OVER else "Under"
@@ -307,8 +216,9 @@ class SetupDetector:
         
         if setup.active:
             setup.reason = (
-                f"{dir_label}{best_eval.barrier}: obs_prob={best_eval.observed_prob:.1%} "
-                f"(natural={best_eval.natural_prob:.0%}, edge={best_eval.freq_edge_pct:+.1f}%) "
+                f"{dir_label}{best_eval.barrier}: obs={best_eval.observed_prob:.1%} "
+                f"adj={best_eval.adjusted_prob:.1%} (natural={best_eval.natural_prob:.0%}, "
+                f"edge={best_eval.freq_edge_pct:+.1f}%) "
                 f"z={best_eval.z_score:.1f} EV={best_eval.ev:+.1%} "
                 f"payout={best_eval.payout_rate:.1%} windows={best_eval.window_agreement}/3 "
                 f"trend={trend_label}({align_label}) "
@@ -318,8 +228,10 @@ class SetupDetector:
         else:
             setup.reason = (
                 f"Best: {dir_label}{best_eval.barrier} obs={best_eval.observed_prob:.1%} "
+                f"adj={best_eval.adjusted_prob:.1%} "
                 f"edge={best_eval.freq_edge_pct:+.1f}% z={best_eval.z_score:.1f} "
-                f"EV={best_eval.ev:+.1%} — score={setup.setup_score:.2f} "
+                f"EV={best_eval.ev:+.1%} windows={best_eval.window_agreement}/3 "
+                f"— score={setup.setup_score:.2f} "
                 f"{'INSUFFICIENT' if not best_eval.is_significant else 'weak'}"
             )
             self._check_session_break(symbol, setup)
@@ -329,18 +241,13 @@ class SetupDetector:
     
     def _evaluate_all_barriers(self, features: dict, trend_regime: int) -> Optional[BarrierEval]:
         """
-        Evaluate ALL Over/Under barriers and find the best one.
+        Evaluate MODERATE Over/Under barriers and find the best one.
         
-        For each barrier:
-        1. Get observed win probability from digit frequencies
-        2. Calculate edge (observed - natural)
-        3. Calculate z-score (statistical significance)
-        4. Estimate payout rate
-        5. Calculate EV = observed_prob * (1 + payout_rate) - 1
-        6. Check window agreement
+        v10: Only evaluates Over 3-6 and Under 4-7 (moderate barriers).
+        v9 tested ALL 17 barriers which caused massive false positive rate.
         
-        Returns the BarrierEval with the best risk-adjusted EV, or None if
-        no barrier has a significant edge.
+        Scoring now uses Bayesian-adjusted probability for EV calculation,
+        which prevents extreme barriers from dominating via payout amplification.
         """
         best_eval: Optional[BarrierEval] = None
         best_score: float = -1.0
@@ -350,7 +257,6 @@ class SetupDetector:
         for barrier in BARRIER_OVER_OPTIONS:
             natural_prob = BARRIER_NATURAL_PROB_OVER.get(barrier, 0.5)
             
-            # Skip barriers outside our probability range
             if natural_prob < MIN_BARRIER_PROBABILITY or natural_prob > MAX_BARRIER_PROBABILITY:
                 continue
             
@@ -364,10 +270,13 @@ class SetupDetector:
             if eval_result is not None:
                 all_evals.append(eval_result)
                 
-                # Score: risk-adjusted EV (EV * significance * window_agreement)
-                # Prefer barriers with: high EV, high z-score, multiple window agreement
+                # v10: Score based on ADJUSTED EV (Bayesian-shrunk)
+                # This prevents extreme barriers from dominating
                 if eval_result.is_significant and eval_result.ev > 0:
-                    score = eval_result.ev * (1 + eval_result.z_score / 5.0) * (1 + eval_result.window_agreement / 3.0)
+                    # Score: risk-adjusted EV with window agreement
+                    # Prefer barriers with: high adjusted EV, high z-score, all windows agree
+                    window_bonus = 1.0 + eval_result.window_agreement / 3.0
+                    score = eval_result.ev * window_bonus
                     if score > best_score:
                         best_score = score
                         best_eval = eval_result
@@ -390,12 +299,13 @@ class SetupDetector:
                 all_evals.append(eval_result)
                 
                 if eval_result.is_significant and eval_result.ev > 0:
-                    score = eval_result.ev * (1 + eval_result.z_score / 5.0) * (1 + eval_result.window_agreement / 3.0)
+                    window_bonus = 1.0 + eval_result.window_agreement / 3.0
+                    score = eval_result.ev * window_bonus
                     if score > best_score:
                         best_score = score
                         best_eval = eval_result
         
-        # Log top 3 barriers (for debugging)
+        # Log top barriers (for debugging)
         if all_evals:
             significant = [e for e in all_evals if e.is_significant and e.ev > 0]
             significant.sort(key=lambda e: e.ev, reverse=True)
@@ -403,7 +313,7 @@ class SetupDetector:
                 top = significant[:3]
                 barrier_str = " | ".join(
                     f"{'O' if e.contract_type == CONTRACT_TYPE_OVER else 'U'}{e.barrier} "
-                    f"obs={e.observed_prob:.1%} EV={e.ev:+.1%} z={e.z_score:.1f}"
+                    f"adj={e.adjusted_prob:.1%} EV={e.ev:+.1%} z={e.z_score:.1f}"
                     for e in top
                 )
                 logger.debug(f"Top barriers: {barrier_str}")
@@ -413,21 +323,32 @@ class SetupDetector:
     def _evaluate_single_barrier(self, contract_type: str, barrier: int,
                                   natural_prob: float, features: dict) -> Optional[BarrierEval]:
         """
-        Evaluate a single barrier option.
+        Evaluate a single barrier option with BAYESIAN SHRINKAGE (v10).
         
-        Computes observed win probability, edge, z-score, payout, and EV
-        for one specific barrier (e.g., Over 7 or Under 2).
+        v10 Key Change: observed probability is blended with natural probability
+        using Bayesian shrinkage. This prevents the bot from chasing noise.
+        
+        adjusted_prob = (n * observed + k * natural) / (n + k)
+        
+        Where n = effective sample size, k = prior strength (BAYESIAN_SHRINKAGE_PRIOR).
         """
         # Get observed frequency from features
-        # The feature_engine computes over{barrier}_freq_{window} and under{barrier}_freq_{window}
         freq_key_prefix = "over" if contract_type == CONTRACT_TYPE_OVER else "under"
         
         observed_probs = []
+        sample_sizes = []
         for window in ["short", "medium", "trend_long"]:
             key = f"{freq_key_prefix}{barrier}_freq_{window}"
             prob = features.get(key, None)
             if prob is not None:
                 observed_probs.append(prob)
+                # Approximate sample size for each window
+                if window == "short":
+                    sample_sizes.append(50)
+                elif window == "medium":
+                    sample_sizes.append(200)
+                else:
+                    sample_sizes.append(500)
         
         if not observed_probs:
             return None
@@ -435,26 +356,31 @@ class SetupDetector:
         # Weighted average: medium and long windows are more reliable
         if len(observed_probs) == 3:
             observed_prob = observed_probs[0] * 0.2 + observed_probs[1] * 0.4 + observed_probs[2] * 0.4
+            effective_n = sample_sizes[0] * 0.2 + sample_sizes[1] * 0.4 + sample_sizes[2] * 0.4
         elif len(observed_probs) == 2:
             observed_prob = (observed_probs[0] + observed_probs[1]) / 2
+            effective_n = (sample_sizes[0] + sample_sizes[1]) / 2
         else:
             observed_prob = observed_probs[0]
+            effective_n = sample_sizes[0]
         
-        # Calculate edge
-        freq_edge = observed_prob - natural_prob
-        freq_edge_pct = freq_edge * 100  # As percentage
+        # ─── v10: BAYESIAN SHRINKAGE ───
+        # Blend observed probability with natural probability
+        # adjusted_prob = (n * observed + k * natural) / (n + k)
+        k = BAYESIAN_SHRINKAGE_PRIOR  # 100 by default
+        adjusted_prob = (effective_n * observed_prob + k * natural_prob) / (effective_n + k)
         
-        # Calculate z-score (statistical significance)
-        # SE = sqrt(p * (1-p) / n) where p = natural_prob, n = sample size
-        # We use the medium window size as the effective sample size
-        n = 200  # medium window size
+        # Calculate edge using ADJUSTED probability (not raw observed)
+        freq_edge = adjusted_prob - natural_prob
+        freq_edge_pct = freq_edge * 100
+        
+        # Calculate z-score using the RAW observed probability
+        # (z-score measures how far the raw observation is from natural)
+        n = 200  # medium window size for z-score calculation
         se = math.sqrt(natural_prob * (1 - natural_prob) / n) if n > 0 else 1.0
-        z_score = freq_edge / se if se > 0 else 0.0
+        z_score = (observed_prob - natural_prob) / se if se > 0 else 0.0
         
-        # Is this edge statistically significant?
-        # v9: Use BOTH absolute edge AND relative edge thresholds
-        # A 3.8% edge on Over 8 (10% natural) = 38% relative edge — very significant!
-        # A 3.8% edge on Over 4 (50% natural) = 7.6% relative edge — less significant
+        # v10: Require ALL 3 windows to agree AND higher thresholds
         relative_edge = freq_edge / natural_prob if natural_prob > 0 else 0
         is_significant = (
             z_score >= MIN_FREQ_EDGE_ZSCORE and 
@@ -465,9 +391,11 @@ class SetupDetector:
         # Calculate payout rate for this barrier
         payout_rate = estimate_payout_rate(natural_prob)
         
-        # Calculate EV = observed_prob * (1 + payout_rate) - 1
-        # For a $1 stake: if win, you get $1 + $payout_rate back. If lose, you lose $1.
-        ev = observed_prob * (1 + payout_rate) - 1.0
+        # ─── v10: EV using ADJUSTED probability (not raw) ───
+        # This is the KEY fix: EV should use the Bayesian-adjusted probability,
+        # not the raw observed probability. This prevents the payout multiplier
+        # from amplifying noise on extreme barriers.
+        ev = adjusted_prob * (1 + payout_rate) - 1.0
         
         # Window agreement: how many windows show the SAME edge direction?
         window_agreement = 0
@@ -480,6 +408,7 @@ class SetupDetector:
             barrier=barrier,
             natural_prob=natural_prob,
             observed_prob=observed_prob,
+            adjusted_prob=adjusted_prob,
             freq_edge=freq_edge,
             freq_edge_pct=freq_edge_pct,
             z_score=z_score,
@@ -487,6 +416,7 @@ class SetupDetector:
             ev=ev,
             window_agreement=window_agreement,
             is_significant=is_significant,
+            sample_size=int(effective_n),
         )
     
     def _evaluate_fixed_barriers(self, features: dict, trend_regime: int) -> Optional[BarrierEval]:
@@ -513,37 +443,37 @@ class SetupDetector:
         """
         Compute setup quality score (0-1).
         
-        v9: The score is based on:
-        1. EV significance (is the EV high enough to trade?)
+        v10: The score is based on:
+        1. EV significance (using Bayesian-adjusted probability)
         2. Statistical significance (z-score)
-        3. Window agreement
+        3. Window agreement (ALL 3 required for high score)
         4. Trend alignment bonus/penalty
         
-        The score determines IF we should trade this setup.
         Higher = more confidence in the trade.
         """
-        # 1. EV score: EV > 10% = 1.0, EV > 5% = 0.7, EV > 2% = 0.4, EV < 0 = 0
-        if barrier_eval.ev >= 0.10:
+        # 1. EV score: EV > 15% = 1.0, EV > 8% = 0.7, EV > 3% = 0.4, EV < 0 = 0
+        if barrier_eval.ev >= 0.15:
             ev_score = 1.0
         elif barrier_eval.ev >= MIN_EV_FOR_TRADE:
-            ev_score = 0.5 + 0.5 * (barrier_eval.ev - MIN_EV_FOR_TRADE) / (0.10 - MIN_EV_FOR_TRADE)
+            ev_score = 0.5 + 0.5 * (barrier_eval.ev - MIN_EV_FOR_TRADE) / (0.15 - MIN_EV_FOR_TRADE)
         elif barrier_eval.ev > 0:
             ev_score = 0.2 + 0.3 * barrier_eval.ev / MIN_EV_FOR_TRADE
         else:
             ev_score = 0.0
         
-        # 2. Z-score significance: z > 4 = 1.0, z > 2 = 0.7, z > 1 = 0.4, z < 1 = 0.1
-        if barrier_eval.z_score >= 4.0:
+        # 2. Z-score significance: z > 5 = 1.0, z > 3 = 0.7, z > 2 = 0.4, z < 2 = 0.1
+        if barrier_eval.z_score >= 5.0:
             z_score_val = 1.0
         elif barrier_eval.z_score >= MIN_FREQ_EDGE_ZSCORE:
-            z_score_val = 0.5 + 0.5 * (barrier_eval.z_score - MIN_FREQ_EDGE_ZSCORE) / (4.0 - MIN_FREQ_EDGE_ZSCORE)
-        elif barrier_eval.z_score >= 1.0:
-            z_score_val = 0.2 + 0.3 * (barrier_eval.z_score - 1.0) / (MIN_FREQ_EDGE_ZSCORE - 1.0)
+            z_score_val = 0.5 + 0.5 * (barrier_eval.z_score - MIN_FREQ_EDGE_ZSCORE) / (5.0 - MIN_FREQ_EDGE_ZSCORE)
+        elif barrier_eval.z_score >= 2.0:
+            z_score_val = 0.2 + 0.3 * (barrier_eval.z_score - 2.0) / (MIN_FREQ_EDGE_ZSCORE - 2.0)
         else:
             z_score_val = 0.1
         
-        # 3. Window agreement: 3/3 = 1.0, 2/3 = 0.7, 1/3 = 0.4, 0/3 = 0.1
-        agreement_score = {0: 0.1, 1: 0.4, 2: 0.7, 3: 1.0}.get(barrier_eval.window_agreement, 0.1)
+        # 3. Window agreement: 3/3 = 1.0, 2/3 = 0.5, 1/3 = 0.2, 0/3 = 0.1
+        # v10: Much steeper dropoff — 3/3 is strongly preferred
+        agreement_score = {0: 0.1, 1: 0.2, 2: 0.5, 3: 1.0}.get(barrier_eval.window_agreement, 0.1)
         
         # 4. Trend alignment: bonus or penalty
         if trend_regime == 0:
@@ -551,12 +481,12 @@ class SetupDetector:
         elif trend_aligned:
             trend_factor = 1.0 + TREND_CONFIDENCE_BOOST  # Small boost
         else:
-            trend_factor = 1.0 - TREND_MISALIGN_PENALTY  # Penalty for misalignment
+            trend_factor = 1.0 - TREND_MISALIGN_PENALTY  # v10: Larger penalty (15%)
         
         # Composite score (weighted)
         raw_score = (
-            ev_score * 0.40 +           # EV is the most important
-            z_score_val * 0.30 +        # Statistical significance
+            ev_score * 0.35 +           # EV is important
+            z_score_val * 0.35 +        # Statistical significance equally important
             agreement_score * 0.30       # Window agreement validates
         )
         
@@ -568,50 +498,28 @@ class SetupDetector:
         
         return score
     
-    def start_observation(self, symbol: str, direction: int, barrier: int = 4) -> ObservationTracker:
-        """Start the observation phase for a market."""
-        tracker = ObservationTracker()
-        tracker.start(direction, barrier)
-        self._observation_trackers[symbol] = tracker
-        dir_label = "Over" if direction == 1 else "Under"
-        logger.info(f"[{symbol}] OBSERVATION PHASE started: {dir_label}{barrier} for {OBSERVATION_PERIOD_SEC}s")
-        return tracker
+    # ─── Observation Phase (v10: DISABLED — fixed 5t duration) ───
+    # These methods are kept for API compatibility but are no-ops.
+    
+    def start_observation(self, symbol: str, direction: int, barrier: int = 4):
+        """v10: No-op — observation phase disabled."""
+        pass
     
     def observe_tick(self, symbol: str, digit: int) -> bool:
-        """Process a tick during observation phase. Returns True if complete."""
-        tracker = self._observation_trackers.get(symbol)
-        if tracker is None:
-            return True
-        
-        complete = tracker.observe_tick(digit)
-        
-        if complete and not hasattr(tracker, '_logged_complete'):
-            tracker._logged_complete = True
-            duration = tracker.get_recommended_duration()
-            logger.info(
-                f"[{symbol}] OBSERVATION COMPLETE: "
-                f"recommended duration={duration}t "
-                f"from {len(tracker._flip_durations)} flip observations "
-                f"over {tracker._tick_count} ticks"
-            )
-        
-        return complete
+        """v10: Always returns True — observation phase disabled."""
+        return True
     
     def get_observed_duration(self, symbol: str) -> int:
-        """Get the duration determined by observation for a market."""
-        tracker = self._observation_trackers.get(symbol)
-        if tracker and tracker._complete:
-            return tracker.get_recommended_duration()
+        """v10: Always returns 5 — fixed duration."""
         return 5
     
     def is_observing(self, symbol: str) -> bool:
-        """Check if a market is currently in observation phase."""
-        tracker = self._observation_trackers.get(symbol)
-        return tracker is not None and not tracker._complete
+        """v10: Always returns False — no observation phase."""
+        return False
     
     def clear_observation(self, symbol: str):
-        """Clear observation state for a market."""
-        self._observation_trackers.pop(symbol, None)
+        """v10: No-op — observation phase disabled."""
+        pass
     
     # ─── Market Session Management ───
     
@@ -654,7 +562,7 @@ class SetupDetector:
         
         if session.profit_target_reached:
             setup = self._setup_cache.get(symbol)
-            if setup and setup.active and setup.setup_score >= 0.75:
+            if setup and setup.active and setup.setup_score >= 0.80:
                 logger.info(
                     f"[{symbol}] New strong setup detected (score={setup.setup_score:.2f}). "
                     f"Resetting session."

@@ -103,12 +103,12 @@ class StakeManager:
     AGREEMENT_BELOW = 0.0       # Below 67% → SKIP (handled in signal_gen)
 
     # ─── Martingale Settings ───
-    # v8: Adjusted for 85% payout. 2x doesn't recover — need 2.35x.
-    # Step 1: $0.35 → Step 2: $0.82 → Step 3: $1.93
-    # If win at step 3: $1.93 × 0.85 = $1.64 profit vs $1.17 total loss = +$0.47 net
+    # v10: Reduced to 2 steps (was 3 — too risky on synthetic indices).
+    # Step 1: $0.35 → Step 2: $0.82
+    # If win at step 2: $0.82 × payout = recovery of $1.17 loss
     MARTINGALE_MULTIPLIER = 2.35      # Adjusted for 85% payout (2x doesn't recover)
-    MAX_MARTINGALE_STEPS = 3          # Max 3 steps (trusted setups, max 3-4 consecutive losses)
-    MAX_MARTINGALE_STAKE = 10.0       # Absolute max for martingale ($10 — tighter with quality setups)
+    MAX_MARTINGALE_STEPS = 2          # v10: Max 2 steps (was 3 — too risky)
+    MAX_MARTINGALE_STAKE = 5.0        # v10: $5 max (was $10 — moderate barriers need smaller stakes)
 
     # Win streak compounding
     STREAK_BOOST_PER_WIN = 0.10     # +10% per consecutive win

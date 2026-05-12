@@ -1,8 +1,7 @@
 """
-Market Worker — Per-Market State Encapsulation (v8)
-====================================================
-Integrates SetupDetector for structured quality trading.
-Each worker now tracks its own market session (profit target, setup state).
+Market Worker — Per-Market State Encapsulation (v10)
+=====================================================
+Conservative Edge Detection — fixed 5t duration, no observation phase.
 """
 
 import time
@@ -12,7 +11,6 @@ from config import (OVER_BARRIER, UNDER_BARRIER, get_symbol_decimals, MIN_STAKE,
                     TICK_LEARN_ENABLED, TICK_LEARN_INTERVAL,
                     DRIFT_RETRAIN_ENABLED, DRIFT_RETRAIN_COOLDOWN,
                     CONTRACT_TYPE_OVER, CONTRACT_TYPE_UNDER,
-                    OBSERVATION_PERIOD_SEC,
                     DYNAMIC_BARRIERS)
 from data.tick_aggregator import TickAggregator
 from data.feature_engine import FeatureEngine
@@ -33,7 +31,7 @@ class MarketWorker:
     """
     Encapsulates all per-market components for one trading symbol.
     
-    v8: Now integrates SetupDetector for trend + digit frequency analysis.
+    v10: No observation phase, fixed 5t duration, conservative barriers only.
     The setup detector determines IF we should trade and in what direction.
     The ML model (Logistic Regression) is a CONFIRMATION signal.
     """
@@ -62,8 +60,9 @@ class MarketWorker:
 
         # Current setup state
         self._current_setup: Optional[Setup] = None
-        self._observation_started: bool = False
-        self._observation_complete: bool = False
+        # v10: No observation phase — always ready
+        self._observation_started: bool = True
+        self._observation_complete: bool = True
 
         self.current_payout = 0.85
         self.trade_counter = 0
@@ -83,7 +82,7 @@ class MarketWorker:
         # Martingale state (updated from StakeManager via main.py)
         self._is_martingale_active: bool = False
         self._martingale_direction: Optional[str] = None
-        self._martingale_barrier: Optional[int] = None  # v9: Barrier from martingale origin
+        self._martingale_barrier: Optional[int] = None
 
         # Direction Cooldown
         self._blocked_direction: Optional[str] = None
@@ -177,30 +176,13 @@ class MarketWorker:
                 label = 1 if tick.digit > OVER_BARRIER else 0
                 self.model.learn_one(features, label)
 
-            # ─── SETUP DETECTION (v8: PRIMARY DECISION) ───
+            # ─── SETUP DETECTION (v10: PRIMARY DECISION) ───
             setup = self.setup_detector.evaluate(self.symbol, features)
             self._current_setup = setup
 
-            # ─── OBSERVATION PHASE ───
-            # If a new setup is detected and we haven't started observation yet
-            if setup.active and not self._observation_started:
-                # v9: Use the barrier from the setup for observation
-                obs_direction = 1 if setup.direction == CONTRACT_TYPE_OVER else -1
-                self.setup_detector.start_observation(self.symbol, obs_direction, setup.barrier)
-                self._observation_started = True
-                self._observation_complete = False
-            
-            # If setup is active and we're observing, feed ticks to observer
-            if setup.active and self._observation_started and not self._observation_complete:
-                complete = self.setup_detector.observe_tick(self.symbol, tick.digit)
-                if complete:
-                    self._observation_complete = True
-            
-            # If setup is no longer active, reset observation
-            if not setup.active:
-                self._observation_started = False
-                self._observation_complete = False
-                self.setup_detector.clear_observation(self.symbol)
+            # v10: No observation phase — setup is immediately tradeable
+            # The old observation phase (25s watching) didn't help because
+            # digit patterns don't have predictable flip durations.
 
             # ─── Check market session tradability ───
             if not self.setup_detector.is_market_tradable(self.symbol):
@@ -210,35 +192,31 @@ class MarketWorker:
             # ML prediction (confirmation signal)
             prediction = self.model.predict(features)
 
-            # Determine duration from observation phase
-            if self._observation_complete:
-                duration = self.setup_detector.get_observed_duration(self.symbol)
-            else:
-                duration = 5  # Default while observing
+            # v10: Fixed 5-tick duration
+            duration = 5
 
             # Periodic logging
             if self.live_tick_count % 100 == 0:
-                model_summary = self.model.summary()
                 setup_score = setup.setup_score if setup.active else 0
                 setup_dir = setup.direction.replace("DIGIT", "") if setup.active else "NONE"
                 barrier_str = f"{setup_dir}{setup.barrier}" if setup.active else "NONE"
-                obs_status = "OBSERVING" if self._observation_started and not self._observation_complete else \
-                            "READY" if self._observation_complete else "NO_SETUP"
                 
                 if setup.active:
+                    ev_str = f"{setup.best_barrier_eval.ev:+.1%}" if setup.best_barrier_eval else "0"
                     logger.info(
                         f"[{self.symbol} {self.live_tick_count}t] "
                         f"setup={setup_score:.2f}({barrier_str}) "
-                        f"obs={setup.observed_prob:.1%} nat={setup.natural_prob:.0%} "
-                        f"z={setup.z_score:.1f} EV={setup.best_barrier_eval.ev:+.1% if setup.best_barrier_eval else 0} "
+                        f"obs={setup.observed_prob:.1%} adj={setup.adjusted_prob:.1%} "
+                        f"nat={setup.natural_prob:.0%} "
+                        f"z={setup.z_score:.1f} EV={ev_str} "
                         f"pay={setup.payout_rate:.1%} "
-                        f"dur={duration}t obs={obs_status}"
+                        f"dur=5t"
                     )
                 else:
                     logger.info(
                         f"[{self.symbol} {self.live_tick_count}t] "
                         f"setup={setup_score:.2f}(NONE) "
-                        f"dur={duration}t obs={obs_status} "
+                        f"dur=5t "
                         f"payout={self.current_payout:.2%}"
                     )
 
@@ -251,7 +229,7 @@ class MarketWorker:
                 self._blocked_direction = None
 
             # Generate signal (setup + ML confirmation)
-            # v9: Use dynamic payout from setup (varies by barrier)
+            # v10: Use dynamic payout from setup (varies by barrier)
             dynamic_payout = setup.payout_rate if setup.active else self.current_payout
             signal = self.signal_gen.generate(
                 setup=setup,
@@ -377,7 +355,7 @@ class MarketWorker:
         if not self.ws or not self.ws.is_connected:
             return
         try:
-            duration = self.duration_optimizer.select_duration()
+            duration = 5  # v10: Fixed duration
             proposal = await self.ws.get_proposal(
                 symbol=self.symbol, contract_type="DIGITOVER",
                 barrier=OVER_BARRIER, stake=MIN_STAKE,
@@ -398,9 +376,9 @@ class MarketWorker:
         signal = self.get_fresh_signal()
         if signal is None:
             return 0.0
-        # v9: EV is the primary quality metric (not confidence * payout)
-        # A signal with 15% confidence but 50% EV is better than 80% confidence with 2% EV
-        return signal.expected_value * signal.setup_score * max(0.5, signal.z_score)
+        # v10: Use setup_score * EV as quality metric
+        # Higher setup_score = more reliable signal, higher EV = more profitable
+        return signal.expected_value * signal.setup_score
 
     def summary(self) -> dict:
         model_summary = self.model.summary()
@@ -420,7 +398,7 @@ class MarketWorker:
             "model_accuracy": model_summary.get("accuracy", 0),
             "model_updates": model_summary.get("total_updates", 0),
             "drift_active": drift_summary.get("drift_active", False),
-            "best_duration": dur_summary.get("best_duration", 5),
+            "best_duration": 5,  # v10: Always 5
             "duration_unit": self._duration_unit,
             "setup_score": setup.setup_score if setup else 0,
             "setup_active": setup.active if setup else False,

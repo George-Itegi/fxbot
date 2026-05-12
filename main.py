@@ -114,30 +114,30 @@ class DerivBot:
 
     async def start(self):
         logger.info("=" * 65)
-        logger.info("  DERIV OVER/UNDER BOT v9 — DYNAMIC BARRIER SELECTION")
+        logger.info("  DERIV OVER/UNDER BOT v10 — CONSERVATIVE EDGE DETECTION")
         logger.info(f"  Markets:    {len(self.markets)} markets")
         for i, m in enumerate(self.markets):
             logger.info(f"    [{i+1}] {m} — {SYMBOLS.get(m, {}).get('name', m)}")
         logger.info(f"  Mode:       LIVE (demo account)")
-        logger.info(f"  Model:      {self.model_type} (ML CONFIRMATION only — rules are primary)")
-        logger.info(f"  Barriers:   DYNAMIC — evaluates ALL Over/Under barriers (not just Over 4/Under 5)")
+        logger.info(f"  Model:      {self.model_type} (ML CONFIRMATION — blocks on disagreement)")
+        logger.info(f"  Barriers:   MODERATE ONLY — Over 3-6, Under 4-7 (no more Over 7/8 lottery)")
         logger.info(f"  Bankroll:   ${self.risk_mgr.bankroll:.2f}")
         logger.info("")
-        logger.info("  Decision Flow (v9):")
-        logger.info("    1. Compute per-digit frequencies across windows")
-        logger.info("    2. For each barrier (Over 0-8, Under 1-9), calculate observed prob and EV")
-        logger.info("    3. Pick the barrier with the best risk-adjusted EV")
-        logger.info("    4. Verify statistical significance (z-score > 2)")
-        logger.info("    5. ML confirmation (if disagrees, reduce confidence by 20%)")
-        logger.info("    6. Execute trade only if EV > 5%")
+        logger.info("  v10 Key Changes from v9:")
+        logger.info("    - Bayesian shrinkage: observed prob blended with natural (33% natural weight)")
+        logger.info("    - z-score 3.0 minimum (was 1.3 — caught noise as edges)")
+        logger.info("    - ALL 3 windows must agree (was 2/3)")
+        logger.info("    - ML disagreement BLOCKS trades (was 20% reduction)")
+        logger.info("    - Fixed 5-tick duration (was chaotic 2t/3t/5t)")
+        logger.info("    - 35% min confidence (was 12%!), 8% min EV (was 5%)")
+        logger.info("    - Martingale: SAME market + SAME barrier")
         logger.info("")
-        logger.info(f"  Confidence:  OBSERVED win probability (not inflated!)")
-        logger.info(f"  EV minimum:  {5}% to trade")
-        logger.info(f"  Trend:       BIAS (not strict requirement)")
-        logger.info(f"  Freq edge:   {5}%+ from natural probability (z-score > 2)")
+        logger.info(f"  Confidence:  BAYESIAN-ADJUSTED win probability (not raw observed)")
+        logger.info(f"  EV minimum:  8% to trade")
+        logger.info(f"  Trend:       SOFT BIAS (boost/penalty, not required)")
+        logger.info(f"  Freq edge:   3%+ absolute, 15%+ relative (z-score > 3.0)")
         logger.info(f"  Profit target: ${PROFIT_TARGET_PER_MARKET:.0f} per market session")
-        logger.info(f"  Martingale:  2.35x on loss (max 3 steps, $10 cap)")
-        logger.info(f"  Martingale recovery: SAME MARKET (no switching)")
+        logger.info(f"  Martingale:  2.35x on loss (max 2 steps, SAME market + barrier)")
         logger.info(f"  Trade interval: {MIN_TRADE_INTERVAL_SEC}s minimum")
         logger.info("  ALL TRADES ARE REAL on your Deriv demo account")
         logger.info("=" * 65)
@@ -301,6 +301,8 @@ class DerivBot:
         if len(self._active_trades) >= max_positions:
             return
 
+        best_symbol = None  # v10: Initialize — was missing, caused market hopping bug
+
         # Push martingale state to all workers
         is_martingale = self.stake_mgr.state.martingale_step > 0
         martingale_dir = self.stake_mgr.state.martingale_direction
@@ -338,9 +340,15 @@ class DerivBot:
                 self.stake_mgr.state.martingale_barrier = None  # v9
                 return
             
-            # Check if martingale market has a setup that matches our direction
+            # Check if martingale market has a setup that matches our direction AND barrier
+            # v10: Both direction AND barrier must match for martingale recovery
+            # If we lost on Over 5, we should recover on Over 5 (same barrier)
             setup = worker._current_setup
-            if setup and setup.active and setup.direction == martingale_dir:
+            barrier_ok = True
+            if martingale_barrier is not None and setup and setup.barrier != martingale_barrier:
+                barrier_ok = False
+            
+            if setup and setup.active and setup.direction == martingale_dir and barrier_ok:
                 # Good — we can recover on this market
                 signal = worker.get_fresh_signal()
                 if signal is not None and signal.direction == martingale_dir:
@@ -350,11 +358,13 @@ class DerivBot:
                     return
             else:
                 # Setup on martingale market doesn't match — 
-                # the direction changed, which means our setup broke.
-                # Reset martingale (take the loss) rather than chase a different direction
+                # the direction or barrier changed, which means our setup broke.
+                # Reset martingale (take the loss) rather than chase a different setup
+                reason = "direction"
+                if not barrier_ok:
+                    reason = f"barrier (expected {martingale_barrier}, got {setup.barrier if setup else 'NONE'})"
                 logger.info(
-                    f"MARTINGALE: Setup on {martingale_market} changed direction "
-                    f"(expected {martingale_dir}, setup says {setup.direction if setup else 'NONE'}) "
+                    f"MARTINGALE: Setup on {martingale_market} changed {reason} "
                     f"— resetting martingale, taking the loss"
                 )
                 self.stake_mgr.state.martingale_step = 0
@@ -394,8 +404,9 @@ class DerivBot:
                 )
 
         # If we didn't pick a market from persistence or martingale, use the selector
-        if not is_martingale and (not hasattr(self, 'best_symbol') or 
-                                   (self._active_market is None and not is_martingale)):
+        # v10: Fixed bug where hasattr checked self.best_symbol (local var, not attribute)
+        # This was causing the bot to always go to the selector and hop between markets
+        if not is_martingale and best_symbol is None:
             best_symbol = self.selector.select_market(self.workers)
             
             if best_symbol is None:
