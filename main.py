@@ -557,6 +557,22 @@ class DerivBot:
             direction=signal.direction, symbol=symbol, barrier=signal.barrier
         )
         
+        # v12.3: IMMEDIATELY push updated martingale state to all workers.
+        # Without this, workers keep stale _martingale_direction and block ALL
+        # signals — even after a WIN resets martingale in StakeManager.
+        # This was causing the "MARTINGALE DIRECTION: skipping" deadlock:
+        #   WIN resets martingale_step=0 in StakeManager
+        #   BUT workers still have _martingale_direction=DIGITUNDER
+        #   All DIGITOVER signals get filtered → _evaluate_and_trade() never called
+        #   → workers never updated → DEADLOCK
+        updated_martingale_active = self.stake_mgr.state.martingale_step > 0
+        updated_martingale_dir = self.stake_mgr.state.martingale_direction
+        updated_martingale_barrier = self.stake_mgr.state.martingale_barrier
+        for w in self.workers.values():
+            w._is_martingale_active = updated_martingale_active
+            w._martingale_direction = updated_martingale_dir
+            w._martingale_barrier = updated_martingale_barrier
+        
         self._global_trade_counter += 1
         worker.trade_counter += 1
         self._active_market_trades += 1
