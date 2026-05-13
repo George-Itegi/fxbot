@@ -34,7 +34,7 @@ public:
         // Check session risk limit
         double remaining_risk_pct = m_max_risk_pct - m_session_risk_used;
         if(remaining_risk_pct <= 0) {
-            Print("⚠ Session risk limit reached: ", m_session_risk_used, "%");
+            Print("[WARNING] Session risk limit reached: ", m_session_risk_used, "%");
             return 0; // No more trades this session
         }
         

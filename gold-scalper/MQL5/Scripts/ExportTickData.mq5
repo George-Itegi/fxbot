@@ -9,7 +9,6 @@
 //+------------------------------------------------------------------+
 #property copyright "GoldScalper"
 #property version   "1.00"
-#property strict
 #property description "Export tick data with features for ML training"
 #property script_show_inputs
 

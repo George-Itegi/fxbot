@@ -157,7 +157,8 @@ private:
         }
         
         // R/S for 3 sub-period sizes
-        int sizes[] = {10, 20, 40};
+        int sizes[3];
+        sizes[0] = 10; sizes[1] = 20; sizes[2] = 40;
         double log_n[], log_rs[];
         ArrayResize(log_n, 3);
         ArrayResize(log_rs, 3);

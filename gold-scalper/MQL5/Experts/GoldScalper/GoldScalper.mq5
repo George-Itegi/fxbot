@@ -17,7 +17,7 @@
 //+------------------------------------------------------------------+
 #property copyright "GoldScalper v1.0"
 #property version   "1.00"
-#property strict
+
 #property description "Multi-regime Gold Scalper with Order Flow + ML"
 
 #include "Config.mqh"
@@ -200,7 +200,7 @@ void OnTick() {
     
     if(INP_USE_ML && g_ml->IsLoaded()) {
         double features[];
-        g_features->Build(g_regime, g_orderflow, g_session, g_spread, features);
+        g_features->Build(*g_regime, *g_orderflow, *g_session, *g_spread, features);
         confidence = g_ml->Predict(features);
         
         if(confidence < INP_MIN_CONFIDENCE) {

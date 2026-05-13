@@ -22,9 +22,10 @@ public:
     }
     
     // Build feature vector from all analyzers
-    // Returns reference to internal array (don't store pointer)
-    double[]& Build(CRegimeDetector &regime, COrderFlowAnalyzer &orderflow,
-                    CSessionManager &session, CSpreadFilter &spread) {
+    // Output is copied to the output[] array provided by caller
+    void Build(CRegimeDetector &regime, COrderFlowAnalyzer &orderflow,
+               CSessionManager &session, CSpreadFilter &spread,
+               double &output[]) {
         // ─── Feature Group 1: Regime (6 features) ───
         m_features[0]  = regime.GetHurst();                           // 0-1
         m_features[1]  = regime.GetADX() / 100.0;                    // Normalize to 0-1
@@ -83,7 +84,10 @@ public:
                 m_features[i] = 0;
         }
         
-        return m_features;
+        // Copy features to output array
+        ArrayResize(output, m_feature_count);
+        for(int i = 0; i < m_feature_count; i++)
+            output[i] = m_features[i];
     }
     
     int GetFeatureCount() const { return m_feature_count; }
@@ -130,8 +134,8 @@ private:
         
         double vwap = sum_price_vol / sum_vol;
         double price = iClose(_Symbol, PERIOD_M1, 0);
-        double atr = iATR(_Symbol, PERIOD_M1, 14) > 0 ? 
-                     iATRValue(14) : 1;
+        double atr = iATRValue(14);
+        if(atr <= 0) atr = 1;
         
         return (atr > 0) ? (price - vwap) / atr : 0;
     }

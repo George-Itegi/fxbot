@@ -73,7 +73,9 @@ public:
         // Prepare input/output shapes
         // Input: [1, feature_count] — single sample, N features
         // Output: [1, 1] or [1, 2] — probability or [prob_down, prob_up]
-        ulong input_shape[] = {1, (ulong)m_feature_count};
+        ulong input_shape[2];
+        input_shape[0] = 1;
+        input_shape[1] = (ulong)m_feature_count;
         if(!OnnxSetInputShape(m_session, 0, input_shape)) {
             Print("ONNX input shape FAILED");
             OnnxRelease(m_session);
@@ -83,10 +85,14 @@ public:
         }
         
         // Output shape — try [1, 1] first (single probability)
-        ulong output_shape[] = {1, 1};
+        ulong output_shape[2];
+        output_shape[0] = 1;
+        output_shape[1] = 1;
         if(!OnnxSetOutputShape(m_session, 0, output_shape)) {
             // Maybe [1, 2] output — try that
-            ulong output_shape2[] = {1, 2};
+            ulong output_shape2[2];
+            output_shape2[0] = 1;
+            output_shape2[1] = 2;
             if(!OnnxSetOutputShape(m_session, 0, output_shape2)) {
                 Print("ONNX output shape FAILED — trying with dynamic shape");
                 // Some models have dynamic output, this may still work
