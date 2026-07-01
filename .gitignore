@@ -33,6 +33,9 @@ wheels/
 .env.local
 .env.*
 !.env.example
+# Launcher scripts with credentials
+start_backtest.bat
+start_*.bat
 
 # Logs
 *.log
