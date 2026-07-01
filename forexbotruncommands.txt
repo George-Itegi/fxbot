@@ -58,10 +58,10 @@ Step 4: (Optional) Clear and retrain
   python -m backtest.run --train
 
 
-python -m backtest.run --train	Train XGBoost from DB data and exit
-python -m backtest.run --use-model	Run backtest with model filtering trades
-python -m backtest.run --clear-data	Clear DB for fresh start
-python -m backtest.run --model-status	Show if model is trained, size, age
+python -m backtest.run --train  Train XGBoost from DB data and exit
+python -m backtest.run --use-model      Run backtest with model filtering trades
+python -m backtest.run --clear-data     Clear DB for fresh start
+python -m backtest.run --model-status   Show if model is trained, size, age
 
 
 broker : Deriv.com Limited
@@ -83,3 +83,40 @@ Phase 2 (LATER):
 Phase 3 (MUCH LATER):
   Once model has 2000+ trades including gate-blocked data
   THEN the same model can learn to replace the gates
+
+
+# =============================================================
+# STRICT RULES MODE (v2.2 — added 2026-07-01)
+# -------------------------------------------------------------
+# Pure strategy rules — NO Layer 1 per-strategy models.
+# Layer 2 ML Gate stays controllable for A/B testing.
+#
+# Hardened thresholds when --rules-only is active:
+#   Master score min:       45 → 55
+#   Multi-group consensus:  2  → 3 groups
+#   Confluence min:         6  → 8
+#   Min R:R:                2.0 → 2.5
+#   Per-strategy min:       68-72 → 73-77
+#   Institutional gate:     soft pass → HARD block
+# =============================================================
+
+# 1) Pure strict rules — no ML models at all (PRIMARY backtest mode)
+python -m backtest.run --rules-only --days 180
+python -m backtest.run --rules-only --parallel --days 180
+python -m backtest.run --rules-only --parallel --days 365
+
+# 2) Strict rules + L2 ML Gate (A/B test — does L2 help on top of strict rules?)
+python -m backtest.run --rules-only --use-model --parallel --days 180
+python -m backtest.run --rules-only --use-model --parallel --days 365
+
+# 3) Single-symbol strict rules test
+python -m backtest.run --rules-only --symbols EURJPY GBPJPY --days 90
+
+# 4) Strict rules with store-db (collect high-quality trades for later L2 training)
+python -m backtest.run --rules-only --parallel --store-db --days 365
+
+# Comparison workflow:
+#   a) Run --rules-only --parallel --days 365          (baseline: pure rules)
+#   b) Run --rules-only --use-model --parallel --days 365 (variant: + L2)
+#   c) Compare P&L, win rate, max drawdown, profit factor
+#   d) If (b) beats (a) → keep L2; if (a) beats (b) → drop L2 too

@@ -28,6 +28,11 @@ python -m backtest.run --symbols EURUSD GBPUSD --days 90
 python -m backtest.run --relaxed --store-db --days 180  # Collect ML training data
 python -m backtest.run --train                      # Train XGBoost from backtest data
 python -m backtest.run --use-model --days 60        # Backtest with AI gate active
+
+# STRICT RULES MODE (v2.2) — pure strategy rules, no Layer 1 models
+# Layer 2 ML Gate stays controllable for A/B testing
+python -m backtest.run --rules-only --parallel --days 180           # pure rules
+python -m backtest.run --rules-only --use-model --parallel --days 180  # rules + L2
 ```
 
 ## Architecture & Data Flow

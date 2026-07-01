@@ -100,6 +100,13 @@ Examples:
         help='Relaxed mode: majority consensus (1 group), lower final_score gate (35), '
              'lower confluence min (4). Use for data collection / model training.')
     parser.add_argument(
+        '--rules-only', action='store_true',
+        help='STRICT RULES MODE: pure strategy rules, no ML models. '
+             'Forces Layer 1 OFF. Hardens thresholds (master>=55, 3-group consensus, '
+             'confluence>=8, R:R>=2.5, per-strategy score>=73-77, hard institutional gate). '
+             'Combine with --use-model to add Layer 2 ML Gate on top of strict rules '
+             '(for A/B testing whether L2 helps).')
+    parser.add_argument(
         '--store-db', action='store_true',
         help='Store executed trades into MySQL for ML training. '
              'Blocked signals are NOT stored (they were never used in training).')
@@ -436,6 +443,20 @@ def main():
     # Apply CLI overrides to config
     from backtest import config as bt_config
 
+    # ── STRICT RULES MODE ──
+    # Activated via --rules-only. Forces Layer 1 OFF (no per-strategy models),
+    # hardens rule-based thresholds. Layer 2 (ML Gate) remains controllable
+    # via --use-model so the user can A/B test:
+    #   --rules-only             → pure strict rules (no models)
+    #   --rules-only --use-model → strict rules + L2 meta-gate
+    rules_only_mode = args.rules_only
+    if rules_only_mode:
+        bt_config.STRICT_RULES_MODE = True
+        # Force L1 OFF regardless of --use-strategy-models
+        if args.use_strategy_models:
+            print("\n  NOTE: --rules-only overrides --use-strategy-models — Layer 1 is FORCED OFF.")
+        args.use_strategy_models = False
+
     # Relaxed mode: auto-disable partial TP, trailing, and dynamic TP extension
     # to test with full trades running to completion
     if args.relaxed:
@@ -500,12 +521,15 @@ def main():
     scan_every = args.scan_every if args.scan_every != 15 else SCAN_EVERY_N_BARS
 
     print("\n" + "="*65)
-    print("  APEX TRADER — BACKTESTING ENGINE v2.1")
+    print("  APEX TRADER — BACKTESTING ENGINE v2.2")
     print(f"  Period: {start_date.date()} to {end_date.date()} ({args.days} days)")
     print(f"  Symbols: {', '.join(symbols)}")
     print(f"  Scan frequency: every {scan_every} M1 bars")
     print(f"  Balance: ${args.balance:,.2f}")
-    mode_label = "RELAXED" if args.relaxed else "STRICT"
+    if rules_only_mode:
+        mode_label = "STRICT_RULES"
+    else:
+        mode_label = "RELAXED" if args.relaxed else "STRICT"
     # In relaxed mode, partial TP/trail/ext TP are auto-disabled
     show_partial = not args.relaxed and not args.no_partial_tp
     show_trail = not args.relaxed and not args.no_trailing
@@ -518,9 +542,16 @@ def main():
     if args.relaxed:
         print(f"  (Relaxed mode: PartialTP/Trail/ExtTP auto-disabled for full trade testing)")
     print(f"  Mode: {mode_label} | Store DB: {args.store_db} "
-          f"| Model: {'ACTIVE' if model_loaded else 'OFF'}"
-          f" | Strategy Models: {'ACTIVE' if strat_models_loaded else 'OFF'}")
-    if model_loaded:
+          f"| L2 Model: {'ACTIVE' if model_loaded else 'OFF'}"
+          f" | L1 Strategy Models: {'ACTIVE' if strat_models_loaded else 'OFF'}")
+    if rules_only_mode:
+        print(f"  (STRICT RULES MODE: master>=55, 3-group consensus, confluence>=8, "
+              f"R:R>=2.5, hard institutional gate)")
+        if model_loaded:
+            print(f"  (L2 ML Gate is ACTIVE on top of strict rules — A/B test mode)")
+        else:
+            print(f"  (No ML models — pure rule-based execution)")
+    elif model_loaded:
         print(f"  (ML Gate will filter trades — SKIP recommendation = trade blocked)")
     if strat_models_loaded:
         print(f"  (Layer 1 strategy models will filter signals before ML Gate)")
@@ -550,6 +581,7 @@ def main():
                 store_db=args.store_db,
                 use_model=use_model,
                 use_strategy_models=use_strategy_models,
+                rules_only_mode=rules_only_mode,
                 run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                 max_trades_per_symbol=args.max_trades if args.max_trades > 0 else 9999,
                 unlimited_positions=args.no_limit,
@@ -571,6 +603,7 @@ def main():
                     store_db=args.store_db,
                     use_model=use_model,
                     use_strategy_models=use_strategy_models,
+                    rules_only_mode=rules_only_mode,
                     run_id=f"{mode_label.lower()}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
                     unlimited_positions=args.no_limit,
                     no_post_gates=args.no_post_gates,

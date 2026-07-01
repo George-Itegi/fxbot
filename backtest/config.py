@@ -184,6 +184,45 @@ MASTER_MIN_SCORE = 45
 # --- Data cache directory ---
 CACHE_DIR = "backtest/.cache"
 
+# =============================================================
+# STRICT RULES MODE  (v2.2 — added 2026-07-01)
+# -------------------------------------------------------------
+# Purpose: Run backtests using PURE strategy rules — no ML models.
+# Layer 1 (per-strategy models) is forced OFF.
+# Layer 2 (meta ML Gate) is controllable separately via --use-model
+# so the user can A/B test:
+#   --rules-only             → strict rules, NO models at all
+#   --rules-only --use-model → strict rules + L2 meta-gate
+#
+# All thresholds below OVERRIDE the defaults above when strict mode
+# is active (see backtest/engine.py for runtime application).
+# =============================================================
+STRICT_RULES_MODE = False  # Toggled by --rules-only CLI flag
+
+# Hardened thresholds — only applied when STRICT_RULES_MODE is True
+STRICT_MASTER_MIN_SCORE       = 55     # Was 45 — only trade quality setups
+STRICT_MIN_CONFLUENCE         = 8      # Was 6 — require deeper confluence
+STRICT_MIN_RR_RATIO           = 2.5    # Was 2.0 — only high-RR trades
+STRICT_MIN_CONSENSUS_GROUPS   = 3      # Was 2 — triple-group confirmation
+STRICT_MIN_STRATEGY_SCORE_FLOOR = 75   # Per-strategy min scores raised to at least this
+STRICT_INSTITUTIONAL_HARD_GATE  = True # Order flow OR volume surge required (no soft pass)
+
+# Per-strategy min score overrides applied in strict mode.
+# These are MAX(strict_floor, existing STRATEGY_MIN_SCORES value).
+# Values below are the FINAL strict thresholds per strategy.
+STRICT_STRATEGY_MIN_SCORES = {
+    "SMC_OB_REVERSAL":              75,
+    "LIQUIDITY_SWEEP_ENTRY":        75,
+    "DELTA_DIVERGENCE":             75,
+    "TREND_CONTINUATION":           77,
+    "EMA_CROSS_MOMENTUM":           75,
+    "RSI_DIVERGENCE_SMC":           73,
+    "SUPPLY_DEMAND_ZONE_ENTRY":     75,
+    "BREAK_OF_STRUCTURE_MOMENTUM":  75,
+    "OPTIMAL_TRADE_ENTRY_FIB":      75,
+    "INSTITUTIONAL_CANDLES":        75,
+}
+
 # --- Strategies to test ---
 # Empty = test all active strategies from registry
 STRATEGIES_FILTER = []

@@ -31,14 +31,61 @@ from backtest.config import (
     MIN_RR_RATIO, MASTER_MIN_SCORE, MAX_OPEN_TRADES, MAX_PER_SYMBOL,
     CONVICTION_LOW_SCORE_MAX, CONVICTION_MED_SCORE_MAX,
     STRATEGY_TP2_PRIMARY, STRATEGY_PARTIAL_TP_RATIO,
+    STRICT_RULES_MODE, STRICT_MASTER_MIN_SCORE, STRICT_MIN_CONFLUENCE,
+    STRICT_MIN_RR_RATIO, STRICT_MIN_CONSENSUS_GROUPS,
+    STRICT_STRATEGY_MIN_SCORES, STRICT_INSTITUTIONAL_HARD_GATE,
 )
 from core.pip_utils import get_pip_size
+from strategies.strategy_engine import STRATEGY_MIN_SCORES as DEFAULT_STRATEGY_MIN_SCORES
 
 # Relaxed mode overrides
 RELAXED_MIN_SCORE = 35
 RELAXED_MIN_CONFLUENCE = 4
 RELAXED_MIN_RR_RATIO = 1.5
 RELAXED_CONSENSUS_GROUPS = 1  # Only 1 strategy group needed
+
+
+def _get_active_thresholds(strict_mode: bool, relaxed_mode: bool) -> dict:
+    """
+    Return the active gate thresholds based on the current mode.
+    Priority: strict > relaxed > default.
+    Strict mode is mutually exclusive with relaxed mode (strict wins).
+    """
+    if strict_mode:
+        return {
+            'master_min_score': STRICT_MASTER_MIN_SCORE,
+            'min_confluence': STRICT_MIN_CONFLUENCE,
+            'min_rr': STRICT_MIN_RR_RATIO,
+            'min_consensus_groups': STRICT_MIN_CONSENSUS_GROUPS,
+            'institutional_hard_gate': STRICT_INSTITUTIONAL_HARD_GATE,
+            'strategy_min_scores': STRICT_STRATEGY_MIN_SCORES,
+        }
+    if relaxed_mode:
+        return {
+            'master_min_score': RELAXED_MIN_SCORE,
+            'min_confluence': RELAXED_MIN_CONFLUENCE,
+            'min_rr': RELAXED_MIN_RR_RATIO,
+            'min_consensus_groups': RELAXED_CONSENSUS_GROUPS,
+            'institutional_hard_gate': False,  # soft pass in relaxed
+            'strategy_min_scores': DEFAULT_STRATEGY_MIN_SCORES,
+        }
+    return {
+        'master_min_score': MASTER_MIN_SCORE,
+        'min_confluence': MIN_CONFLUENCE,
+        'min_rr': MIN_RR_RATIO,
+        'min_consensus_groups': 2,
+        'institutional_hard_gate': False,  # soft pass by default
+        'strategy_min_scores': DEFAULT_STRATEGY_MIN_SCORES,
+    }
+
+
+def _get_strategy_min_score(strategy_name: str, strict_mode: bool) -> int:
+    """Return the per-strategy minimum score based on strict mode flag."""
+    if strict_mode:
+        return STRICT_STRATEGY_MIN_SCORES.get(
+            strategy_name,
+            max(75, DEFAULT_STRATEGY_MIN_SCORES.get(strategy_name, 70)))
+    return DEFAULT_STRATEGY_MIN_SCORES.get(strategy_name, 70)
 
 
 def _resolve_tp_and_partial(strategy_name: str, signal: dict):
@@ -232,6 +279,7 @@ class BacktestConfig:
     use_strategy_models: bool = False  # Use Layer 1 per-strategy models
     unlimited_positions: bool = False  # Remove max open position limits
     no_post_gates: bool = False      # Skip gates 3/4/5, let L1 filter instead
+    rules_only_mode: bool = False    # STRICT RULES MODE: pure rules, no L1, hardened thresholds
 
 
 def _build_master_report(symbol: str,
@@ -468,7 +516,8 @@ def run_backtest(config: BacktestConfig) -> dict:
         )
 
     # ── Load Layer 1 Strategy Models if --use-strategy-models ──
-    if config.use_strategy_models:
+    # STRICT RULES MODE forces L1 OFF — pure rules only.
+    if config.use_strategy_models and not config.rules_only_mode:
         try:
             from ai_engine.strategy_model import get_strategy_model_manager
             strat_model_mgr = get_strategy_model_manager()
@@ -494,6 +543,8 @@ def run_backtest(config: BacktestConfig) -> dict:
         except Exception as e:
             log.warning(f"  [L1_STRAT_MODEL] Failed to load: {e}")
             strat_model_mgr = None
+    elif config.rules_only_mode:
+        log.info(f"  [L1_STRAT_MODEL] STRICT RULES MODE — Layer 1 models FORCED OFF")
 
     # ── All-Signals Shadow Tracker ─────────────────────────
     # Shadows ALL qualifying signals (not just model rejects) so
@@ -651,21 +702,25 @@ def run_backtest(config: BacktestConfig) -> dict:
 
         # ── Gate 0: Master score minimum ─────────────────
         final_score = master_report.get('final_score', 0)
-        score_gate = RELAXED_MIN_SCORE if config.relaxed_mode else MASTER_MIN_SCORE
+        thresholds = _get_active_thresholds(config.rules_only_mode, config.relaxed_mode)
+        score_gate = thresholds['master_min_score']
         if final_score < score_gate:
             signals_blocked_score += 1
             continue
 
-        # ── Gate 1: Institutional confirmation (SOFT) ──
-        # No longer a hard block — passes through for ML Gate to evaluate.
-        # ML Gate learns when institutional confirmation matters via features.
+        # ── Gate 1: Institutional confirmation ──────────
+        # STRICT RULES MODE: HARD gate — order flow OR volume surge required.
+        # Default/Relaxed: SOFT pass — signal passes through for ML Gate to evaluate.
         imb_strength = flow.get('order_flow_imbalance', {}).get('strength', 'NONE')
         surge_active = flow.get('volume_surge', {}).get('surge_detected', False)
         has_institutional = imb_strength in ('STRONG', 'EXTREME') or surge_active
 
         if not has_institutional:
             signals_blocked_gate += 1
-            # SOFT: no continue — signal passes to ML Gate
+            if thresholds['institutional_hard_gate']:
+                # STRICT MODE: hard block — no institutional activity, no trade
+                continue
+            # DEFAULT/RELAXED: SOFT pass — signal passes to ML Gate / strategies
 
         # ── Gate 2: Choppy market ─────────────────────────
         is_choppy = flow.get('momentum', {}).get('is_choppy', True)
@@ -994,9 +1049,9 @@ def run_backtest(config: BacktestConfig) -> dict:
                     direction = str(signal.get('direction', ''))
                     score = signal.get('score', 0)
 
-                    # Apply per-strategy minimum score
-                    from strategies.strategy_engine import STRATEGY_MIN_SCORES
-                    min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
+                    # Apply per-strategy minimum score (strict mode raises thresholds)
+                    min_score = _get_strategy_min_score(
+                        strategy_name, config.rules_only_mode)
                     if score < min_score:
                         continue
 
@@ -1032,8 +1087,8 @@ def run_backtest(config: BacktestConfig) -> dict:
                 sell_groups = set(s['group'] for s in signals
                                   if s['direction'] == 'SELL')
 
-                min_groups = (RELAXED_CONSENSUS_GROUPS
-                              if config.relaxed_mode else 2)
+                # Strict mode requires 3 groups; relaxed mode requires 1; default 2
+                min_groups = thresholds['min_consensus_groups']
 
                 if (len(buy_groups) >= min_groups
                         and len(buy_groups) >= len(sell_groups)):
@@ -1075,8 +1130,8 @@ def run_backtest(config: BacktestConfig) -> dict:
             # ── Gate 5: Confluence check ──────────────────
             if not config.no_post_gates:
                 confluence = best.get('confluence', [])
-                min_conv = (RELAXED_MIN_CONFLUENCE
-                            if config.relaxed_mode else MIN_CONFLUENCE)
+                # Strict mode uses STRICT_MIN_CONFLUENCE (8); default uses 6; relaxed uses 4
+                min_conv = thresholds['min_confluence']
                 if len(confluence) < min_conv:
                     signals_blocked_confluence += 1
                     continue
@@ -1237,7 +1292,7 @@ def run_backtest(config: BacktestConfig) -> dict:
         if sl_pips <= 0 or tp_pips <= 0:
             continue
 
-        min_rr = RELAXED_MIN_RR_RATIO if config.relaxed_mode else MIN_RR_RATIO
+        min_rr = thresholds['min_rr']
         if tp_pips / sl_pips < min_rr:
             continue
 
@@ -1532,12 +1587,19 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                           store_db: bool = False, run_id: str = 'default',
                           max_trades_per_symbol: int = 9999,
                           use_model: bool = False, unlimited_positions: bool = False,
-                          no_post_gates: bool = False) -> list:
+                          no_post_gates: bool = False,
+                          use_strategy_models: bool = False,
+                          rules_only_mode: bool = False) -> list:
     """
     Run all symbols in parallel on the same M1 timeline.
     Each symbol gets its own TradeTracker, strategies scan independently,
     but all pairs share the same clock — like live trading.
-    
+
+    STRICT RULES MODE (rules_only_mode=True):
+      - Layer 1 strategy models are FORCED OFF (use_strategy_models ignored)
+      - Hardened rule thresholds applied (master>=55, 3-group consensus, etc.)
+      - Layer 2 ML Gate remains controllable via use_model for A/B testing
+
     Returns list of per-symbol summary dicts.
     """
     import time as time_mod
@@ -1558,8 +1620,23 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
     log.info(f"  PARALLEL BACKTEST v3.0 — {len(symbols)} symbols")
     log.info(f"  Period: {start_date.date()} to {end_date.date()}")
     log.info(f"  Strategies: {', '.join(active_strategies)}")
-    log.info(f"  Mode: {'RELAXED' if relaxed_mode else 'STRICT'}")
+    if rules_only_mode:
+        log.info(f"  Mode: STRICT_RULES (pure rules, no L1, hardened thresholds)")
+        if use_model:
+            log.info(f"  L2 ML Gate: ACTIVE (A/B test mode — strict rules + L2)")
+        else:
+            log.info(f"  L2 ML Gate: OFF (pure rule-based execution)")
+    else:
+        log.info(f"  Mode: {'RELAXED' if relaxed_mode else 'STRICT'}")
     log.info(f"{'='*65}")
+
+    # ── Resolve active thresholds (strict > relaxed > default) ──
+    thresholds = _get_active_thresholds(rules_only_mode, relaxed_mode)
+
+    # ── STRICT RULES MODE forces L1 OFF ──
+    if rules_only_mode and use_strategy_models:
+        log.info(f"  [L1_STRAT_MODEL] STRICT RULES MODE — Layer 1 models FORCED OFF")
+        use_strategy_models = False
 
     # ── Load data for all symbols ──────────────────────────
     symbol_data = {}   # symbol -> {M1, M5, M15, H1, H4}
@@ -1776,19 +1853,24 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
 
             # Gate 0: Score
             final_score = master_report.get('final_score', 0)
-            score_gate = RELAXED_MIN_SCORE if relaxed_mode else MASTER_MIN_SCORE
+            score_gate = thresholds['master_min_score']
             if final_score < score_gate:
                 stats['blocked_score'] += 1
                 continue
 
-            # Gate 1: Institutional (SOFT — no longer blocks)
+            # Gate 1: Institutional confirmation
+            # STRICT RULES MODE: HARD gate — order flow OR volume surge required.
+            # Default/Relaxed: SOFT pass — signal passes through for ML Gate to evaluate.
             imb_strength = flow.get('order_flow_imbalance', {}).get('strength', 'NONE')
             surge_active = flow.get('volume_surge', {}).get('surge_detected', False)
             has_institutional = imb_strength in ('STRONG', 'EXTREME') or surge_active
 
             if not has_institutional:
                 stats['blocked_gate'] += 1
-                # SOFT: no continue — signal passes to ML Gate
+                if thresholds['institutional_hard_gate']:
+                    # STRICT MODE: hard block — no institutional activity, no trade
+                    continue
+                # DEFAULT/RELAXED: SOFT pass — signal passes to ML Gate / strategies
 
             # Gate 2: Choppy
             is_choppy = flow.get('momentum', {}).get('is_choppy', True)
@@ -1814,8 +1896,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
                         continue
                     direction = str(signal.get('direction', ''))
                     score = signal.get('score', 0)
-                    from strategies.strategy_engine import STRATEGY_MIN_SCORES
-                    min_score = STRATEGY_MIN_SCORES.get(strategy_name, 70)
+                    min_score = _get_strategy_min_score(strategy_name, rules_only_mode)
                     if score < min_score:
                         continue
                     signal['symbol'] = sym
@@ -1843,7 +1924,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             if not no_post_gates:
                 buy_groups = set(s['group'] for s in signals if s['direction'] == 'BUY')
                 sell_groups = set(s['group'] for s in signals if s['direction'] == 'SELL')
-                min_groups = RELAXED_CONSENSUS_GROUPS if relaxed_mode else 2
+                min_groups = thresholds['min_consensus_groups']
 
                 if len(buy_groups) >= min_groups and len(buy_groups) >= len(sell_groups):
                     final_signals = [s for s in signals if s['direction'] == 'BUY']
@@ -1882,7 +1963,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             # Gate 5: Confluence
             if not no_post_gates:
                 confluence = best.get('confluence', [])
-                min_conv = RELAXED_MIN_CONFLUENCE if relaxed_mode else MIN_CONFLUENCE
+                min_conv = thresholds['min_confluence']
                 if len(confluence) < min_conv:
                     stats['blocked_confluence'] += 1
                     continue
@@ -2035,7 +2116,7 @@ def run_parallel_backtest(symbols: list, start_date, end_date,
             if sl_pips <= 0 or tp_pips <= 0:
                 continue
 
-            min_rr = RELAXED_MIN_RR_RATIO if relaxed_mode else MIN_RR_RATIO
+            min_rr = thresholds['min_rr']
             if tp_pips / sl_pips < min_rr:
                 continue
 
