@@ -200,16 +200,40 @@ CACHE_DIR = "backtest/.cache"
 STRICT_RULES_MODE = False  # Toggled by --rules-only CLI flag
 
 # Hardened thresholds — only applied when STRICT_RULES_MODE is True
-STRICT_MASTER_MIN_SCORE       = 55     # Was 45 — only trade quality setups
-STRICT_MIN_CONFLUENCE         = 8      # Was 6 — require deeper confluence
-STRICT_MIN_RR_RATIO           = 2.5    # Was 2.0 — only high-RR trades
-STRICT_MIN_CONSENSUS_GROUPS   = 3      # Was 2 — triple-group confirmation
+# Tuning rationale (v2.3 — 2026-07-01):
+#   Initial v2.2 values were too aggressive — generated 0 trades across 1210
+#   scan bars per pair. The bottlenecks were:
+#     1. Master score 55 blocked 78% of bars before any strategy ran
+#     2. HARD institutional gate killed another 22% of survivors
+#     3. 3-group consensus was mathematically near-impossible because the
+#        3 single-strategy groups (ORDER_FLOW, OSCILLATOR, PRICE_ACTION)
+#        have HARD state gates that conflict with TREND_FOLLOWING
+#        (reversal/balanced vs trending states can't co-fire).
+#
+#   The REAL quality filter lives in per-strategy min scores + confluence +
+#   R:R ratio. The consensus gate just needs to prevent correlated
+#   echo-chamber signals (already handled by 2 DIFFERENT groups + the
+#   anti-correlation penalty in strategy_engine.py).
+#
+#   v2.3 keeps the strict intent but actually generates trades:
+STRICT_MASTER_MIN_SCORE       = 50     # Was 55 → blocked 78% of bars. 50 is still
+                                        # stricter than default 45 but lets setups through.
+STRICT_MIN_CONFLUENCE         = 7      # Was 8 → very few signals have 8+ confluence
+                                        # factors. 7 is achievable and still strict.
+STRICT_MIN_RR_RATIO           = 2.5    # Keep — high R:R is the real quality filter
+STRICT_MIN_CONSENSUS_GROUPS   = 2      # Was 3 → mathematically hostile to strategy
+                                        # design. 2 groups + anti-correlation penalty
+                                        # is the right balance.
 STRICT_MIN_STRATEGY_SCORE_FLOOR = 75   # Per-strategy min scores raised to at least this
-STRICT_INSTITUTIONAL_HARD_GATE  = True # Order flow OR volume surge required (no soft pass)
+STRICT_INSTITUTIONAL_HARD_GATE  = False # Was True → killed 22% of survivors.
+                                        # SOFT pass lets strategies decide; the
+                                        # per-strategy score thresholds do the
+                                        # real filtering.
 
 # Per-strategy min score overrides applied in strict mode.
 # These are MAX(strict_floor, existing STRATEGY_MIN_SCORES value).
 # Values below are the FINAL strict thresholds per strategy.
+# These stay HIGH — this is where the real quality filtering happens.
 STRICT_STRATEGY_MIN_SCORES = {
     "SMC_OB_REVERSAL":              75,
     "LIQUIDITY_SWEEP_ENTRY":        75,

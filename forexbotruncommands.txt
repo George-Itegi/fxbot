@@ -86,18 +86,28 @@ Phase 3 (MUCH LATER):
 
 
 # =============================================================
-# STRICT RULES MODE (v2.2 — added 2026-07-01)
+# STRICT RULES MODE (v2.3 — retuned 2026-07-01)
 # -------------------------------------------------------------
 # Pure strategy rules — NO Layer 1 per-strategy models.
 # Layer 2 ML Gate stays controllable for A/B testing.
 #
-# Hardened thresholds when --rules-only is active:
-#   Master score min:       45 → 55
-#   Multi-group consensus:  2  → 3 groups
-#   Confluence min:         6  → 8
-#   Min R:R:                2.0 → 2.5
-#   Per-strategy min:       68-72 → 73-77
-#   Institutional gate:     soft pass → HARD block
+# Hardened thresholds when --rules-only is active (v2.3 retuned):
+#   Master score min:       45 → 50   (was 55 in v2.2 — blocked 78% of bars)
+#   Multi-group consensus:  2  → 2    (was 3 in v2.2 — mathematically hostile
+#                                      to strategy design; anti-correlation
+#                                      penalty already prevents echo chambers)
+#   Confluence min:         6  → 7    (was 8 in v2.2 — too few signals qualify)
+#   Min R:R:                2.0 → 2.5 (KEEP — real quality filter)
+#   Per-strategy min:       68-72 → 73-77  (KEEP — real quality filter)
+#   Institutional gate:     soft pass → soft pass  (was HARD in v2.2 — killed
+#                                                   22% of survivors; strategies
+#                                                   already require OF/volume
+#                                                   in their internal scoring)
+#
+# The REAL quality filtering lives in:
+#   1. Per-strategy min scores (73-77) — only fire on strong setups
+#   2. Confluence min (7)                — multiple factors must agree
+#   3. R:R ratio (2.5)                   — only high-reward trades
 # =============================================================
 
 # 1) Pure strict rules — no ML models at all (PRIMARY backtest mode)

@@ -102,8 +102,8 @@ Examples:
     parser.add_argument(
         '--rules-only', action='store_true',
         help='STRICT RULES MODE: pure strategy rules, no ML models. '
-             'Forces Layer 1 OFF. Hardens thresholds (master>=55, 3-group consensus, '
-             'confluence>=8, R:R>=2.5, per-strategy score>=73-77, hard institutional gate). '
+             'Forces Layer 1 OFF. Hardens thresholds (master>=50, 2-group consensus, '
+             'confluence>=7, R:R>=2.5, per-strategy score>=73-77, soft institutional gate). '
              'Combine with --use-model to add Layer 2 ML Gate on top of strict rules '
              '(for A/B testing whether L2 helps).')
     parser.add_argument(
@@ -545,8 +545,8 @@ def main():
           f"| L2 Model: {'ACTIVE' if model_loaded else 'OFF'}"
           f" | L1 Strategy Models: {'ACTIVE' if strat_models_loaded else 'OFF'}")
     if rules_only_mode:
-        print(f"  (STRICT RULES MODE: master>=55, 3-group consensus, confluence>=8, "
-              f"R:R>=2.5, hard institutional gate)")
+        print(f"  (STRICT RULES MODE: master>=50, 2-group consensus, confluence>=7, "
+              f"R:R>=2.5, per-strategy score>=73-77, soft institutional gate)")
         if model_loaded:
             print(f"  (L2 ML Gate is ACTIVE on top of strict rules — A/B test mode)")
         else:
